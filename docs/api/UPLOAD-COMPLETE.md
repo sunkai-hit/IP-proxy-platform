@@ -1,1 +1,0 @@
-Database migrations and modular OpenAPI files are generated from the approved design baseline. See README.md and API-CATALOG.md.
