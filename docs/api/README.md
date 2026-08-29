@@ -2,10 +2,13 @@
 
 ## 1. 文件
 
-- `openapi-admin-v1.yaml`：后台管理端 API，Server Base URL：`/api/admin/v1`
-- `openapi-open-v1.yaml`：客户开放 API，Server Base URL：`/api/open/v1`
+- `openapi-admin-v1.json`：后台管理端 OpenAPI 3.1.2 根规范，Server Base URL：`/api/admin/v1`。
+  - `admin-paths/`：按业务模块拆分的路径定义。
+  - `admin-request-schemas.json`：Admin 请求对象 Schema。
+- `openapi-open-v1.yaml`：客户开放 API OpenAPI 3.1.2 规范，Server Base URL：`/api/open/v1`。
+- `API-CATALOG.md`：Admin API 人类可读接口清单，目前共 189 个 operation。
 
-两份文件均采用 **OpenAPI 3.1.2**。
+两套 API 均采用 **OpenAPI 3.1.2**。Admin 规范使用 OpenAPI 标准支持的外部 `$ref` 进行模块化拆分，后续可由 Swagger/OpenAPI 工具链打包或生成代码。
 
 ## 2. API分层
 
