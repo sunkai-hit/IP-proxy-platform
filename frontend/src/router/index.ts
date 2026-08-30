@@ -9,7 +9,10 @@ const router = createRouter({
     { path: '/', component: ConsoleLayout, children: [
       { path: '', redirect: '/dashboard' },
       { path: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '首页工作台' } },
-      { path: 'customers', component: () => import('@/views/PlaceholderView.vue'), meta: { title: '客户管理' } },
+      { path: 'customers', component: () => import('@/views/customer/CustomerListView.vue'), meta: { title: '客户管理', permission: 'customer:read' } },
+      { path: 'customers/:id', component: () => import('@/views/customer/CustomerDetailView.vue'), meta: { title: '客户详情', permission: 'customer:read' } },
+      { path: 'customer-auth', component: () => import('@/views/customer/CustomerAuthView.vue'), meta: { title: '客户认证', permission: 'customer:auth:read' } },
+      { path: 'customer-accounts', component: () => import('@/views/customer/CustomerAccountView.vue'), meta: { title: '客户账号', permission: 'customer:account:read' } },
       { path: 'resources', component: () => import('@/views/PlaceholderView.vue'), meta: { title: '资源管理' } },
       { path: 'products', component: () => import('@/views/PlaceholderView.vue'), meta: { title: '产品管理' } },
       { path: 'orders', component: () => import('@/views/PlaceholderView.vue'), meta: { title: '订单与服务' } },

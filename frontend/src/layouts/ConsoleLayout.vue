@@ -2,20 +2,8 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-const route = useRoute(); const router = useRouter(); const auth = useAuthStore()
-const active = computed(() => route.path)
-const menus = computed(() => [['/dashboard','首页工作台'],['/customers','客户管理'],['/resources','资源管理'],['/products','产品管理'],['/orders','订单与服务'],['/monitor','监控中心'],['/logs','日志中心'],['/alarms','告警中心'],['/statistics','数据统计'],...(auth.hasPermission('system:access') ? [['/system','系统管理']] : [])])
-function logout(){ auth.logout(); router.replace('/login') }
+const route=useRoute();const router=useRouter();const auth=useAuthStore()
+const active=computed(()=>route.path.startsWith('/customers/')?'/customers':route.path)
+function logout(){auth.logout();router.replace('/login')}
 </script>
-<template>
-  <el-container class="console-shell">
-    <el-aside width="236px" class="console-aside">
-      <div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console</small></div></div>
-      <el-menu :default-active="active" router class="console-menu"><el-menu-item v-for="item in menus" :key="item[0]" :index="item[0]">{{ item[1] }}</el-menu-item></el-menu>
-    </el-aside>
-    <el-container>
-      <el-header class="console-header"><div><span class="env-chip">M2</span><b>{{ route.meta.title }}</b></div><div class="header-user"><span>{{ auth.user?.displayName || auth.user?.username }}</span><el-button text @click="logout">退出登录</el-button></div></el-header>
-      <el-main class="console-main"><router-view /></el-main>
-    </el-container>
-  </el-container>
-</template>
+<template><el-container class="console-shell"><el-aside width="236px" class="console-aside"><div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console</small></div></div><el-menu :default-active="active" router class="console-menu"><el-menu-item index="/dashboard">首页工作台</el-menu-item><el-sub-menu v-if="auth.hasPermission('customer:access')" index="customer"><template #title>客户管理</template><el-menu-item v-if="auth.hasPermission('customer:read')" index="/customers">客户列表</el-menu-item><el-menu-item v-if="auth.hasPermission('customer:auth:read')" index="/customer-auth">客户认证</el-menu-item><el-menu-item v-if="auth.hasPermission('customer:account:read')" index="/customer-accounts">客户账号</el-menu-item></el-sub-menu><el-menu-item index="/resources">资源管理</el-menu-item><el-menu-item index="/products">产品管理</el-menu-item><el-menu-item index="/orders">订单与服务</el-menu-item><el-menu-item index="/monitor">监控中心</el-menu-item><el-menu-item index="/logs">日志中心</el-menu-item><el-menu-item index="/alarms">告警中心</el-menu-item><el-menu-item index="/statistics">数据统计</el-menu-item><el-menu-item v-if="auth.hasPermission('system:access')" index="/system">系统管理</el-menu-item></el-menu></el-aside><el-container><el-header class="console-header"><div><span class="env-chip">M3</span><b>{{ route.meta.title }}</b></div><div class="header-user"><span>{{ auth.user?.displayName||auth.user?.username }}</span><el-button text @click="logout">退出登录</el-button></div></el-header><el-main class="console-main"><router-view/></el-main></el-container></el-container></template>

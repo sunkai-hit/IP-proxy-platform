@@ -1,4 +1,4 @@
-name: M2 CI
+name: M3 CI
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
       - name: Build backend
         working-directory: backend
         run: mvn -B -DskipTests package
-      - name: Start backend and validate M2 foundation
+      - name: Start backend and validate M3 customer lifecycle
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -45,7 +45,7 @@ jobs:
           DB_PASSWORD: ipproxy_dev
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-          JWT_SECRET: ci-m2-secret-key-with-more-than-32-bytes-123456
+          JWT_SECRET: ci-m3-secret-key-with-more-than-32-bytes-123456
           M1_ADMIN_PASSWORD: admin123
         run: |
           java -jar backend/target/ip-proxy-platform-backend.jar > /tmp/backend.log 2>&1 &
@@ -55,16 +55,25 @@ jobs:
           done
           curl -fsS http://localhost:8080/actuator/health
           LOGIN=$(curl -fsS -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' http://localhost:8080/api/admin/v1/auth/login)
-          TOKEN=$(python3 -c 'import json,sys; d=json.load(sys.stdin); assert "system:access" in d["data"]["user"]["permissions"]; print(d["data"]["accessToken"])' <<< "$LOGIN")
+          TOKEN=$(python3 -c 'import json,sys; d=json.load(sys.stdin); assert "customer:access" in d["data"]["user"]["permissions"]; print(d["data"]["accessToken"])' <<< "$LOGIN")
           H="Authorization: Bearer $TOKEN"
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/auth/me
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/users
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/roles
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/permissions
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/dict-types
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/parameters
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/login-logs
-          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"roleCode":"CI_OPERATOR","roleName":"CI运营测试","dataScope":"SELF","description":"M2 smoke","status":"ACTIVE"}' http://localhost:8080/api/admin/v1/system/roles
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/options
+          C=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"customerName":"CI测试企业","customerTypeCode":"ENTERPRISE","contactName":"CI联系人","contactPhone":"13800000000","contactEmail":"ci@example.com","remark":"M3 smoke"}' http://localhost:8080/api/admin/v1/customers)
+          CID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$C")
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/customers?keyword=CI测试企业"
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID
+          A=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"authTypeCode":"ENTERPRISE","submittedData":{"subjectName":"CI测试企业","documentNo":"CI-DEMO"},"attachmentRefs":[]}' http://localhost:8080/api/admin/v1/customers/$CID/auth)
+          AID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$A")
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"opinion":"CI审核通过"}' http://localhost:8080/api/admin/v1/customer-auth/$AID/approve
+          AC=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d "{\"customerId\":$CID,\"username\":\"ci_customer\",\"password\":\"ciPass123\",\"accountTypeCode\":\"DEFAULT\"}" http://localhost:8080/api/admin/v1/customer-accounts)
+          ACID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$AC")
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"password":"ciPass456","reason":"M3 smoke reset"}' http://localhost:8080/api/admin/v1/customer-accounts/$ACID/reset-password
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke freeze"}' http://localhost:8080/api/admin/v1/customer-accounts/$ACID/freeze
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke resume"}' http://localhost:8080/api/admin/v1/customer-accounts/$ACID/resume
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke freeze customer"}' http://localhost:8080/api/admin/v1/customers/$CID/freeze
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke resume customer"}' http://localhost:8080/api/admin/v1/customers/$CID/resume
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID/usage
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID/credentials
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/operation-logs
       - name: Print backend log on failure
         if: failure()
