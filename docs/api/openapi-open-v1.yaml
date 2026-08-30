@@ -1,39 +1,27 @@
 openapi: 3.1.2
 info:
   title: IP代理管理平台 Open API
-  version: 1.0.0
-  description: 客户侧代理服务开放接口。兼容当前已确认的Token、IP提取和白名单能力。
+  version: 1.1.0
+  description: |
+    M7 客户侧开放接口。沿用已确认的“用户名+密码获取Token、Token提取IP、Token维护白名单”调用习惯。
+    Token实际绑定 customer_account + svc_instance；客户、账号或服务被冻结/停用/到期后立即失效。
+    当前账号必须仅有一个处于 ACTIVE、已生效且 access_mode_code=API_EXTRACT 的服务；若存在多个，平台返回 OPEN_SERVICE_AMBIGUOUS，后续待业务确认服务选择协议后再扩展。
 servers:
-- url: http://localhost:8080/api/open/v1
-  description: 本地开发环境
+  - url: http://localhost:8080/api/open/v1
+    description: 本地开发环境
 tags:
-- name: OpenAuth
-  description: 客户Token认证
-- name: Proxy
-  description: 代理IP提取
-- name: Whitelist
-  description: 服务白名单
+  - name: OpenAuth
+    description: 客户Token认证
+  - name: Proxy
+    description: 代理IP提取
+  - name: Whitelist
+    description: 服务白名单
 paths:
   /auth/token:
     post:
-      tags:
-      - OpenAuth
+      tags: [OpenAuth]
       summary: 获取或刷新Token
       operationId: issueOpenToken
-      responses:
-        '200':
-          description: 成功
-          content:
-            application/json:
-              schema:
-                allOf:
-                - $ref: '#/components/schemas/ApiResponse'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '#/components/schemas/OpenTokenResponse'
-        default:
-          $ref: '#/components/responses/BadRequest'
       security: []
       requestBody:
         required: true
@@ -41,61 +29,70 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/OpenTokenRequest'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OpenTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
   /proxy/extract:
     get:
-      tags:
-      - Proxy
+      tags: [Proxy]
       summary: 提取代理IP
+      description: |
+        验证Token、客户/账号/服务状态、服务有效期、单次提取限制、频率限制、套餐提取额度和去重周期后，从服务绑定的统一资源池返回可用IP。
+        请求日志写入 log_api；提取结果写入 log_ip_extract，两者使用同一 requestId。
       operationId: extractProxyIps
+      security:
+        - openTokenBearer: []
+        - openTokenQuery: []
+      parameters:
+        - name: amount
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: protocol
+          in: query
+          required: false
+          schema: { type: string, default: HTTP }
+        - name: regionCode
+          in: query
+          required: false
+          schema: { type: string }
+        - name: carrierCode
+          in: query
+          required: false
+          schema: { type: string }
       responses:
         '200':
-          description: 成功
+          description: 成功；资源不足时允许返回小于请求数量的 PARTIAL 结果并记录日志
           content:
             application/json:
               schema:
                 allOf:
-                - $ref: '#/components/schemas/ApiResponse'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '#/components/schemas/ProxyExtractResponse'
-        default:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProxyExtractResponse'
+        '400':
           $ref: '#/components/responses/BadRequest'
-      security:
-      - openToken: []
-      parameters:
-      - name: amount
-        in: query
-        required: true
-        description: 提取数量
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 100
-      - name: protocol
-        in: query
-        required: false
-        description: 代理协议
-        schema:
-          type: string
-      - name: regionCode
-        in: query
-        required: false
-        description: 地区
-        schema:
-          type: string
-      - name: carrierCode
-        in: query
-        required: false
-        description: 运营商
-        schema:
-          type: string
   /whitelist:
     get:
-      tags:
-      - Whitelist
-      summary: 查询白名单
+      tags: [Whitelist]
+      summary: 查询当前服务白名单
       operationId: listOpenWhitelist
+      security:
+        - openTokenBearer: []
+        - openTokenQuery: []
       responses:
         '200':
           description: 成功
@@ -103,222 +100,136 @@ paths:
             application/json:
               schema:
                 allOf:
-                - $ref: '#/components/schemas/ApiResponse'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '#/components/schemas/WhitelistItem'
-        default:
-          $ref: '#/components/responses/BadRequest'
-      security:
-      - openToken: []
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/WhitelistItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
     post:
-      tags:
-      - Whitelist
+      tags: [Whitelist]
       summary: 新增白名单
       operationId: addOpenWhitelist
-      responses:
-        '200':
-          description: 成功
-          content:
-            application/json:
-              schema:
-                allOf:
-                - $ref: '#/components/schemas/ApiResponse'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '#/components/schemas/WhitelistItem'
-        default:
-          $ref: '#/components/responses/BadRequest'
       security:
-      - openToken: []
+        - openTokenBearer: []
+        - openTokenQuery: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required: [ip]
               properties:
-                ip:
-                  type: string
-              required:
-              - ip
-  /whitelist/{ip}:
-    delete:
-      tags:
-      - Whitelist
-      summary: 删除白名单
-      operationId: deleteOpenWhitelist
+                ip: { type: string }
       responses:
         '200':
           description: 成功
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ApiResponse'
-        default:
-          $ref: '#/components/responses/BadRequest'
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/WhitelistItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /whitelist/{ip}:
+    delete:
+      tags: [Whitelist]
+      summary: 删除白名单
+      operationId: deleteOpenWhitelist
       security:
-      - openToken: []
+        - openTokenBearer: []
+        - openTokenQuery: []
       parameters:
-      - name: ip
-        in: path
-        required: true
-        schema:
-          type: string
+        - name: ip
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 components:
   securitySchemes:
-    openToken:
+    openTokenBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: OpenToken
+      description: 推荐调用方式：Authorization: Bearer <token>
+    openTokenQuery:
       type: apiKey
       in: query
       name: token
-      description: 兼容现有调用方式；正式环境同时建议支持Authorization Header
+      description: 兼容现有调用方式的 query token
   schemas:
     ApiResponse:
       type: object
+      required: [code, message, requestId, timestamp]
       properties:
-        code:
-          type: string
-          examples:
-          - '0'
-        message:
-          type: string
-          examples:
-          - success
+        code: { type: string, examples: ['0'] }
+        message: { type: string, examples: [success] }
         data: {}
-        requestId:
-          type: string
-        timestamp:
-          type: integer
-          format: int64
-      required:
-      - code
-      - message
-      - requestId
-      - timestamp
+        requestId: { type: string }
+        timestamp: { type: integer, format: int64 }
     ErrorResponse:
       type: object
+      required: [code, message, requestId, timestamp]
       properties:
-        code:
-          type: string
-        message:
-          type: string
-        details:
-          type: array
-          items:
-            type: string
-        requestId:
-          type: string
-        timestamp:
-          type: integer
-          format: int64
-      required:
-      - code
-      - message
-      - requestId
-      - timestamp
+        code: { type: string }
+        message: { type: string }
+        data: { type: ['object','null'] }
+        requestId: { type: string }
+        timestamp: { type: integer, format: int64 }
     OpenTokenRequest:
       type: object
+      required: [username, password]
       properties:
-        username:
-          type: string
-        password:
-          type: string
-          format: password
+        username: { type: string }
+        password: { type: string, format: password }
         changeToken:
           type: boolean
           default: false
-      required:
-      - username
-      - password
+          description: false返回当前版本Token；true递增Token版本并使旧Token立即失效
     OpenTokenResponse:
       type: object
       properties:
-        token:
-          type: string
-        expiresAt:
-          type:
-          - string
-          - 'null'
-          format: date-time
-        changed:
-          type: boolean
+        token: { type: string }
+        expiresAt: { type: ['string','null'], format: date-time }
+        changed: { type: boolean }
+        serviceNo: { type: string }
     ProxyExtractResponse:
       type: object
       properties:
-        count:
-          type: integer
-        protocol:
-          type: string
+        count: { type: integer }
+        protocol: { type: string }
+        quotaUsed: { type: integer }
+        quotaTotal: { type: ['integer','null'] }
         items:
           type: array
           items:
             type: object
             properties:
-              ip:
-                type: string
-              port:
-                type:
-                - integer
-                - 'null'
-              region:
-                type:
-                - string
-                - 'null'
-              carrier:
-                type:
-                - string
-                - 'null'
-              expiresAt:
-                type:
-                - string
-                - 'null'
-                format: date-time
+              ip: { type: string }
+              port: { type: ['integer','null'] }
+              region: { type: ['string','null'] }
+              carrier: { type: ['string','null'] }
+              expiresAt: { type: ['string','null'], format: date-time }
     WhitelistItem:
       type: object
       properties:
-        ip:
-          type: string
-        createdAt:
-          type: string
-          format: date-time
+        id: { type: integer, format: int64 }
+        ip: { type: string }
+        created_at: { type: ['string','null'], format: date-time }
+        remark: { type: ['string','null'] }
   responses:
     BadRequest:
-      description: 请求参数错误
+      description: 参数、Token、服务状态、额度、频率、资源或白名单校验失败
       content:
         application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Unauthorized:
-      description: 未认证或Token失效
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Forbidden:
-      description: 无权限
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    NotFound:
-      description: 对象不存在
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Conflict:
-      description: 状态冲突或唯一约束冲突
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    InternalError:
-      description: 服务器内部错误
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
