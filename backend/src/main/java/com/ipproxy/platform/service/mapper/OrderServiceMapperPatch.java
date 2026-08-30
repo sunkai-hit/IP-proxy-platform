@@ -1,6 +1,5 @@
 package com.ipproxy.platform.service.mapper;
 
-import org.postgresql.util.PGobject;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -14,7 +13,7 @@ import java.util.Map;
 /**
  * M6 对独享资源分配及 JDBC 驱动类型的正式适配。
  * V2 已确定独享资源通过 ip_id / line_id 表达，因此这里严格使用既有模型。
- * JdbcTemplate Map 对 TIMESTAMPTZ/JSONB 可能返回 Timestamp/PGobject，统一在 Repository 边界标准化。
+ * JdbcTemplate Map 对 TIMESTAMPTZ/JSONB 可能返回驱动特定对象，统一在 Repository 边界标准化。
  */
 @Repository
 @Primary
@@ -63,7 +62,15 @@ public class OrderServiceMapperPatch extends OrderServiceMapper {
     private void normalizeJson(Map<String, Object> row, String key) {
         if (row == null) return;
         Object value = row.get(key);
-        if (value instanceof PGobject pg) row.put(key, pg.getValue());
+        if (value == null || value instanceof String) return;
+        if ("org.postgresql.util.PGobject".equals(value.getClass().getName())) {
+            try {
+                Object jsonValue = value.getClass().getMethod("getValue").invoke(value);
+                row.put(key, jsonValue == null ? null : String.valueOf(jsonValue));
+            } catch (ReflectiveOperationException ignored) {
+                row.put(key, String.valueOf(value));
+            }
+        }
     }
 
     @Override
