@@ -1,0 +1,284 @@
+openapi: 3.1.2
+info:
+  title: IP代理管理平台 - M4 资源管理 Admin API
+  version: 1.0.0-m4
+  description: |
+    M4资源管理实际实现接口契约，统一前缀 /api/admin/v1。
+    CentOS、ROS、家宽/线路、IP属于上游同步型基础资源，只提供同步、列表、详情能力；
+    资源池、域名、外部供应商属于平台自身可配置对象。上游真实协议通过ResourceAdapter接入。
+    未配置真实适配器时不会伪造远程控制或DNS更新结果。
+servers:
+  - url: http://localhost:8080/api/admin/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Resource
+  - name: ResourcePool
+  - name: Exclusive
+  - name: Domain
+  - name: Supplier
+  - name: SyncTask
+paths:
+  /resources/overview:
+    get: {tags: [Resource], summary: 资源概览, responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /resources/options:
+    get: {tags: [Resource], summary: 资源模块字典选项, responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /resources/centos:
+    get:
+      tags: [Resource]
+      summary: CentOS列表
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}, {$ref: '#/components/parameters/Status'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /resources/centos/{id}:
+    get: {tags: [Resource], summary: CentOS详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /resources/centos/sync:
+    post: {$ref: '#/components/pathItems/SyncAction'}
+  /resources/ros:
+    get:
+      tags: [Resource]
+      summary: ROS列表
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}, {$ref: '#/components/parameters/Status'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /resources/ros/{id}:
+    get: {tags: [Resource], summary: ROS详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /resources/ros/sync:
+    post: {$ref: '#/components/pathItems/SyncAction'}
+  /resources/lines:
+    get:
+      tags: [Resource]
+      summary: 家宽/线路列表
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}, {$ref: '#/components/parameters/Status'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /resources/lines/{id}:
+    get: {tags: [Resource], summary: 家宽/线路详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /resources/lines/sync:
+    post: {$ref: '#/components/pathItems/SyncAction'}
+  /resources/ips:
+    get:
+      tags: [Resource]
+      summary: IP资源列表
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+        - {$ref: '#/components/parameters/Keyword'}
+        - {$ref: '#/components/parameters/Status'}
+        - {name: sourceType, in: query, schema: {type: string, enum: [SELF, EXTERNAL]}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /resources/ips/{id}:
+    get: {tags: [Resource], summary: IP资源详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /resources/ips/sync:
+    post: {$ref: '#/components/pathItems/SyncAction'}
+  /resource-pools:
+    get:
+      tags: [ResourcePool]
+      summary: 资源池列表
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}, {$ref: '#/components/parameters/Status'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    post:
+      tags: [ResourcePool]
+      summary: 新增资源池
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PoolRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /resource-pools/{id}:
+    get: {tags: [ResourcePool], summary: 资源池详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+    put:
+      tags: [ResourcePool]
+      summary: 修改资源池
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/PoolRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /resource-pools/{id}/ips:
+    get:
+      tags: [ResourcePool]
+      summary: 资源池IP成员
+      parameters: [{$ref: '#/components/parameters/Id'}, {$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /resource-pools/{id}/enable:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /resource-pools/{id}/disable:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /resource-pools/{id}/recalculate:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /exclusive-allocations:
+    get:
+      tags: [Exclusive]
+      summary: 独享资源列表
+      description: 独享占用由服务流程形成，本接口不提供手工新增占用。
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}, {$ref: '#/components/parameters/Status'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /exclusive-allocations/{id}:
+    get: {tags: [Exclusive], summary: 独享资源详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /exclusive-allocations/{id}/release:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /domains:
+    get:
+      tags: [Domain]
+      summary: 域名配置列表
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}, {$ref: '#/components/parameters/Status'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    post:
+      tags: [Domain]
+      summary: 新增域名配置
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DomainRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /domains/{id}:
+    get: {tags: [Domain], summary: 域名配置详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+    put:
+      tags: [Domain]
+      summary: 修改域名配置
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DomainRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /domains/{id}/refresh:
+    post:
+      tags: [Domain]
+      summary: 刷新平台域名目标IP
+      description: 当前未配置DNS适配器时仅刷新平台目标IP并返回PENDING_UPDATE，不宣称外部DNS已更新。
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/Reason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /suppliers:
+    get:
+      tags: [Supplier]
+      summary: 外部供应商列表
+      parameters: [{$ref: '#/components/parameters/Page'}, {$ref: '#/components/parameters/Size'}, {$ref: '#/components/parameters/Keyword'}, {$ref: '#/components/parameters/Status'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    post:
+      tags: [Supplier]
+      summary: 新增外部供应商
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SupplierRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /suppliers/{id}:
+    get:
+      tags: [Supplier]
+      summary: 供应商详情
+      description: 不返回secret或secret_cipher，仅返回secret_configured。
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    put:
+      tags: [Supplier]
+      summary: 修改外部供应商
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SupplierRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /suppliers/{id}/test:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /suppliers/{id}/enable:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /suppliers/{id}/pause:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /suppliers/{id}/disable:
+    post: {$ref: '#/components/pathItems/ReasonCommand'}
+  /sync-tasks:
+    get:
+      tags: [SyncTask]
+      summary: 同步任务列表
+      parameters:
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+        - {name: sourceType, in: query, schema: {type: string, enum: [CENTOS, ROS, LINE, IP, SUPPLIER]}}
+        - {$ref: '#/components/parameters/Status'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    post:
+      tags: [SyncTask]
+      summary: 创建资源同步任务
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/SyncRequest'}}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /sync-tasks/{id}:
+    get: {tags: [SyncTask], summary: 同步任务详情, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /sync-tasks/{id}/details:
+    get: {tags: [SyncTask], summary: 同步处理明细, parameters: [{$ref: '#/components/parameters/Id'}], responses: {'200': {$ref: '#/components/responses/Success'}}}
+  /sync-tasks/{id}/retry:
+    post:
+      tags: [SyncTask]
+      summary: 重试失败或部分成功的同步任务
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/Reason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+    Page: {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+    Size: {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 20}}
+    Keyword: {name: keyword, in: query, schema: {type: string, default: ''}}
+    Status: {name: status, in: query, schema: {type: string, default: ''}}
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code: {type: string}
+        message: {type: string}
+        data: {}
+        requestId: {type: string}
+        timestamp: {type: integer, format: int64}
+      required: [code, message, requestId, timestamp]
+    ActionReasonRequest:
+      type: object
+      properties: {reason: {type: string, minLength: 1}}
+      required: [reason]
+    PoolRequest:
+      type: object
+      properties:
+        poolCode: {type: string}
+        poolName: {type: string}
+        purpose: {type: [string, 'null']}
+        regionCodes: {type: array, items: {type: string}}
+        carrierCodes: {type: array, items: {type: string}}
+        sourceScope: {type: string, enum: [SELF, EXTERNAL, MIXED]}
+        admissionRule: {type: object, additionalProperties: true}
+        detectionRule: {type: object, additionalProperties: true}
+        dedupRule: {type: object, additionalProperties: true}
+        priority: {type: integer, default: 100}
+      required: [poolCode, poolName, sourceScope]
+    DomainRequest:
+      type: object
+      properties:
+        domainName: {type: string}
+        currentIpId: {type: [integer, 'null'], format: int64}
+        lineId: {type: [integer, 'null'], format: int64}
+        usageTypeCode: {type: [string, 'null']}
+        updateMode: {type: string, enum: [AUTO, MANUAL, API]}
+      required: [domainName, updateMode]
+    SupplierRequest:
+      type: object
+      properties:
+        supplierCode: {type: string}
+        supplierName: {type: string}
+        contactName: {type: [string, 'null']}
+        contactPhone: {type: [string, 'null']}
+        apiEndpoint: {type: string, format: uri}
+        authTypeCode: {type: string}
+        apiAccount: {type: [string, 'null']}
+        secret: {type: [string, 'null'], writeOnly: true}
+        regionCodes: {type: array, items: {type: string}}
+        carrierCodes: {type: array, items: {type: string}}
+        fetchMode: {type: string, enum: [SCHEDULED, REALTIME, MANUAL]}
+      required: [supplierCode, supplierName, apiEndpoint, authTypeCode, fetchMode]
+    SyncRequest:
+      type: object
+      properties:
+        sourceType: {type: string, enum: [CENTOS, ROS, LINE, IP, SUPPLIER]}
+        supplierId: {type: [integer, 'null'], format: int64}
+        targetPoolId: {type: [integer, 'null'], format: int64}
+        reason: {type: string}
+      required: [sourceType, reason]
+  requestBodies:
+    Reason:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/ActionReasonRequest'}}}
+  responses:
+    Success:
+      description: 成功
+      content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}
+  pathItems:
+    SyncAction:
+      tags: [Resource]
+      summary: 手工触发基础资源同步
+      requestBody: {$ref: '#/components/requestBodies/Reason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    ReasonCommand:
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/Reason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
