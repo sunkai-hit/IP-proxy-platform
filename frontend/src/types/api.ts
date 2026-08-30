@@ -10,5 +10,5 @@ export interface LoginResponse {
   accessToken: string
   tokenType: string
   expiresIn: number
-  user: { id: number; username: string; displayName: string; roles: string[] }
+  user: { id: number; username: string; displayName: string; roles: string[]; permissions: string[] }
 }
