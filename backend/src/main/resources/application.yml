@@ -47,3 +47,13 @@ app:
     admin-username: ${M1_ADMIN_USERNAME:admin}
     admin-password: ${M1_ADMIN_PASSWORD:admin123}
     admin-display-name: ${M1_ADMIN_DISPLAY_NAME:超级管理员}
+  monitor:
+    scheduled-enabled: ${MONITOR_SCHEDULED_ENABLED:true}
+    collect-interval-ms: ${MONITOR_COLLECT_INTERVAL_MS:60000}
+    initial-delay-ms: ${MONITOR_INITIAL_DELAY_MS:15000}
+    stale-seconds: ${MONITOR_STALE_SECONDS:300}
+  alarm:
+    dingTalk-webhook: ${DINGTALK_WEBHOOK_URL:}
+  statistics:
+    scheduled-enabled: ${STATISTICS_SCHEDULED_ENABLED:true}
+    cron: ${STATISTICS_CRON:0 5 * * * *}
