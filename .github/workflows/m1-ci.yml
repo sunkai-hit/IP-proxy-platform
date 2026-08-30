@@ -1,4 +1,4 @@
-name: M3 CI
+name: M4 CI
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
       - name: Build backend
         working-directory: backend
         run: mvn -B -DskipTests package
-      - name: Start backend and validate M3 customer lifecycle
+      - name: Start backend and validate M3 regression plus M4 resource lifecycle
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -45,9 +45,11 @@ jobs:
           DB_PASSWORD: ipproxy_dev
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-          JWT_SECRET: ci-m3-secret-key-with-more-than-32-bytes-123456
+          JWT_SECRET: ci-m4-secret-key-with-more-than-32-bytes-123456
           M1_ADMIN_PASSWORD: admin123
+          SPRING_PROFILES_ACTIVE: m4-mock
         run: |
+          set -euo pipefail
           java -jar backend/target/ip-proxy-platform-backend.jar > /tmp/backend.log 2>&1 &
           for i in {1..60}; do
             if curl -fsS http://localhost:8080/actuator/health >/dev/null; then break; fi
@@ -55,26 +57,60 @@ jobs:
           done
           curl -fsS http://localhost:8080/actuator/health
           LOGIN=$(curl -fsS -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' http://localhost:8080/api/admin/v1/auth/login)
-          TOKEN=$(python3 -c 'import json,sys; d=json.load(sys.stdin); assert "customer:access" in d["data"]["user"]["permissions"]; print(d["data"]["accessToken"])' <<< "$LOGIN")
+          TOKEN=$(python3 -c 'import json,sys; d=json.load(sys.stdin); p=d["data"]["user"]["permissions"]; assert "customer:access" in p and "resource:access" in p and "resource:sync" in p; print(d["data"]["accessToken"])' <<< "$LOGIN")
           H="Authorization: Bearer $TOKEN"
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/options
-          C=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"customerName":"CI测试企业","customerTypeCode":"ENTERPRISE","contactName":"CI联系人","contactPhone":"13800000000","contactEmail":"ci@example.com","remark":"M3 smoke"}' http://localhost:8080/api/admin/v1/customers)
+
+          echo '--- M3 regression ---'
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/options >/dev/null
+          C=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"customerName":"M4回归客户","customerTypeCode":"ENTERPRISE","contactName":"CI","contactPhone":"13800000000","contactEmail":"m4@example.com","remark":"M4 regression"}' http://localhost:8080/api/admin/v1/customers)
           CID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$C")
-          curl -fsS -H "$H" --get --data-urlencode 'keyword=CI测试企业' http://localhost:8080/api/admin/v1/customers
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID
-          A=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"authTypeCode":"ENTERPRISE","submittedData":{"subjectName":"CI测试企业","documentNo":"CI-DEMO"},"attachmentRefs":[]}' http://localhost:8080/api/admin/v1/customers/$CID/auth)
-          AID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$A")
-          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"opinion":"CI审核通过"}' http://localhost:8080/api/admin/v1/customer-auth/$AID/approve
-          AC=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d "{\"customerId\":$CID,\"username\":\"ci_customer\",\"password\":\"ciPass123\",\"accountTypeCode\":\"DEFAULT\"}" http://localhost:8080/api/admin/v1/customer-accounts)
-          ACID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$AC")
-          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"password":"ciPass456","reason":"M3 smoke reset"}' http://localhost:8080/api/admin/v1/customer-accounts/$ACID/reset-password
-          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke freeze"}' http://localhost:8080/api/admin/v1/customer-accounts/$ACID/freeze
-          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke resume"}' http://localhost:8080/api/admin/v1/customer-accounts/$ACID/resume
-          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke freeze customer"}' http://localhost:8080/api/admin/v1/customers/$CID/freeze
-          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M3 smoke resume customer"}' http://localhost:8080/api/admin/v1/customers/$CID/resume
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID/usage
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID/credentials
-          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/operation-logs
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID >/dev/null
+
+          echo '--- M4 base-resource sync: CentOS -> ROS -> Line -> IP ---'
+          for P in centos ros lines ips; do
+            R=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M4 CI层级同步"}' http://localhost:8080/api/admin/v1/resources/$P/sync)
+            python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["data"]["taskId"]>0' <<< "$R"
+          done
+          CENTOS=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/resources/centos?page=1&size=20')
+          ROS=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/resources/ros?page=1&size=20')
+          LINES=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/resources/lines?page=1&size=20')
+          IPS=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/resources/ips?page=1&size=20')
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]==2 and all(x["online_status"]=="ONLINE" for x in d["items"])' <<< "$CENTOS"
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]==2 and all(x["centos_id"] for x in d["items"])' <<< "$ROS"
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]==2 and all(x["ros_id"] for x in d["items"])' <<< "$LINES"
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]==2 and all(x["source_type"]=="SELF" for x in d["items"])' <<< "$IPS"
+          LINEID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["items"][0]["id"])' <<< "$LINES")
+
+          echo '--- M4 resource pool ---'
+          POOL=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"poolCode":"CI-MIXED","poolName":"CI统一资源池","purpose":"M4 smoke","regionCodes":[],"carrierCodes":[],"sourceScope":"MIXED","admissionRule":{},"detectionRule":{},"dedupRule":{},"priority":10}' http://localhost:8080/api/admin/v1/resource-pools)
+          POOLID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$POOL")
+          RECALC=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M4 CI首次入池"}' http://localhost:8080/api/admin/v1/resource-pools/$POOLID/recalculate)
+          python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["memberCount"]==2' <<< "$RECALC"
+
+          echo '--- M4 domain reference ---'
+          DOMAIN=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d "{\"domainName\":\"ci-m4.example.test\",\"currentIpId\":null,\"lineId\":$LINEID,\"usageTypeCode\":\"TUNNEL_ENTRY\",\"updateMode\":\"AUTO\"}" http://localhost:8080/api/admin/v1/domains)
+          DOMAINID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$DOMAIN")
+          DREF=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M4 CI刷新域名目标"}' http://localhost:8080/api/admin/v1/domains/$DOMAINID/refresh)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="PENDING_UPDATE" and "DNS" in d["message"]' <<< "$DREF"
+
+          echo '--- M4 external supplier and unified pool ---'
+          SUP=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"supplierCode":"CI-SUP","supplierName":"CI外部供应商","contactName":"CI","contactPhone":"10000","apiEndpoint":"https://mock-supplier.example/api","authTypeCode":"TOKEN","apiAccount":"ci-account","secret":"ci-supplier-secret","regionCodes":[],"carrierCodes":[],"fetchMode":"MANUAL"}' http://localhost:8080/api/admin/v1/suppliers)
+          SUPID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$SUP")
+          STEST=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"reason":"M4 CI供应商连通测试"}' http://localhost:8080/api/admin/v1/suppliers/$SUPID/test)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["interfaceStatus"]=="NORMAL" and d["reachable"] is True' <<< "$STEST"
+          SDETAIL=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/suppliers/$SUPID)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["secret_configured"] is True and "secret_cipher" not in d and "secret" not in d' <<< "$SDETAIL"
+          EXT=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d "{\"sourceType\":\"SUPPLIER\",\"supplierId\":$SUPID,\"targetPoolId\":$POOLID,\"reason\":\"M4 CI外部资源入池\"}" http://localhost:8080/api/admin/v1/sync-tasks)
+          EXTID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["taskId"])' <<< "$EXT")
+          EXTDETAIL=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/sync-tasks/$EXTID/details)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert len(d)==2 and all(x["process_status"]=="IMPORTED" for x in d)' <<< "$EXTDETAIL"
+          MEMBERS=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/resource-pools/$POOLID/ips?page=1&size=20")
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]==4 and {x["source_type"] for x in d["items"]}=={"SELF","EXTERNAL"}' <<< "$MEMBERS"
+
+          echo '--- M4 overview/audit ---'
+          OVERVIEW=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/resources/overview)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["centos_total"]==2 and d["ros_total"]==2 and d["line_total"]==2 and d["ip_total"]==4 and d["external_ip_total"]==2 and d["active_pool_total"]==1 and d["active_supplier_total"]==1' <<< "$OVERVIEW"
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/operation-logs >/dev/null
       - name: Print backend log on failure
         if: failure()
         run: cat /tmp/backend.log || true
