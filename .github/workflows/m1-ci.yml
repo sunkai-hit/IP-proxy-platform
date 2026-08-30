@@ -1,4 +1,4 @@
-name: M1 CI
+name: M2 CI
 
 on:
   push:
@@ -36,7 +36,7 @@ jobs:
       - name: Build backend
         working-directory: backend
         run: mvn -B -DskipTests package
-      - name: Start backend and validate Flyway + JWT
+      - name: Start backend and validate M2 foundation
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -45,7 +45,7 @@ jobs:
           DB_PASSWORD: ipproxy_dev
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-          JWT_SECRET: ci-m1-secret-key-with-more-than-32-bytes-123456
+          JWT_SECRET: ci-m2-secret-key-with-more-than-32-bytes-123456
           M1_ADMIN_PASSWORD: admin123
         run: |
           java -jar backend/target/ip-proxy-platform-backend.jar > /tmp/backend.log 2>&1 &
@@ -55,10 +55,17 @@ jobs:
           done
           curl -fsS http://localhost:8080/actuator/health
           LOGIN=$(curl -fsS -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' http://localhost:8080/api/admin/v1/auth/login)
-          echo "$LOGIN"
-          TOKEN=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])' <<< "$LOGIN")
-          curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/admin/v1/auth/me
-          curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/admin/v1/dashboard/overview
+          TOKEN=$(python3 -c 'import json,sys; d=json.load(sys.stdin); assert "system:access" in d["data"]["user"]["permissions"]; print(d["data"]["accessToken"])' <<< "$LOGIN")
+          H="Authorization: Bearer $TOKEN"
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/auth/me
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/users
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/roles
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/permissions
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/dict-types
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/parameters
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/login-logs
+          curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"roleCode":"CI_OPERATOR","roleName":"CI运营测试","dataScope":"SELF","description":"M2 smoke","status":"ACTIVE"}' http://localhost:8080/api/admin/v1/system/roles
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/system/operation-logs
       - name: Print backend log on failure
         if: failure()
         run: cat /tmp/backend.log || true
