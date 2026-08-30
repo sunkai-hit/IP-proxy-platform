@@ -4,14 +4,16 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.sql.Timestamp;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
 /**
- * M6 对独享资源分配的正式实现。
- * V2 已确定独享资源通过 ip_id / line_id 表达，因此这里严格使用既有模型，
- * 不引入 resource_id 等抽象兼容字段。
+ * M6 对独享资源分配与 JDBC 时间类型的正式适配。
+ * V2 已确定独享资源通过 ip_id / line_id 表达，因此这里严格使用既有模型。
+ * JdbcTemplate Map 对 TIMESTAMPTZ 可能返回 java.sql.Timestamp，统一在 Repository 边界标准化。
  */
 @Repository
 @Primary
@@ -21,6 +23,38 @@ public class OrderServiceMapperPatch extends OrderServiceMapper {
     public OrderServiceMapperPatch(JdbcTemplate jdbc) {
         super(jdbc);
         this.jdbc = jdbc;
+    }
+
+    @Override
+    public Map<String, Object> order(Long id) {
+        Map<String, Object> row = super.order(id);
+        normalizeTime(row, "expected_effective_at");
+        normalizeTime(row, "expected_expire_at");
+        normalizeTime(row, "confirmed_at");
+        normalizeTime(row, "completed_at");
+        normalizeTime(row, "cancelled_at");
+        normalizeTime(row, "created_at");
+        normalizeTime(row, "updated_at");
+        return row;
+    }
+
+    @Override
+    public Map<String, Object> service(Long id) {
+        Map<String, Object> row = super.service(id);
+        normalizeTime(row, "effective_at");
+        normalizeTime(row, "expire_at");
+        normalizeTime(row, "last_used_at");
+        normalizeTime(row, "created_at");
+        normalizeTime(row, "updated_at");
+        return row;
+    }
+
+    private void normalizeTime(Map<String, Object> row, String key) {
+        if (row == null) return;
+        Object value = row.get(key);
+        if (value instanceof Timestamp ts) {
+            row.put(key, ts.toInstant().atOffset(ZoneOffset.UTC));
+        }
     }
 
     @Override
