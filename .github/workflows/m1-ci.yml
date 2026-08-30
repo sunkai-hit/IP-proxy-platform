@@ -137,11 +137,11 @@ jobs:
 
           echo '--- M7 runtime logs ---'
           ALL_EXTRACT=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/runtime-logs/ip-extract?page=1&size=50')
-          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]>=2 and any(x["result"]=="SUCCESS" for x in d["items"])' <<< "$ALL_EXTRACT"
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("extract_log_total=",d["total"]); assert d["total"]>=2; assert sum(1 for x in d["items"] if x["result"]=="SUCCESS")>=2' <<< "$ALL_EXTRACT"
           ALL_API=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/runtime-logs/api?page=1&size=100')
-          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]>=6 and any(x["result"]=="FAILURE" for x in d["items"])' <<< "$ALL_API"
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("api_log_total=",d["total"]); paths={x["path"] for x in d["items"]}; assert "/api/open/v1/auth/token" in paths and "/api/open/v1/proxy/extract" in paths and "/api/open/v1/whitelist" in paths; assert any(x["result"]=="FAILURE" for x in d["items"])' <<< "$ALL_API"
           USAGE=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/runtime-logs/usage?page=1&size=20')
-          python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["total"]==0' <<< "$USAGE"
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("usage_log_total=",d["total"]); assert d["total"]==0' <<< "$USAGE"
       - name: Print backend log on failure
         if: failure()
         run: cat /tmp/backend.log || true
