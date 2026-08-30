@@ -7,7 +7,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 @SpringBootApplication
-@MapperScan({"com.ipproxy.platform.system.user.mapper","com.ipproxy.platform.customer.mapper"})
+@MapperScan({"com.ipproxy.platform.system.user.mapper","com.ipproxy.platform.customer.mapper","com.ipproxy.platform.resource.mapper"})
 @EnableConfigurationProperties(JwtProperties.class)
 public class IpProxyPlatformApplication {
     public static void main(String[] args) { SpringApplication.run(IpProxyPlatformApplication.class, args); }
