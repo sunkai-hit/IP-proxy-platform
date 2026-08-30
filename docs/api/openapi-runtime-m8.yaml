@@ -1,0 +1,276 @@
+openapi: 3.0.3
+info:
+  title: IP代理管理平台 M8 监控、告警与数据统计 API
+  version: 1.0.0
+  description: |
+    M8 后台实际接口契约。所有接口位于 /api/admin/v1 下并使用后台 JWT。
+    监控数据超过 staleSeconds 后显示为 UNKNOWN；真实主动探测通过 MonitorProbeAdapter 接入。
+    使用统计中的代理请求数、出站IP、上下行流量仅来自真实 log_usage，不用 IP 提取日志替代。
+servers:
+  - url: http://localhost:8080/api/admin/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Monitor
+  - name: Alarm
+  - name: Statistics
+paths:
+  /monitor/overview:
+    get:
+      tags: [Monitor]
+      summary: 监控总览
+      responses:
+        '200': { description: OK }
+  /monitor/objects:
+    get:
+      tags: [Monitor]
+      summary: 查询监控对象最新状态
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 20 } }
+        - { name: objectType, in: query, schema: { type: string, enum: [CENTOS, ROS, LINE, IP, POOL, SUPPLIER, SERVICE] } }
+        - { name: keyword, in: query, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+  /monitor/objects/{objectType}/{objectId}/metrics:
+    get:
+      tags: [Monitor]
+      summary: 查询对象指标历史
+      parameters:
+        - { name: objectType, in: path, required: true, schema: { type: string } }
+        - { name: objectId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: metricCode, in: query, schema: { type: string } }
+        - { name: hours, in: query, schema: { type: integer, default: 24, maximum: 168 } }
+      responses:
+        '200': { description: OK }
+  /monitor/collect:
+    post:
+      tags: [Monitor]
+      summary: 手工执行一轮监控采集与告警判定
+      parameters:
+        - { name: triggerType, in: query, schema: { type: string, enum: [MANUAL, SCHEDULED, CI], default: MANUAL } }
+      responses:
+        '200': { description: 返回对象数、指标数、触发与恢复告警数 }
+
+  /alarms:
+    get:
+      tags: [Alarm]
+      summary: 告警记录分页查询
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 20 } }
+        - { name: status, in: query, schema: { type: string, enum: [OPEN, ACKNOWLEDGED, PROCESSING, RECOVERED, CLOSED] } }
+        - { name: severity, in: query, schema: { type: string, enum: [INFO, MINOR, MAJOR, CRITICAL] } }
+        - { name: keyword, in: query, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+  /alarms/{id}:
+    get:
+      tags: [Alarm]
+      summary: 告警详情、处理记录及通知记录
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { description: OK }
+  /alarms/{id}/acknowledge:
+    post:
+      tags: [Alarm]
+      summary: 确认告警
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlarmRemark' }
+      responses:
+        '200': { description: OK }
+  /alarms/{id}/process:
+    post:
+      tags: [Alarm]
+      summary: 将告警进入处理中
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlarmRemark' }
+      responses:
+        '200': { description: OK }
+  /alarms/{id}/close:
+    post:
+      tags: [Alarm]
+      summary: 人工关闭告警
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlarmRemark' }
+      responses:
+        '200': { description: OK }
+  /alarms/{id}/notes:
+    post:
+      tags: [Alarm]
+      summary: 新增处理备注
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlarmRemark' }
+      responses:
+        '200': { description: OK }
+  /alarms/rules:
+    get:
+      tags: [Alarm]
+      summary: 告警规则分页查询
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 20 } }
+        - { name: keyword, in: query, schema: { type: string } }
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [Alarm]
+      summary: 新增告警规则
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlarmRuleInput' }
+      responses:
+        '200': { description: OK }
+  /alarms/rules/{id}:
+    put:
+      tags: [Alarm]
+      summary: 修改告警规则
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlarmRuleInput' }
+      responses:
+        '200': { description: OK }
+    delete:
+      tags: [Alarm]
+      summary: 软删除告警规则
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { description: OK }
+  /alarms/rules/{id}/status:
+    post:
+      tags: [Alarm]
+      summary: 启用或停用告警规则
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [ACTIVE, DISABLED] }
+      responses:
+        '200': { description: OK }
+  /alarms/notifications:
+    get:
+      tags: [Alarm]
+      summary: 告警通知发送记录
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 20 } }
+        - { name: channel, in: query, schema: { type: string, enum: [PLATFORM, DINGTALK, WEBHOOK] } }
+        - { name: result, in: query, schema: { type: string, enum: [PENDING, SUCCESS, FAILURE] } }
+      responses:
+        '200': { description: OK }
+
+  /statistics/overview:
+    get:
+      tags: [Statistics]
+      summary: 统计总览与最近计算任务
+      responses:
+        '200': { description: OK }
+  /statistics/resources:
+    get:
+      tags: [Statistics]
+      summary: 基础资源小时统计
+      parameters: &rangeParams
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: OK }
+  /statistics/ips:
+    get:
+      tags: [Statistics]
+      summary: IP资源小时统计
+      parameters: *rangeParams
+      responses:
+        '200': { description: OK }
+  /statistics/customers:
+    get:
+      tags: [Statistics]
+      summary: 客户使用小时统计
+      description: 提取量来自 log_ip_extract；代理请求/出站IP/流量来自 log_usage。
+      parameters: *rangeParams
+      responses:
+        '200': { description: OK }
+  /statistics/products:
+    get:
+      tags: [Statistics]
+      summary: 产品与服务小时统计
+      parameters: *rangeParams
+      responses:
+        '200': { description: OK }
+  /statistics/suppliers:
+    get:
+      tags: [Statistics]
+      summary: 外部资源小时统计
+      parameters: *rangeParams
+      responses:
+        '200': { description: OK }
+  /statistics/recalculate:
+    post:
+      tags: [Statistics]
+      summary: 重算指定小时统计
+      parameters:
+        - { name: hour, in: query, schema: { type: string, format: date-time } }
+        - { name: triggerType, in: query, schema: { type: string, enum: [MANUAL, SCHEDULED, CI], default: MANUAL } }
+      responses:
+        '200': { description: 返回五类统计写入行数 }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    AlarmRemark:
+      type: object
+      properties:
+        remark: { type: string, maxLength: 2000 }
+    AlarmRuleInput:
+      type: object
+      properties:
+        ruleCode: { type: string, maxLength: 64 }
+        ruleName: { type: string, maxLength: 200 }
+        objectType: { type: string, enum: [CENTOS, ROS, LINE, IP, POOL, SUPPLIER, SERVICE] }
+        metricCode: { type: string, maxLength: 64 }
+        operator: { type: string, enum: [EQ, NE, GT, GTE, LT, LTE, IN, NOT_IN] }
+        threshold: { description: 单值或数组阈值 }
+        durationSeconds: { type: integer, minimum: 0, default: 0 }
+        consecutiveCount: { type: integer, minimum: 1, default: 1 }
+        severity: { type: string, enum: [INFO, MINOR, MAJOR, CRITICAL] }
+        notificationChannels:
+          type: array
+          items: { type: string, enum: [PLATFORM, DINGTALK, WEBHOOK] }
+        notifyRecovery: { type: boolean, default: true }
+        repeatIntervalSeconds: { type: integer, nullable: true, minimum: 0 }
