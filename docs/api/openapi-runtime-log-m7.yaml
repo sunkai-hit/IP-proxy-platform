@@ -1,0 +1,94 @@
+openapi: 3.1.2
+info:
+  title: IP代理管理平台 M7 运行日志 Admin API
+  version: 1.0.0
+  description: |
+    M7 后台运行日志实际契约。IP提取日志与 Open API 日志由平台调用链实时产生，并通过 requestId 关联。
+    使用日志 log_usage 代表真实代理流量（客户端IP、出口IP、目标Host、上下行字节等），M7仅提供后台查询，写入需等待真实 Proxy/VPN/Tunnel/ROS 数据面协议确认。
+servers:
+  - url: http://localhost:8080/api/admin/v1
+security:
+  - adminBearer: []
+tags:
+  - name: RuntimeLog
+paths:
+  /runtime-logs/ip-extract:
+    get:
+      tags: [RuntimeLog]
+      summary: 查询IP提取日志
+      description: 需要 runtime-log:extract:read
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/Keyword'
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200': { $ref: '#/components/responses/PagedSuccess' }
+  /runtime-logs/api:
+    get:
+      tags: [RuntimeLog]
+      summary: 查询 Open API 日志
+      description: 需要 runtime-log:api:read；当前仅返回 api_scope=OPEN。
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/Keyword'
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200': { $ref: '#/components/responses/PagedSuccess' }
+  /runtime-logs/usage:
+    get:
+      tags: [RuntimeLog]
+      summary: 查询真实代理使用日志
+      description: 需要 runtime-log:usage:read。M7不伪造使用日志，未接真实数据面时可为空。
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/Keyword'
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200': { $ref: '#/components/responses/PagedSuccess' }
+components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Size:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 20 }
+    Keyword:
+      name: keyword
+      in: query
+      schema: { type: string, default: '' }
+      description: requestId、客户、服务等关键字；不同日志类型还可匹配路径或出站IP。
+    ServiceId:
+      name: serviceId
+      in: query
+      required: false
+      schema: { type: integer, format: int64 }
+  responses:
+    PagedSuccess:
+      description: 分页查询成功
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: { type: string, examples: ['0'] }
+              message: { type: string }
+              requestId: { type: string }
+              timestamp: { type: integer, format: int64 }
+              data:
+                type: object
+                properties:
+                  page: { type: integer }
+                  size: { type: integer }
+                  total: { type: integer, format: int64 }
+                  items: { type: array, items: { type: object, additionalProperties: true } }
