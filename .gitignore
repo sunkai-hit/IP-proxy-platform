@@ -1,4 +1,22 @@
-.DS_Store
-Thumbs.db
-.vscode/
+# IDE / OS
 .idea/
+.vscode/
+.DS_Store
+*.iml
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Backend
+backend/target/
+*.log
+
+# Local env
+.env
+!.env.example
+
+# Runtime
+postgres_data/
+redis_data/

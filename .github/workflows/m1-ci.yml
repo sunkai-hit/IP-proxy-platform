@@ -1,0 +1,78 @@
+name: M1 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ip_proxy
+          POSTGRES_USER: ipproxy
+          POSTGRES_PASSWORD: ipproxy_dev
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ipproxy -d ip_proxy"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build backend
+        working-directory: backend
+        run: mvn -B -DskipTests package
+      - name: Start backend and validate Flyway + JWT
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: ip_proxy
+          DB_USER: ipproxy
+          DB_PASSWORD: ipproxy_dev
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: ci-m1-secret-key-with-more-than-32-bytes-123456
+          M1_ADMIN_PASSWORD: admin123
+        run: |
+          java -jar backend/target/ip-proxy-platform-backend.jar > /tmp/backend.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8080/actuator/health >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/actuator/health
+          LOGIN=$(curl -fsS -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' http://localhost:8080/api/admin/v1/auth/login)
+          echo "$LOGIN"
+          TOKEN=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])' <<< "$LOGIN")
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/admin/v1/auth/me
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/admin/v1/dashboard/overview
+      - name: Print backend log on failure
+        if: failure()
+        run: cat /tmp/backend.log || true
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install --package-lock-only && npm ci
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build

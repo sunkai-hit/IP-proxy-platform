@@ -1,49 +1,65 @@
-# IP代理管理平台 · 原型演示
+# IP代理管理平台
 
-基于《IP代理管理平台需求说明书（详细需求版 V1.0）》整理的纯前端后台原型。
+当前进入 **M1 工程骨架阶段**。仓库同时保留需求原型、数据库/API设计以及正式前后端工程。
 
-## 本版本重点
+## 目录
 
-- 补全主要二级页面：新增、编辑、详情、认证审批、服务开通、服务变更、资源释放、告警处理、角色权限等。
-- 修复多标签页面切换：日志中心 8 个标签、监控中心 6 个标签、系统管理登录/审计等均有独立页面内容和字段。
-- 新增“系统管理 → 字典管理”，集中维护跨模块复用的枚举项。
-
-## 字典管理范围
-
-当前原型纳入：
-
-- 客户类型、客户状态
-- 认证类型、认证状态
-- 产品类型、接入方式、代理协议、认证方式
-- 运营商、资源来源、基础资源状态、拨号状态、IP可用状态、资源占用方式
-- 订单类型、订单状态、服务状态、服务变更类型
-- 告警级别、告警状态、通知方式
-- 供应商状态、同步任务状态
-- 日志类型、后台用户状态
-
-“地区/行政区域”属于层级数据，暂不混入普通字典。
-
-## 页面范围
-
-- 首页工作台
-- 客户管理：客户列表、认证审批
-- 资源管理：资源概览、CentOS、ROS、家宽/线路、IP、资源池、独享资源、外部供应商、外部资源接入
-- 产品管理：产品、套餐、产品资源策略
-- 订单与服务：订单、服务开通、服务实例、服务变更、到期与资源释放
-- 监控中心：CentOS、ROS、线路、IP、外部资源、服务运行
-- 日志中心：IP提取、使用、API、ROS运行、线路拨号、IP变化、外部资源获取、操作日志
-- 告警中心：告警记录、告警规则、钉钉通知
-- 数据统计：基础资源、IP、客户使用、产品与服务、外部资源
-- 系统管理：用户、角色、字典、参数、登录日志、操作审计
-
-## 运行
-
-无需构建依赖，直接打开 `index.html`，或：
-
-```bash
-python -m http.server 8080
+```text
+.
+├── prototype/              # 已确认的静态原型，作为产品/视觉基准
+├── frontend/               # Vue 3 + TypeScript + Vite
+├── backend/                # Java 21 + Spring Boot 4.1.1
+├── database/migration/     # PostgreSQL Flyway V1-V5
+├── docs/                   # ER、OpenAPI、架构设计
+├── docker-compose.yml      # PostgreSQL + Redis + Backend + Frontend
+└── .github/workflows/      # M1 CI 构建与联调验证
 ```
 
-然后访问 `http://localhost:8080`。
+## M1 已实现
 
-> 当前仅为需求讨论和原型演示，所有数据为模拟数据，保存/审批/同步等动作不会调用真实后台。
+- Vue 3 / TypeScript / Vite / Element Plus / Pinia / Vue Router / Axios 工程骨架
+- Spring Boot 4.1.1 / Spring MVC / Security / MyBatis 工程骨架
+- PostgreSQL + Redis Docker Compose
+- Flyway 自动加载仓库现有 `database/migration/V1-V5`
+- 统一 API 响应、全局异常、Request ID
+- JWT 登录与认证过滤器
+- 开发管理员自动初始化
+- Swagger UI / Actuator
+- Vue 登录页、后台 Layout、Dashboard 真实接口联调
+- 原型移动到 `prototype/` 保留
+
+## 一键启动（推荐）
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+访问：
+
+- 前端：http://localhost:8081
+- 后端：http://localhost:8080
+- Swagger：http://localhost:8080/swagger-ui.html
+- Health：http://localhost:8080/actuator/health
+
+开发环境默认账号：`admin / admin123`。
+
+> 默认账号仅用于 M1 本地开发验证。非开发环境必须修改 `M1_ADMIN_PASSWORD` 与 `JWT_SECRET`。
+
+## 分开开发
+
+```bash
+docker compose up -d postgres redis
+cd backend && mvn spring-boot:run
+cd frontend && npm install && npm run dev
+```
+
+Vite 开发服务器默认 `http://localhost:5173`，会代理 `/api` 到 8080 后端。
+
+## 设计基线
+
+- 数据库：`docs/database/` + `database/migration/`
+- API：`docs/api/`
+- 静态原型：`prototype/`
+
+M2 将在该工程骨架上实现用户、角色、权限、字典、参数和审计等系统基础模块。
