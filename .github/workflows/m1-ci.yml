@@ -60,7 +60,7 @@ jobs:
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/options
           C=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"customerName":"CI测试企业","customerTypeCode":"ENTERPRISE","contactName":"CI联系人","contactPhone":"13800000000","contactEmail":"ci@example.com","remark":"M3 smoke"}' http://localhost:8080/api/admin/v1/customers)
           CID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$C")
-          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/customers?keyword=CI测试企业"
+          curl -fsS -H "$H" --get --data-urlencode 'keyword=CI测试企业' http://localhost:8080/api/admin/v1/customers
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/customers/$CID
           A=$(curl -fsS -H "$H" -H 'Content-Type: application/json' -d '{"authTypeCode":"ENTERPRISE","submittedData":{"subjectName":"CI测试企业","documentNo":"CI-DEMO"},"attachmentRefs":[]}' http://localhost:8080/api/admin/v1/customers/$CID/auth)
           AID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$A")
