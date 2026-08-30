@@ -1,0 +1,439 @@
+openapi: 3.1.0
+info:
+  title: IP代理管理平台 M5 产品管理实际契约
+  version: 5.0.0
+  description: |
+    M5 产品管理实际实现契约。产品层负责定义“卖什么、套餐权益和如何选择资源”，
+    不直接控制 CentOS / ROS / 家宽线路 / IP 等基础资源。
+
+    核心业务边界：
+    - 前台明确保留五类产品：短效IP、长效IP、独享IP、VPN、隧道。
+    - 产品创建后 productCode 与 productType 不可修改。
+    - 新产品默认 DRAFT；启用前必须完成对应专项配置，并至少存在一条 ACTIVE 且当前验证可用的资源策略。
+    - 新资源策略默认 DISABLED；验证通过后才能启用。修改已启用策略会自动停用，需重新验证。
+    - 资源策略通过 prd_strategy_pool 引用 M4 统一资源池；产品模块不直接对基础资源执行新增、重拨、重启等控制动作。
+    - 产品复制仅复制产品通用配置和专项配置，新副本保持 DRAFT，不复制套餐和资源策略。
+    - 套餐复制后的副本默认 DISABLED。
+    - M5 配置修改只影响后续开通；M6 订单/服务使用 product/package/strategy snapshot 隔离历史。
+    - VPN 具体运行位置及最终协议仍依赖后续部署方案，当前允许 vpnProtocolCode=TBD。
+    - 隧道只配置入口域名/主机、端口及会话/切换规则，不在 M5 猜测实际隧道运行节点。
+servers:
+  - url: /api/admin/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Product
+  - name: Package
+  - name: Strategy
+paths:
+  /products/overview:
+    get:
+      tags: [Product]
+      summary: 产品概览
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /products/options:
+    get:
+      tags: [Product]
+      summary: 产品管理选项
+      description: 返回五类产品、接入方式、协议、认证方式、运营商、地区、VPN协议、产品、M4资源池、域名、调度模式等选项。
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /products:
+    get:
+      tags: [Product]
+      summary: 产品列表
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 500 } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [DRAFT, ACTIVE, DISABLED] } }
+        - { name: productType, in: query, schema: { $ref: '#/components/schemas/ProductType' } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Product]
+      summary: 新增产品
+      description: 新产品状态固定为 DRAFT；可在创建时同时提交 typeConfig，也可创建后单独维护专项配置。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /products/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Product]
+      summary: 产品详情
+      description: 同时返回通用产品定义和对应 type_config。
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    put:
+      tags: [Product]
+      summary: 修改产品通用配置
+      description: productCode 与 productType 创建后不可修改。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProductInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /products/{id}/config:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Product]
+      summary: 获取产品专项配置
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    put:
+      tags: [Product]
+      summary: 更新产品专项配置
+      description: 请求结构随 productType 变化，具体字段见五类 Config schema。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { $ref: '#/components/schemas/ShortIpConfig' }
+                - { $ref: '#/components/schemas/LongIpConfig' }
+                - { $ref: '#/components/schemas/ExclusiveIpConfig' }
+                - { $ref: '#/components/schemas/VpnConfig' }
+                - { $ref: '#/components/schemas/TunnelConfig' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /products/{id}/enable:
+    post:
+      tags: [Product]
+      summary: 启用产品
+      description: 必须已有专项配置，并至少有一条 ACTIVE 且验证有效的资源策略；否则拒绝启用。
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /products/{id}/disable:
+    post:
+      tags: [Product]
+      summary: 停用产品
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /products/{id}/copy:
+    post:
+      tags: [Product]
+      summary: 复制产品
+      description: 复制通用配置和专项配置；副本为 DRAFT，不复制套餐和资源策略。
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /packages:
+    get:
+      tags: [Package]
+      summary: 套餐列表
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 500 } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [ACTIVE, DISABLED] } }
+        - { name: productId, in: query, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Package]
+      summary: 新增套餐
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PackageInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /packages/{id}:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      tags: [Package]
+      summary: 套餐详情
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    put:
+      tags: [Package]
+      summary: 修改套餐
+      description: packageCode 与 productId 创建后不可修改。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PackageInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /packages/{id}/enable:
+    post:
+      tags: [Package]
+      summary: 启用套餐
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /packages/{id}/disable:
+    post:
+      tags: [Package]
+      summary: 停用套餐
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /packages/{id}/copy:
+    post:
+      tags: [Package]
+      summary: 复制套餐
+      description: 副本默认 DISABLED，避免复制后立即成为可售套餐。
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /resource-strategies:
+    get:
+      tags: [Strategy]
+      summary: 产品资源策略列表
+      parameters:
+        - { name: page, in: query, schema: { type: integer, default: 1 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 500 } }
+        - { name: keyword, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [ACTIVE, DISABLED] } }
+        - { name: productId, in: query, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    post:
+      tags: [Strategy]
+      summary: 新增资源策略
+      description: 新策略默认 DISABLED，必须验证后才能启用。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StrategyInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /resource-strategies/{id}:
+    parameters: [ { $ref: '#/components/parameters/Id' } ]
+    get:
+      tags: [Strategy]
+      summary: 资源策略详情
+      description: 返回策略自身配置、M4资源池绑定和可选资源范围。
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+    put:
+      tags: [Strategy]
+      summary: 修改资源策略
+      description: strategyCode 与 productId 不可修改；如策略原为 ACTIVE，修改后自动置为 DISABLED，必须重新验证。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StrategyInput' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /resource-strategies/{id}/validate:
+    post:
+      tags: [Strategy]
+      summary: 验证资源策略
+      description: 验证已绑定资源池是否 ACTIVE、是否存在成员，并验证可选资源范围引用；未设置来源优先级只产生 warning。
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200':
+          description: 成功，data 包含 valid/errors/warnings/usablePoolCount/memberCount
+  /resource-strategies/{id}/enable:
+    post:
+      tags: [Strategy]
+      summary: 启用资源策略
+      description: 服务端会再次执行实时验证；验证失败则拒绝启用。
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+  /resource-strategies/{id}/disable:
+    post:
+      tags: [Strategy]
+      summary: 停用资源策略
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody: { $ref: '#/components/requestBodies/Reason' }
+      responses:
+        '200': { $ref: '#/components/responses/Success' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+  requestBodies:
+    Reason:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [reason]
+            properties:
+              reason: { type: string, minLength: 1, maxLength: 1000 }
+  responses:
+    Success:
+      description: 成功
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiResponse' }
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        data: {}
+        requestId: { type: string }
+        timestamp: { type: integer, format: int64 }
+    ProductType:
+      type: string
+      enum: [SHORT_IP, LONG_IP, EXCLUSIVE_IP, VPN, TUNNEL]
+    ProductInput:
+      type: object
+      required: [productCode, productName, productType, accessModeCode]
+      properties:
+        productCode: { type: string, maxLength: 64 }
+        productName: { type: string, maxLength: 200 }
+        productType: { $ref: '#/components/schemas/ProductType' }
+        accessModeCode: { type: string }
+        protocolCodes: { type: array, items: { type: string } }
+        authModeCodes: { type: array, items: { type: string } }
+        resourceMode: { type: string, enum: [SHARED, EXCLUSIVE] }
+        regionCodes: { type: array, items: { type: string } }
+        carrierCodes: { type: array, items: { type: string } }
+        description: { type: string, maxLength: 1000 }
+        typeConfig:
+          oneOf:
+            - { $ref: '#/components/schemas/ShortIpConfig' }
+            - { $ref: '#/components/schemas/LongIpConfig' }
+            - { $ref: '#/components/schemas/ExclusiveIpConfig' }
+            - { $ref: '#/components/schemas/VpnConfig' }
+            - { $ref: '#/components/schemas/TunnelConfig' }
+    ShortIpConfig:
+      type: object
+      required: [ipValidSeconds, singleExtractLimit]
+      properties:
+        ipValidSeconds: { type: integer, minimum: 1 }
+        singleExtractLimit: { type: integer, minimum: 1 }
+        extractRateLimit: { type: integer, minimum: 1 }
+        extractRateWindowSeconds: { type: integer, minimum: 1 }
+        dedupPeriodSeconds: { type: integer, minimum: 1 }
+        whitelistRequired: { type: boolean, default: true }
+        switchPolicy: { type: object, additionalProperties: true }
+    LongIpConfig:
+      type: object
+      required: [bindType]
+      properties:
+        holdPeriodSeconds: { type: integer, format: int64 }
+        bindType: { type: string, enum: [IP, LINE] }
+        autoReplace: { type: boolean, default: true }
+        failureThreshold: { type: integer, minimum: 1, default: 3 }
+        failoverPolicy: { type: object, additionalProperties: true }
+    ExclusiveIpConfig:
+      type: object
+      required: [exclusiveResourceType]
+      properties:
+        exclusiveResourceType: { type: string, enum: [IP, LINE] }
+        resourceCountDefault: { type: integer, minimum: 1, default: 1 }
+        lockTimeoutSeconds: { type: integer, minimum: 1, default: 300 }
+        replacementRule: { type: object, additionalProperties: true }
+        releaseRule: { type: object, additionalProperties: true }
+    VpnConfig:
+      type: object
+      required: [vpnProtocolCode, credentialTypeCode]
+      properties:
+        vpnProtocolCode: { type: string, description: 可使用 TBD，待真实部署协议确认 }
+        credentialTypeCode: { type: string }
+        defaultDeviceLimit: { type: integer }
+        defaultConnectionLimit: { type: integer }
+        outboundPolicy: { type: object, additionalProperties: true }
+    TunnelConfig:
+      type: object
+      required: [entryPort]
+      description: entryDomainId 与 entryHost 至少填写一个。
+      properties:
+        entryDomainId: { type: integer, format: int64 }
+        entryHost: { type: string }
+        entryPort: { type: integer, minimum: 1, maximum: 65535 }
+        sessionHoldSeconds: { type: integer }
+        concurrencyLimit: { type: integer }
+        ipSwitchPolicy: { type: object, additionalProperties: true }
+    PackageInput:
+      type: object
+      required: [packageCode, productId, packageName, serviceDays]
+      properties:
+        packageCode: { type: string, maxLength: 64 }
+        productId: { type: integer, format: int64 }
+        packageName: { type: string, maxLength: 200 }
+        serviceDays: { type: integer, minimum: 1 }
+        ipCount: { type: integer }
+        extractQuota: { type: integer, format: int64 }
+        trafficQuotaBytes: { type: integer, format: int64 }
+        concurrencyLimit: { type: integer }
+        deviceLimit: { type: integer }
+        whitelistLimit: { type: integer }
+        changeIpLimit: { type: integer }
+        price: { type: number, minimum: 0 }
+        currency: { type: string, default: CNY }
+        quotaConfig: { type: object, additionalProperties: true }
+    StrategyInput:
+      type: object
+      required: [strategyCode, strategyName, productId, dispatchMode, poolBindings]
+      properties:
+        strategyCode: { type: string, maxLength: 64 }
+        strategyName: { type: string, maxLength: 200 }
+        productId: { type: integer, format: int64 }
+        dispatchMode:
+          type: string
+          enum: [PRIORITY, ROUND_ROBIN, RANDOM, WEIGHTED_RANDOM, QUALITY_FIRST, LATENCY_FIRST]
+        sourcePriority:
+          type: array
+          items: { type: string, enum: [SELF, EXTERNAL] }
+        regionCodes: { type: array, items: { type: string } }
+        carrierCodes: { type: array, items: { type: string } }
+        poolBindings:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/PoolBinding' }
+        scopes:
+          type: array
+          items: { $ref: '#/components/schemas/ScopeInput' }
+        failoverRule: { type: object, additionalProperties: true }
+        ipHoldRule: { type: object, additionalProperties: true }
+        switchRule: { type: object, additionalProperties: true }
+    PoolBinding:
+      type: object
+      required: [poolId]
+      properties:
+        poolId: { type: integer, format: int64, description: M4 res_pool.id }
+        priority: { type: integer, default: 100 }
+        weight: { type: integer, default: 100 }
+        enabled: { type: boolean, default: true }
+    ScopeInput:
+      type: object
+      required: [scopeType]
+      properties:
+        scopeType: { type: string, enum: [CENTOS, ROS, LINE, IP, NODE_TAG] }
+        resourceId: { type: integer, format: int64, description: CENTOS/ROS/LINE/IP 时可填写具体资源ID }
+        scopeCode: { type: string, description: NODE_TAG 时必须填写 }
+        includeFlag: { type: boolean, default: true }
+        priority: { type: integer, default: 100 }
