@@ -1,0 +1,287 @@
+openapi: 3.1.2
+info:
+  title: IP代理管理平台 - M3 客户管理 Admin API
+  version: 1.0.0-m3
+  description: |
+    M3 客户管理实际实现接口契约。属于 Admin API，统一前缀 /api/admin/v1。
+    本规范覆盖客户档案、客户认证、客户账号、服务/凭证引用及使用概览。
+    服务凭证仅返回 secret_mask，不返回 Token、密码、VPN 私钥或证书私密内容。
+servers:
+  - url: http://localhost:8080/api/admin/v1
+tags:
+  - name: Customer
+  - name: CustomerAuth
+  - name: CustomerAccount
+security:
+  - bearerAuth: []
+paths:
+  /customers:
+    get:
+      tags: [Customer]
+      operationId: listCustomers
+      summary: 分页查询客户
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: keyword, in: query, schema: {type: string}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/CustomerStatus'}}
+        - {name: authStatus, in: query, schema: {$ref: '#/components/schemas/CustomerAuthSummaryStatus'}}
+        - {name: customerTypeCode, in: query, schema: {type: string, examples: [ENTERPRISE]}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    post:
+      tags: [Customer]
+      operationId: createCustomer
+      summary: 新增客户
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CustomerRequest'}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/options:
+    get:
+      tags: [Customer]
+      operationId: getCustomerOptions
+      summary: 获取客户类型、认证类型、账号类型和可选负责人
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/{id}:
+    parameters: [{$ref: '#/components/parameters/Id'}]
+    get:
+      tags: [Customer]
+      operationId: getCustomer
+      summary: 获取客户聚合详情
+      description: 返回客户档案、认证记录、客户账号、服务引用和使用概览；不包含服务凭证。
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    put:
+      tags: [Customer]
+      operationId: updateCustomer
+      summary: 修改客户档案
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/CustomerRequest'}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/{id}/freeze:
+    post:
+      tags: [Customer]
+      operationId: freezeCustomer
+      summary: 冻结客户
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/ActionReason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/{id}/resume:
+    post:
+      tags: [Customer]
+      operationId: resumeCustomer
+      summary: 恢复客户
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/ActionReason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/{id}/disable:
+    post:
+      tags: [Customer]
+      operationId: disableCustomer
+      summary: 停用客户
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/ActionReason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/{id}/services:
+    get:
+      tags: [Customer]
+      operationId: listCustomerServices
+      summary: 查询客户服务实例引用
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/{id}/credentials:
+    get:
+      tags: [Customer]
+      operationId: listCustomerCredentials
+      summary: 查询客户服务认证信息
+      description: 需要 customer:credential:read；仅返回凭证类型、账号名与 secret_mask。
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}, '403': {$ref: '#/components/responses/Error'}}
+  /customers/{id}/usage:
+    get:
+      tags: [Customer]
+      operationId: getCustomerUsage
+      summary: 查询客户使用概览
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customers/{id}/auth:
+    post:
+      tags: [CustomerAuth]
+      operationId: createCustomerAuth
+      summary: 创建客户认证申请
+      description: M3 使用 submittedData JSON 对认证资料建模，待实名/企业认证供应商确认后再固化字段。
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AuthCreateRequest'}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-auth:
+    get:
+      tags: [CustomerAuth]
+      operationId: listCustomerAuth
+      summary: 分页查询认证申请
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: customerId, in: query, schema: {type: integer, format: int64}}
+        - {name: keyword, in: query, schema: {type: string}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/AuthReviewStatus'}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-auth/{id}:
+    get:
+      tags: [CustomerAuth]
+      operationId: getCustomerAuth
+      summary: 获取认证申请详情
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-auth/{id}/approve:
+    post:
+      tags: [CustomerAuth]
+      operationId: approveCustomerAuth
+      summary: 审核通过
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AuthReviewRequest'}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-auth/{id}/reject:
+    post:
+      tags: [CustomerAuth]
+      operationId: rejectCustomerAuth
+      summary: 审核驳回
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AuthReviewRequest'}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-accounts:
+    get:
+      tags: [CustomerAccount]
+      operationId: listCustomerAccounts
+      summary: 分页查询客户账号
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - {name: customerId, in: query, schema: {type: integer, format: int64}}
+        - {name: keyword, in: query, schema: {type: string}}
+        - {name: status, in: query, schema: {$ref: '#/components/schemas/CustomerStatus'}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+    post:
+      tags: [CustomerAccount]
+      operationId: createCustomerAccount
+      summary: 创建客户账号
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AccountCreateRequest'}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-accounts/{id}:
+    get:
+      tags: [CustomerAccount]
+      operationId: getCustomerAccount
+      summary: 获取客户账号详情
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-accounts/{id}/reset-password:
+    post:
+      tags: [CustomerAccount]
+      operationId: resetCustomerAccountPassword
+      summary: 重置客户账号密码
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PasswordResetRequest'}}}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-accounts/{id}/freeze:
+    post:
+      tags: [CustomerAccount]
+      operationId: freezeCustomerAccount
+      summary: 冻结客户账号
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/ActionReason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-accounts/{id}/resume:
+    post:
+      tags: [CustomerAccount]
+      operationId: resumeCustomerAccount
+      summary: 恢复客户账号
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/ActionReason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+  /customer-accounts/{id}/disable:
+    post:
+      tags: [CustomerAccount]
+      operationId: disableCustomerAccount
+      summary: 停用客户账号
+      parameters: [{$ref: '#/components/parameters/Id'}]
+      requestBody: {$ref: '#/components/requestBodies/ActionReason'}
+      responses: {'200': {$ref: '#/components/responses/Success'}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+    Page: {name: page, in: query, schema: {type: integer, minimum: 1, default: 1}}
+    Size: {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 500, default: 20}}
+  requestBodies:
+    ActionReason:
+      required: true
+      content: {application/json: {schema: {$ref: '#/components/schemas/ActionReasonRequest'}}}
+  schemas:
+    ApiResponse:
+      type: object
+      properties:
+        code: {type: string, examples: ['0']}
+        message: {type: string, examples: [success]}
+        data: {}
+        requestId: {type: string}
+        timestamp: {type: integer, format: int64}
+      required: [code, message, requestId, timestamp]
+    CustomerStatus: {type: string, enum: [ACTIVE, FROZEN, DISABLED]}
+    CustomerAuthSummaryStatus: {type: string, enum: [UNVERIFIED, PENDING, APPROVED, REJECTED]}
+    AuthReviewStatus: {type: string, enum: [PENDING, REVIEWING, APPROVED, REJECTED]}
+    CustomerRequest:
+      type: object
+      required: [customerName, customerTypeCode]
+      properties:
+        customerName: {type: string, maxLength: 200}
+        customerTypeCode: {type: string, examples: [ENTERPRISE]}
+        contactName: {type: [string, 'null']}
+        contactPhone: {type: [string, 'null']}
+        contactEmail: {type: [string, 'null'], format: email}
+        ownerUserId: {type: [integer, 'null'], format: int64}
+        remark: {type: [string, 'null']}
+    ActionReasonRequest:
+      type: object
+      required: [reason]
+      properties: {reason: {type: string, minLength: 1}}
+    AuthCreateRequest:
+      type: object
+      required: [authTypeCode]
+      properties:
+        authTypeCode: {type: string, examples: [ENTERPRISE]}
+        submittedData: {type: object, additionalProperties: true}
+        attachmentRefs: {type: array, items: {type: string}}
+    AuthReviewRequest:
+      type: object
+      properties: {opinion: {type: [string, 'null']}}
+    AccountCreateRequest:
+      type: object
+      required: [customerId, username, password]
+      properties:
+        customerId: {type: integer, format: int64}
+        username: {type: string, maxLength: 64}
+        password: {type: string, minLength: 6, writeOnly: true}
+        accountTypeCode: {type: string, default: DEFAULT}
+    PasswordResetRequest:
+      type: object
+      required: [password, reason]
+      properties:
+        password: {type: string, minLength: 6, writeOnly: true}
+        reason: {type: string, minLength: 1}
+  responses:
+    Success:
+      description: 成功
+      content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}
+    Error:
+      description: 错误
+      content: {application/json: {schema: {$ref: '#/components/schemas/ApiResponse'}}}
