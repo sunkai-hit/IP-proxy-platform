@@ -87,9 +87,9 @@ public class V12ResourceMapper {
     public long countLines(String k,String status,Long rosId,String type,String province,String city,String carrier,Long customerId){return jdbc.queryForObject("""
         SELECT count(*) FROM res_line l WHERE l.deleted=FALSE
         AND (?='' OR l.resource_code ILIKE '%'||?||'%' OR COALESCE(l.line_alias,'') ILIKE '%'||?||'%' OR COALESCE(l.broadband_account,'') ILIKE '%'||?||'%' OR host(l.current_public_ip) ILIKE '%'||?||'%' OR COALESCE(l.domain_name,'') ILIKE '%'||?||'%')
-        AND (?='' OR l.online_status=?) AND (? IS NULL OR l.ros_id=?) AND (?='' OR COALESCE(l.line_type,'')=?)
+        AND (?='' OR l.online_status=?) AND (CAST(? AS BIGINT) IS NULL OR l.ros_id=CAST(? AS BIGINT)) AND (?='' OR COALESCE(l.line_type,'')=?)
         AND (?='' OR COALESCE(l.province_code,l.region_code,'')=?) AND (?='' OR COALESCE(l.city_code,'')=?) AND (?='' OR COALESCE(l.carrier_code,'')=?)
-        AND (? IS NULL OR l.customer_id=?)
+        AND (CAST(? AS BIGINT) IS NULL OR l.customer_id=CAST(? AS BIGINT))
         """,Long.class,k,k,k,k,k,k,status,status,rosId,rosId,type,type,province,province,city,city,carrier,carrier,customerId,customerId);}
     public List<Map<String,Object>> listLines(String k,String status,Long rosId,String type,String province,String city,String carrier,Long customerId,int size,int offset){return jdbc.queryForList("""
         SELECT l.id,l.resource_code,l.resource_name,l.line_alias,l.ros_id,r.resource_code ros_code,r.resource_name ros_name,c.id centos_id,c.resource_code centos_code,
@@ -100,9 +100,9 @@ public class V12ResourceMapper {
         FROM res_line l JOIN res_ros r ON r.id=l.ros_id LEFT JOIN res_centos c ON c.id=r.centos_id LEFT JOIN customer cu ON cu.id=l.customer_id
         WHERE l.deleted=FALSE
         AND (?='' OR l.resource_code ILIKE '%'||?||'%' OR COALESCE(l.line_alias,'') ILIKE '%'||?||'%' OR COALESCE(l.broadband_account,'') ILIKE '%'||?||'%' OR host(l.current_public_ip) ILIKE '%'||?||'%' OR COALESCE(l.domain_name,'') ILIKE '%'||?||'%')
-        AND (?='' OR l.online_status=?) AND (? IS NULL OR l.ros_id=?) AND (?='' OR COALESCE(l.line_type,'')=?)
+        AND (?='' OR l.online_status=?) AND (CAST(? AS BIGINT) IS NULL OR l.ros_id=CAST(? AS BIGINT)) AND (?='' OR COALESCE(l.line_type,'')=?)
         AND (?='' OR COALESCE(l.province_code,l.region_code,'')=?) AND (?='' OR COALESCE(l.city_code,'')=?) AND (?='' OR COALESCE(l.carrier_code,'')=?)
-        AND (? IS NULL OR l.customer_id=?) ORDER BY l.updated_at DESC,l.id DESC LIMIT ? OFFSET ?
+        AND (CAST(? AS BIGINT) IS NULL OR l.customer_id=CAST(? AS BIGINT)) ORDER BY l.updated_at DESC,l.id DESC LIMIT ? OFFSET ?
         """,k,k,k,k,k,k,status,status,rosId,rosId,type,type,province,province,city,city,carrier,carrier,customerId,customerId,size,offset);}
     public Map<String,Object> line(Long id){return one("""
         SELECT l.*,host(l.current_public_ip) current_public_ip_text,r.resource_code ros_code,r.resource_name ros_name,c.resource_code centos_code,c.resource_name centos_name,
