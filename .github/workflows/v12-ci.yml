@@ -1,0 +1,110 @@
+name: V1.2 CI
+
+on:
+  push:
+    branches: [main, feature/v1.2-full-upgrade]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  backend-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ip_proxy
+          POSTGRES_USER: ipproxy
+          POSTGRES_PASSWORD: ipproxy_dev
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ipproxy -d ip_proxy"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Package backend
+        run: mvn -B -DskipTests package
+        working-directory: backend
+      - name: Boot and exercise V1.2 core flow
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: ip_proxy
+          DB_USER: ipproxy
+          DB_PASSWORD: ipproxy_dev
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: ci-v12-key-abcdefghijklmnopqrstuvwxyz-123456
+          M1_ADMIN_PASSWORD: admin123
+          SPRING_PROFILES_ACTIVE: m4-mock,m6-mock,m8-mock
+          MONITOR_SCHEDULED_ENABLED: 'false'
+          STATISTICS_SCHEDULED_ENABLED: 'false'
+        run: |
+          set -euo pipefail
+          java -jar backend/target/ip-proxy-platform-backend.jar >/tmp/backend.log 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for i in {1..60}; do curl -fsS http://localhost:8080/actuator/health >/dev/null && break || sleep 2; done
+          LOGIN=$(curl -fsS -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' http://localhost:8080/api/admin/v1/auth/login)
+          TOKEN=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])' <<< "$LOGIN")
+          H="Authorization: Bearer $TOKEN"
+          J='Content-Type: application/json'
+
+          C=$(curl -fsS -H "$H" -H "$J" -d '{"customerName":"V12 CI Customer","customerTypeCode":"ENTERPRISE","contactName":"CI","contactPhone":"13800000000"}' http://localhost:8080/api/admin/v1/customers)
+          CID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$C")
+          for P in centos ros lines; do curl -fsS -H "$H" -H "$J" -d '{"reason":"V12 CI sync"}' http://localhost:8080/api/admin/v1/resources/$P/sync >/dev/null; done
+          LINES=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/v12/resources/lines?page=1&size=20')
+          L1=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]>=2; print(d["items"][0]["id"])' <<< "$LINES")
+          L2=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["items"][1]["id"])' <<< "$LINES")
+          POOL=$(curl -fsS -H "$H" -H "$J" -d "{\"poolCode\":\"CI-V12-SHARED\",\"poolName\":\"V12 Shared Pool\",\"poolType\":\"SHARED\",\"purpose\":\"CI\",\"regionCodes\":[],\"carrierCodes\":[],\"lineIds\":[$L1,$L2]}" http://localhost:8080/api/admin/v1/v12/resource-pools)
+          POOLID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$POOL")
+          MEMBERS=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/resource-pools/$POOLID/lines)
+          python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["total"]==2' <<< "$MEMBERS"
+
+          PROD=$(curl -fsS -H "$H" -H "$J" -d '{"productCode":"CI-V12-SHORT","productName":"V12 Short IP","productType":"SHORT_IP","accessModeCode":"API_EXTRACT","protocolCodes":["HTTP"],"authModeCodes":["TOKEN"],"resourceMode":"SHARED","regionCodes":[],"carrierCodes":[],"typeConfig":{"ipValidSeconds":60,"singleExtractLimit":10,"extractRateLimit":100,"extractRateWindowSeconds":60,"dedupPeriodSeconds":300,"whitelistRequired":true,"switchPolicy":{"mode":"BUILTIN"}}}' http://localhost:8080/api/admin/v1/products)
+          PID2=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$PROD")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"V12 CI enable"}' http://localhost:8080/api/admin/v1/v12/products/$PID2/enable >/dev/null
+          PKG=$(curl -fsS -H "$H" -H "$J" -d "{\"packageCode\":\"CI-V12-PKG\",\"productId\":$PID2,\"packageName\":\"V12 Package\",\"serviceDays\":30,\"extractQuota\":10000,\"price\":100,\"currency\":\"CNY\",\"quotaConfig\":{}}" http://localhost:8080/api/admin/v1/packages)
+          PKGID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$PKG")
+          SVC=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"productId\":$PID2,\"packageId\":$PKGID,\"deliveryMode\":\"SELF_OWNED\",\"remark\":\"CI\"}" http://localhost:8080/api/admin/v1/services/provision)
+          SID=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="ACTIVE" and d["deliveryMode"]=="SELF_OWNED"; print(d["serviceId"])' <<< "$SVC")
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID >/dev/null
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/long-monitor/overview >/dev/null
+          curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=CENTOS' >/dev/null
+          curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=ROS' >/dev/null
+          echo 'V1.2 core smoke passed'
+      - name: Backend log on failure
+        if: failure()
+        run: tail -n 400 /tmp/backend.log || true
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build application images
+        run: docker compose build backend frontend
