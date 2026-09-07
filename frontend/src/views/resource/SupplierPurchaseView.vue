@@ -1,0 +1,10 @@
+<script setup lang="ts">
+import { onMounted,reactive,ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { externalDeliveryApi } from '@/api/externalDelivery'
+const router=useRouter(),rows=ref<any[]>([]),total=ref(0),loading=ref(false),q=reactive<any>({page:1,size:20,keyword:'',status:''});const data=(r:any)=>r.data.data
+async function load(){loading.value=true;try{const d=data(await externalDeliveryApi.purchases(q));rows.value=d.items||[];total.value=d.total||0}finally{loading.value=false}}
+onMounted(load)
+</script>
+<template><div class="page"><div class="head"><div><h2>外部套餐 / 资源采购</h2><p>记录运营人员根据客户需求在外部供应商购买的套餐，不进入自有资源池。</p></div></div><el-card shadow="never"><div class="filters"><el-input v-model="q.keyword" placeholder="采购单号/套餐/客户" clearable/><el-select v-model="q.status" placeholder="状态" clearable><el-option v-for="x in ['PENDING','ACTIVE','EXPIRED','DISABLED']" :key="x" :label="x" :value="x"/></el-select><el-button type="primary" @click="q.page=1;load()">查询</el-button></div><el-table :data="rows" v-loading="loading" stripe><el-table-column prop="purchase_no" label="采购编号" width="180"/><el-table-column prop="supplier_name" label="供应商"/><el-table-column prop="package_name" label="供应商套餐"/><el-table-column prop="customer_name" label="客户"/><el-table-column prop="effective_at" label="生效时间" width="180"/><el-table-column prop="expire_at" label="到期时间" width="180"/><el-table-column prop="status" label="状态" width="110"/><el-table-column label="操作" width="90"><template #default="s"><el-button link type="primary" @click="router.push(`/supplier-purchases/${s.row.id}`)">详情</el-button></template></el-table-column></el-table><div class="pager"><el-pagination v-model:current-page="q.page" v-model:page-size="q.size" :total="total" layout="total,sizes,prev,pager,next" @change="load"/></div></el-card></div></template>
+<style scoped>.page{display:grid;gap:16px}.head h2{margin:0 0 6px}.head p{margin:0;color:#7b8494}.filters{display:flex;gap:10px;margin-bottom:14px}.filters>*{max-width:260px}.pager{display:flex;justify-content:flex-end;margin-top:14px}</style>
