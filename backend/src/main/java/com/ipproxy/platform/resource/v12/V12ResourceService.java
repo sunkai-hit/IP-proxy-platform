@@ -44,7 +44,7 @@ public class V12ResourceService {
     }
     @Transactional public void updatePool(Long id,PoolInput in,UserPrincipal actor,String sourceIp){
         Map<String,Object> old=pool(id);required(in.poolName(),"资源池名称不能为空");String province=n(in.provinceCode()),city=n(in.cityCode()),carrier=n(in.carrierCode());
-        boolean sourceChanged=!Objects.equals(n(String.valueOf(old.get("province_code"))),province)||!Objects.equals(n(String.valueOf(old.get("city_code"))),city)||!Objects.equals(n(String.valueOf(old.get("carrier_code"))),carrier);
+        boolean sourceChanged=!Objects.equals(obj(old.get("province_code")),province)||!Objects.equals(obj(old.get("city_code")),city)||!Objects.equals(obj(old.get("carrier_code")),carrier);
         if(sourceChanged&&db.countPoolLines(id,"","","")>0)throw new BusinessException("V12_POOL_SOURCE_LOCKED","资源池已有线路成员，请先移出成员后再修改省/市/运营商来源属性");
         db.updatePool(id,in.poolName().trim(),n(in.purpose()),province,city,carrier,j(province.isBlank()?List.of():List.of(province)),j(carrier.isBlank()?List.of():List.of(carrier)),actor.userId());
         if(in.lineIds()!=null){validatePoolLines(id,in.lineIds());db.replacePoolLines(id,distinct(in.lineIds()),"维护资源池成员");}
@@ -67,11 +67,13 @@ public class V12ResourceService {
     private List<Long> distinct(List<Long> ids){if(ids==null)return List.of();return ids.stream().filter(Objects::nonNull).distinct().toList();}
     private int page(int v){return Math.max(1,v);} private int size(int v){return Math.min(200,Math.max(1,v));}
     private String n(String v){return v==null?"":v.trim();}
+    private String obj(Object v){return v==null?"":String.valueOf(v).trim();}
     private String required(String v,String msg){if(n(v).isBlank())throw new BusinessException("V12_REQUIRED",msg);return v.trim();}
     private String lineType(String v){String t=n(v).toUpperCase(Locale.ROOT);if(!Set.of("SHARED","LONG").contains(t))throw new BusinessException("V12_LINE_TYPE_INVALID","线路类型仅支持 SHARED（共享）或 LONG（长效）");return t;}
     private String lineTypeFilter(String v){return n(v).isBlank()?"":lineType(v);}
     private String j(Object v){try{return json.writeValueAsString(v==null?List.of():v);}catch(Exception e){throw new BusinessException("V12_JSON_ERROR","数据序列化失败");}}
     private BusinessException notFound(String name){return new BusinessException("V12_RESOURCE_NOT_FOUND",name+"不存在");}
 
-    public record PoolInput(String poolCode,String poolName,String purpose,String provinceCode,String cityCode,String carrierCode,List<Long> lineIds){}
+    /** poolType/regionCodes/carrierCodes 仅兼容V1.2早期客户端请求，资源池业务逻辑不再使用这些字段。 */
+    public record PoolInput(String poolCode,String poolName,String purpose,String provinceCode,String cityCode,String carrierCode,List<Long> lineIds,String poolType,List<String> regionCodes,List<String> carrierCodes){}
 }
