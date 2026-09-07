@@ -113,30 +113,123 @@ public class V12ResourceMapper {
         """,id);}
     public List<Map<String,Object>> lineIpHistory(Long id,int limit){return jdbc.queryForList("SELECT id,host(ip_address) ip_address,first_seen_at,last_seen_at,change_type,source_record_id FROM res_line_ip_history WHERE line_id=? ORDER BY last_seen_at DESC LIMIT ?",id,limit);}
     public List<Map<String,Object>> lineOperations(Long id,int limit){return jdbc.queryForList("SELECT id,operation_type,operation_source,result_status,result_message,operator_id,created_at FROM res_line_operation_log WHERE line_id=? ORDER BY created_at DESC LIMIT ?",id,limit);}
+    public int updateLineType(Long id,String type,Long actor){return jdbc.update("UPDATE res_line SET line_type=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",type,actor,id);}
 
-    public long countPools(String k,String status){return jdbc.queryForObject("SELECT count(*) FROM res_pool WHERE deleted=FALSE AND (?='' OR pool_code ILIKE '%'||?||'%' OR pool_name ILIKE '%'||?||'%') AND (?='' OR status=?)",Long.class,k,k,k,status,status);}
-    public List<Map<String,Object>> listPools(String k,String status,int size,int offset){return jdbc.queryForList("""
-        SELECT p.id,p.pool_code,p.pool_name,p.pool_type,p.purpose,p.region_codes,p.carrier_codes,p.status,
+    public long countPools(String k,String status,String province,String city,String carrier){return jdbc.queryForObject("""
+        SELECT count(*) FROM res_pool p WHERE p.deleted=FALSE
+        AND (?='' OR p.pool_code ILIKE '%'||?||'%' OR p.pool_name ILIKE '%'||?||'%')
+        AND (?='' OR p.status=?) AND (?='' OR COALESCE(p.province_code,'')=?)
+        AND (?='' OR COALESCE(p.city_code,'')=?) AND (?='' OR COALESCE(p.carrier_code,'')=?)
+        """,Long.class,k,k,k,status,status,province,province,city,city,carrier,carrier);}
+    public List<Map<String,Object>> listPools(String k,String status,String province,String city,String carrier,int size,int offset){return jdbc.queryForList("""
+        SELECT p.id,p.pool_code,p.pool_name,p.purpose,p.province_code,p.city_code,p.carrier_code,p.status,
+          count(DISTINCT r.id) FILTER(WHERE pl.enabled=TRUE) ros_count,
           count(pl.line_id) FILTER(WHERE pl.enabled=TRUE) line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.line_type='SHARED') shared_line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.line_type='LONG') long_line_count,
           count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.online_status='ONLINE') online_line_count,
-          count(DISTINCT l.current_public_ip) FILTER(WHERE pl.enabled=TRUE AND l.online_status='ONLINE' AND l.current_public_ip IS NOT NULL) unique_ip_count,
-          count(DISTINCT l.customer_id) FILTER(WHERE pl.enabled=TRUE AND l.customer_id IS NOT NULL) customer_count
-        FROM res_pool p LEFT JOIN res_pool_line pl ON pl.pool_id=p.id LEFT JOIN res_line l ON l.id=pl.line_id
-        WHERE p.deleted=FALSE AND (?='' OR p.pool_code ILIKE '%'||?||'%' OR p.pool_name ILIKE '%'||?||'%') AND (?='' OR p.status=?)
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.online_status='ABNORMAL') abnormal_line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL) current_ip_count,
+          count(DISTINCT l.current_public_ip) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL) unique_ip_count,
+          count(DISTINCT (split_part(host(l.current_public_ip),'.',1)||'.'||split_part(host(l.current_public_ip),'.',2))) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL AND family(l.current_public_ip)=4) b_prefix_count,
+          count(DISTINCT (split_part(host(l.current_public_ip),'.',1)||'.'||split_part(host(l.current_public_ip),'.',2)||'.'||split_part(host(l.current_public_ip),'.',3))) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL AND family(l.current_public_ip)=4) c_prefix_count
+        FROM res_pool p
+        LEFT JOIN res_pool_line pl ON pl.pool_id=p.id
+        LEFT JOIN res_line l ON l.id=pl.line_id AND l.deleted=FALSE
+        LEFT JOIN res_ros r ON r.id=l.ros_id AND r.deleted=FALSE
+        WHERE p.deleted=FALSE
+        AND (?='' OR p.pool_code ILIKE '%'||?||'%' OR p.pool_name ILIKE '%'||?||'%')
+        AND (?='' OR p.status=?) AND (?='' OR COALESCE(p.province_code,'')=?)
+        AND (?='' OR COALESCE(p.city_code,'')=?) AND (?='' OR COALESCE(p.carrier_code,'')=?)
         GROUP BY p.id ORDER BY p.updated_at DESC,p.id DESC LIMIT ? OFFSET ?
-        """,k,k,k,status,status,size,offset);}
-    public Map<String,Object> pool(Long id){return one("SELECT * FROM res_pool WHERE id=? AND deleted=FALSE",id);}
-    public List<Map<String,Object>> poolLines(Long id,int size,int offset){return jdbc.queryForList("""
-        SELECT l.id,l.resource_code,l.line_alias,r.resource_code ros_code,host(l.current_public_ip) current_public_ip,l.region_code,l.province_code,l.city_code,l.carrier_code,l.online_status,l.line_type,pl.source_reason,pl.joined_at
-        FROM res_pool_line pl JOIN res_line l ON l.id=pl.line_id JOIN res_ros r ON r.id=l.ros_id WHERE pl.pool_id=? AND pl.enabled=TRUE ORDER BY l.resource_code LIMIT ? OFFSET ?
-        """,id,size,offset);}
-    public long countPoolLines(Long id){return jdbc.queryForObject("SELECT count(*) FROM res_pool_line WHERE pool_id=? AND enabled=TRUE",Long.class,id);}
-    public Long insertPool(String code,String name,String type,String purpose,String regionsJson,String carriersJson,Long actor){return jdbc.queryForObject("INSERT INTO res_pool(pool_code,pool_name,pool_type,purpose,region_codes,carrier_codes,source_scope,member_mode,admission_rule,detection_rule,dedup_rule,priority,status,created_by,updated_by) VALUES(?,?,?,?,CAST(? AS jsonb),CAST(? AS jsonb),'SELF','LINE','{}','{}','{}',100,'ACTIVE',?,?) RETURNING id",Long.class,code,name,type,purpose,regionsJson,carriersJson,actor,actor);}
-    public int updatePool(Long id,String name,String type,String purpose,String regionsJson,String carriersJson,Long actor){return jdbc.update("UPDATE res_pool SET pool_name=?,pool_type=?,purpose=?,region_codes=CAST(? AS jsonb),carrier_codes=CAST(? AS jsonb),updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",name,type,purpose,regionsJson,carriersJson,actor,id);}
-    public int replacePoolLines(Long poolId,List<Long> lineIds,String reason){jdbc.update("UPDATE res_pool_line SET enabled=FALSE,removed_at=now() WHERE pool_id=? AND enabled=TRUE",poolId);int n=0;for(Long lineId:lineIds){n+=jdbc.update("INSERT INTO res_pool_line(pool_id,line_id,source_reason,enabled,joined_at,removed_at) VALUES(?,?,?,TRUE,now(),NULL) ON CONFLICT(pool_id,line_id) DO UPDATE SET source_reason=EXCLUDED.source_reason,enabled=TRUE,joined_at=now(),removed_at=NULL",poolId,lineId,reason);}return n;}
+        """,k,k,k,status,status,province,province,city,city,carrier,carrier,size,offset);}
+    public Map<String,Object> pool(Long id){return one("""
+        SELECT p.id,p.pool_code,p.pool_name,p.purpose,p.province_code,p.city_code,p.carrier_code,p.status,p.created_at,p.updated_at,
+          count(DISTINCT r.id) FILTER(WHERE pl.enabled=TRUE) ros_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE) line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.line_type='SHARED') shared_line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.line_type='LONG') long_line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.online_status='ONLINE') online_line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.online_status='ABNORMAL') abnormal_line_count,
+          count(pl.line_id) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL) current_ip_count,
+          count(DISTINCT l.current_public_ip) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL) unique_ip_count,
+          count(DISTINCT (split_part(host(l.current_public_ip),'.',1)||'.'||split_part(host(l.current_public_ip),'.',2))) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL AND family(l.current_public_ip)=4) b_prefix_count,
+          count(DISTINCT (split_part(host(l.current_public_ip),'.',1)||'.'||split_part(host(l.current_public_ip),'.',2)||'.'||split_part(host(l.current_public_ip),'.',3))) FILTER(WHERE pl.enabled=TRUE AND l.current_public_ip IS NOT NULL AND family(l.current_public_ip)=4) c_prefix_count
+        FROM res_pool p
+        LEFT JOIN res_pool_line pl ON pl.pool_id=p.id
+        LEFT JOIN res_line l ON l.id=pl.line_id AND l.deleted=FALSE
+        LEFT JOIN res_ros r ON r.id=l.ros_id AND r.deleted=FALSE
+        WHERE p.id=? AND p.deleted=FALSE GROUP BY p.id
+        """,id);}
+    public List<Map<String,Object>> poolLines(Long id,String keyword,String status,String type,int size,int offset){return jdbc.queryForList("""
+        SELECT l.id,l.resource_code,l.line_alias,r.resource_code ros_code,host(l.current_public_ip) current_public_ip,
+          l.province_code,l.city_code,l.carrier_code,l.online_status,l.line_type,l.latency_ms,l.bas_name,pl.source_reason,pl.joined_at
+        FROM res_pool_line pl JOIN res_line l ON l.id=pl.line_id JOIN res_ros r ON r.id=l.ros_id
+        WHERE pl.pool_id=? AND pl.enabled=TRUE AND l.deleted=FALSE
+          AND (?='' OR l.resource_code ILIKE '%'||?||'%' OR COALESCE(l.line_alias,'') ILIKE '%'||?||'%' OR host(l.current_public_ip) ILIKE '%'||?||'%')
+          AND (?='' OR l.online_status=?) AND (?='' OR COALESCE(l.line_type,'')=?)
+        ORDER BY l.resource_code LIMIT ? OFFSET ?
+        """,id,keyword,keyword,keyword,keyword,status,status,type,type,size,offset);}
+    public long countPoolLines(Long id,String keyword,String status,String type){return jdbc.queryForObject("""
+        SELECT count(*) FROM res_pool_line pl JOIN res_line l ON l.id=pl.line_id
+        WHERE pl.pool_id=? AND pl.enabled=TRUE AND l.deleted=FALSE
+          AND (?='' OR l.resource_code ILIKE '%'||?||'%' OR COALESCE(l.line_alias,'') ILIKE '%'||?||'%' OR host(l.current_public_ip) ILIKE '%'||?||'%')
+          AND (?='' OR l.online_status=?) AND (?='' OR COALESCE(l.line_type,'')=?)
+        """,Long.class,id,keyword,keyword,keyword,keyword,status,status,type,type);}
+    public List<Map<String,Object>> candidatePoolLines(Long poolId,String keyword,String type,int size,int offset){return jdbc.queryForList("""
+        SELECT l.id,l.resource_code,l.line_alias,r.resource_code ros_code,host(l.current_public_ip) current_public_ip,
+          l.province_code,l.city_code,l.carrier_code,l.online_status,l.line_type,l.latency_ms,l.bas_name
+        FROM res_line l JOIN res_ros r ON r.id=l.ros_id CROSS JOIN res_pool p
+        WHERE p.id=? AND p.deleted=FALSE AND l.deleted=FALSE AND l.line_type IN ('SHARED','LONG')
+          AND (COALESCE(p.province_code,'')='' OR COALESCE(l.province_code,l.region_code,'')=p.province_code)
+          AND (COALESCE(p.city_code,'')='' OR COALESCE(l.city_code,'')=p.city_code)
+          AND (COALESCE(p.carrier_code,'')='' OR COALESCE(l.carrier_code,'')=p.carrier_code)
+          AND NOT EXISTS(SELECT 1 FROM res_pool_line pl WHERE pl.pool_id=p.id AND pl.line_id=l.id AND pl.enabled=TRUE)
+          AND (?='' OR l.resource_code ILIKE '%'||?||'%' OR COALESCE(l.line_alias,'') ILIKE '%'||?||'%' OR host(l.current_public_ip) ILIKE '%'||?||'%')
+          AND (?='' OR l.line_type=?)
+        ORDER BY CASE WHEN l.online_status='ONLINE' THEN 0 ELSE 1 END,l.resource_code LIMIT ? OFFSET ?
+        """,poolId,keyword,keyword,keyword,keyword,type,type,size,offset);}
+    public long countCandidatePoolLines(Long poolId,String keyword,String type){return jdbc.queryForObject("""
+        SELECT count(*) FROM res_line l CROSS JOIN res_pool p
+        WHERE p.id=? AND p.deleted=FALSE AND l.deleted=FALSE AND l.line_type IN ('SHARED','LONG')
+          AND (COALESCE(p.province_code,'')='' OR COALESCE(l.province_code,l.region_code,'')=p.province_code)
+          AND (COALESCE(p.city_code,'')='' OR COALESCE(l.city_code,'')=p.city_code)
+          AND (COALESCE(p.carrier_code,'')='' OR COALESCE(l.carrier_code,'')=p.carrier_code)
+          AND NOT EXISTS(SELECT 1 FROM res_pool_line pl WHERE pl.pool_id=p.id AND pl.line_id=l.id AND pl.enabled=TRUE)
+          AND (?='' OR l.resource_code ILIKE '%'||?||'%' OR COALESCE(l.line_alias,'') ILIKE '%'||?||'%' OR host(l.current_public_ip) ILIKE '%'||?||'%')
+          AND (?='' OR l.line_type=?)
+        """,Long.class,poolId,keyword,keyword,keyword,keyword,type,type);}
+    public boolean lineEligibleForPool(Long poolId,Long lineId){Long n=jdbc.queryForObject("""
+        SELECT count(*) FROM res_line l CROSS JOIN res_pool p
+        WHERE p.id=? AND p.deleted=FALSE AND l.id=? AND l.deleted=FALSE AND l.line_type IN ('SHARED','LONG')
+          AND (COALESCE(p.province_code,'')='' OR COALESCE(l.province_code,l.region_code,'')=p.province_code)
+          AND (COALESCE(p.city_code,'')='' OR COALESCE(l.city_code,'')=p.city_code)
+          AND (COALESCE(p.carrier_code,'')='' OR COALESCE(l.carrier_code,'')=p.carrier_code)
+        """,Long.class,poolId,lineId);return n!=null&&n>0;}
+    public Long insertPool(String code,String name,String purpose,String province,String city,String carrier,String regionsJson,String carriersJson,Long actor){return jdbc.queryForObject("""
+        INSERT INTO res_pool(pool_code,pool_name,pool_type,purpose,province_code,city_code,carrier_code,region_codes,carrier_codes,source_scope,member_mode,admission_rule,detection_rule,dedup_rule,priority,status,created_by,updated_by)
+        VALUES(?,?,'SOURCE',?,?,?,?,CAST(? AS jsonb),CAST(? AS jsonb),'SELF','LINE','{}','{}','{}',100,'ACTIVE',?,?) RETURNING id
+        """,Long.class,code,name,purpose,province,city,carrier,regionsJson,carriersJson,actor,actor);}
+    public int updatePool(Long id,String name,String purpose,String province,String city,String carrier,String regionsJson,String carriersJson,Long actor){return jdbc.update("""
+        UPDATE res_pool SET pool_name=?,purpose=?,pool_type='SOURCE',province_code=?,city_code=?,carrier_code=?,region_codes=CAST(? AS jsonb),carrier_codes=CAST(? AS jsonb),source_scope='SELF',member_mode='LINE',updated_at=now(),updated_by=?,version=version+1
+        WHERE id=? AND deleted=FALSE
+        """,name,purpose,province,city,carrier,regionsJson,carriersJson,actor,id);}
+    public int addPoolLines(Long poolId,List<Long> lineIds,String reason){int n=0;for(Long lineId:lineIds){n+=jdbc.update("INSERT INTO res_pool_line(pool_id,line_id,source_reason,enabled,joined_at,removed_at) VALUES(?,?,?,TRUE,now(),NULL) ON CONFLICT(pool_id,line_id) DO UPDATE SET source_reason=EXCLUDED.source_reason,enabled=TRUE,joined_at=now(),removed_at=NULL",poolId,lineId,reason);}return n;}
+    public int removePoolLines(Long poolId,List<Long> lineIds,String reason){int n=0;for(Long lineId:lineIds){n+=jdbc.update("UPDATE res_pool_line SET enabled=FALSE,source_reason=?,removed_at=now() WHERE pool_id=? AND line_id=? AND enabled=TRUE",reason,poolId,lineId);}return n;}
+    public int replacePoolLines(Long poolId,List<Long> lineIds,String reason){jdbc.update("UPDATE res_pool_line SET enabled=FALSE,source_reason=?,removed_at=now() WHERE pool_id=? AND enabled=TRUE",reason,poolId);return addPoolLines(poolId,lineIds,reason);}
+    public Map<String,Object> poolUsage(Long poolId){return one("""
+        SELECT count(DISTINCT b.service_id) service_count,count(DISTINCT s.customer_id) customer_count,
+          COALESCE(string_agg(DISTINCT s.product_type,', ' ORDER BY s.product_type),'') product_types
+        FROM svc_resource_binding b JOIN svc_instance s ON s.id=b.service_id
+        WHERE b.resource_type='POOL' AND b.resource_id=? AND b.status='ACTIVE' AND s.deleted=FALSE
+        """,poolId);}
+    public List<Map<String,Object>> poolOperations(Long poolId,int limit){return jdbc.queryForList("""
+        SELECT operator_name,operation,reason,result,error_message,created_at
+        FROM sys_operation_log WHERE object_type='RESOURCE_POOL' AND object_id=? ORDER BY created_at DESC LIMIT ?
+        """,String.valueOf(poolId),limit);}
 
     public List<Map<String,Object>> optionsRos(){return jdbc.queryForList("SELECT id,resource_code code,COALESCE(resource_name,resource_code) name FROM res_ros WHERE deleted=FALSE ORDER BY resource_code");}
-    public List<Map<String,Object>> optionsLines(){return jdbc.queryForList("SELECT id,resource_code code,COALESCE(line_alias,resource_name,resource_code) name,host(current_public_ip) current_ip FROM res_line WHERE deleted=FALSE ORDER BY resource_code");}
+    public List<Map<String,Object>> optionsLines(){return jdbc.queryForList("SELECT id,resource_code code,COALESCE(line_alias,resource_name,resource_code) name,host(current_public_ip) current_ip,line_type,province_code,city_code,carrier_code FROM res_line WHERE deleted=FALSE ORDER BY resource_code");}
     public List<Map<String,Object>> optionsCustomers(){return jdbc.queryForList("SELECT id,customer_code code,customer_name name FROM customer WHERE deleted=FALSE AND status='ACTIVE' ORDER BY customer_name");}
     public List<Map<String,Object>> optionsSuppliers(){return jdbc.queryForList("SELECT id,supplier_code code,supplier_name name FROM res_supplier WHERE deleted=FALSE AND status='ACTIVE' ORDER BY supplier_name");}
 }
