@@ -13,10 +13,15 @@ export const v12ResourceApi={
   lineDetail:(id:number)=>http.get(`${root}/resources/lines/${id}`),
   lineIpHistory:(id:number,limit=200)=>http.get(`${root}/resources/lines/${id}/ip-history`,{params:{limit}}),
   lineOperations:(id:number,limit=200)=>http.get(`${root}/resources/lines/${id}/operations`,{params:{limit}}),
+  setLineType:(id:number,type:'SHARED'|'LONG',reason:string)=>http.post(`${root}/resources/lines/${id}/type`,{type,reason}),
   pools:(params:any)=>http.get(`${root}/resource-pools`,{params}),
   pool:(id:number)=>http.get(`${root}/resource-pools/${id}`),
   createPool:(data:any)=>http.post(`${root}/resource-pools`,data),
   updatePool:(id:number,data:any)=>http.put(`${root}/resource-pools/${id}`,data),
   poolLines:(id:number,params:any)=>http.get(`${root}/resource-pools/${id}/lines`,{params}),
-  replacePoolLines:(id:number,lineIds:number[],reason:string)=>http.put(`${root}/resource-pools/${id}/lines`,{lineIds,reason})
+  candidatePoolLines:(id:number,params:any)=>http.get(`${root}/resource-pools/${id}/candidate-lines`,{params}),
+  addPoolLines:(id:number,lineIds:number[],reason:string)=>http.post(`${root}/resource-pools/${id}/lines`,{lineIds,reason}),
+  removePoolLines:(id:number,lineIds:number[],reason:string)=>http.post(`${root}/resource-pools/${id}/lines/remove`,{lineIds,reason}),
+  replacePoolLines:(id:number,lineIds:number[],reason:string)=>http.put(`${root}/resource-pools/${id}/lines`,{lineIds,reason}),
+  poolOperations:(id:number,limit=200)=>http.get(`${root}/resource-pools/${id}/operations`,{params:{limit}})
 }
