@@ -7,8 +7,6 @@ export const v12ResourceApi={
   centosDetail:(id:number)=>http.get(`${root}/resources/centos/${id}`),
   ros:(params:any)=>http.get(`${root}/resources/ros`,{params}),
   rosDetail:(id:number)=>http.get(`${root}/resources/ros/${id}`),
-  setRosAutoSwitch:(id:number,enabled:boolean,reason:string)=>http.post(`${root}/resources/ros/${id}/auto-switch`,{enabled,reason}),
-  setRosHa:(id:number,data:any)=>http.post(`${root}/resources/ros/${id}/ha`,data),
   lines:(params:any)=>http.get(`${root}/resources/lines`,{params}),
   lineDetail:(id:number)=>http.get(`${root}/resources/lines/${id}`),
   lineIpHistory:(id:number,limit=200)=>http.get(`${root}/resources/lines/${id}/ip-history`,{params:{limit}}),
