@@ -17,8 +17,8 @@ public class MockResourceAdapter implements ResourceAdapter {
                 row("sourceId","r-001","parentSourceId","c-001","resourceName","CI-ROS-01","managementIp","10.20.0.11","regionCode","MOCK-R1","carrierCode","UNICOM","onlineStatus","ONLINE"),
                 row("sourceId","r-002","parentSourceId","c-002","resourceName","CI-ROS-02","managementIp","10.20.0.12","regionCode","MOCK-R1","carrierCode","TELECOM","onlineStatus","ONLINE"));
             case "LINE" -> List.of(
-                row("sourceId","l-001","parentSourceId","r-001","resourceName","CI-Line-01","regionCode","MOCK-R1","carrierCode","UNICOM","broadbandAccountMask","ci***001","currentPublicIp","198.51.100.11","onlineStatus","ONLINE","dialStatus","CONNECTED","latencyMs",28),
-                row("sourceId","l-002","parentSourceId","r-002","resourceName","CI-Line-02","regionCode","MOCK-R1","carrierCode","TELECOM","broadbandAccountMask","ci***002","currentPublicIp","198.51.100.12","onlineStatus","ONLINE","dialStatus","CONNECTED","latencyMs",34));
+                row("sourceId","l-001","parentSourceId","r-001","resourceName","CI-Line-01","regionCode","MOCK-R1","carrierCode","UNICOM","lineType","SHARED","broadbandAccountMask","ci***001","currentPublicIp","198.51.100.11","onlineStatus","ONLINE","dialStatus","CONNECTED","latencyMs",28),
+                row("sourceId","l-002","parentSourceId","r-002","resourceName","CI-Line-02","regionCode","MOCK-R1","carrierCode","TELECOM","lineType","LONG","broadbandAccountMask","ci***002","currentPublicIp","198.51.100.12","onlineStatus","ONLINE","dialStatus","CONNECTED","latencyMs",34));
             case "IP" -> List.of(
                 row("sourceId","ip-001","parentSourceId","l-001","ipAddress","198.51.100.11","regionCode","MOCK-R1","carrierCode","UNICOM","availableStatus","AVAILABLE","latencyMs",28,"qualityScore",95.5),
                 row("sourceId","ip-002","parentSourceId","l-002","ipAddress","198.51.100.12","regionCode","MOCK-R1","carrierCode","TELECOM","availableStatus","AVAILABLE","latencyMs",34,"qualityScore",92.0));
