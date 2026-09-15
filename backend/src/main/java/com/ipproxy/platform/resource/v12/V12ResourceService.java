@@ -11,25 +11,53 @@ import java.util.*;
 
 @Service
 public class V12ResourceService {
-    private final V12ResourceMapper db; private final ObjectMapper json; private final OperationAuditRepository audit;
-    public V12ResourceService(V12ResourceMapper db,ObjectMapper json,OperationAuditRepository audit){this.db=db;this.json=json;this.audit=audit;}
+    private final V12ResourceMapper db;
+    private final V12InfrastructureRepository infra;
+    private final ObjectMapper json;
+    private final OperationAuditRepository audit;
+
+    public V12ResourceService(V12ResourceMapper db,V12InfrastructureRepository infra,ObjectMapper json,OperationAuditRepository audit){
+        this.db=db;this.infra=infra;this.json=json;this.audit=audit;
+    }
 
     public Map<String,Object> overview(){return db.overview();}
     public Map<String,Object> options(){return Map.of("ros",db.optionsRos(),"lines",db.optionsLines(),"customers",db.optionsCustomers(),"suppliers",db.optionsSuppliers(),"lineTypes",List.of(Map.of("code","SHARED","name","共享"),Map.of("code","LONG","name","长效")));}
 
-    public PageResult<Map<String,Object>> centos(int page,int size,String keyword,String status){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countCentos(k,s),db.listCentos(k,s,size,(page-1)*size));}
-    public Map<String,Object> centos(Long id){Map<String,Object>x=db.centos(id);if(x==null)throw notFound("CentOS");x=new LinkedHashMap<>(x);x.put("rosList",db.centosRos(id));return x;}
+    public PageResult<Map<String,Object>> centos(int page,int size,String keyword,String status){
+        page=page(page);size=size(size);String k=n(keyword),s=n(status);
+        return new PageResult<>(page,size,infra.countCentos(k,s),infra.listCentos(k,s,size,(page-1)*size));
+    }
+    public Map<String,Object> centos(Long id){
+        Map<String,Object>x=infra.centos(id);if(x==null)throw notFound("CentOS");
+        x=new LinkedHashMap<>(x);x.put("ros",infra.centosRos(id));return x;
+    }
 
-    public PageResult<Map<String,Object>> ros(int page,int size,String keyword,String status,String autoSwitch){page=page(page);size=size(size);String k=n(keyword),s=n(status),a=n(autoSwitch);return new PageResult<>(page,size,db.countRos(k,s,a),db.listRos(k,s,a,size,(page-1)*size));}
-    public Map<String,Object> ros(Long id){Map<String,Object>x=db.ros(id);if(x==null)throw notFound("ROS");x=new LinkedHashMap<>(x);x.put("basStatistics",db.rosBas(id));return x;}
+    public PageResult<Map<String,Object>> ros(int page,int size,String keyword,String status){
+        page=page(page);size=size(size);String k=n(keyword),s=n(status);
+        return new PageResult<>(page,size,infra.countRos(k,s),infra.listRos(k,s,size,(page-1)*size));
+    }
+    public Map<String,Object> ros(Long id){
+        Map<String,Object>x=infra.ros(id);if(x==null)throw notFound("ROS");
+        x=new LinkedHashMap<>(x);x.put("basStatistics",infra.rosBas(id));return x;
+    }
 
-    public PageResult<Map<String,Object>> lines(int page,int size,String keyword,String status,Long rosId,String type,String province,String city,String carrier,Long customerId){page=page(page);size=size(size);String k=n(keyword),s=n(status),t=lineTypeFilter(type),p=n(province),c=n(city),o=n(carrier);return new PageResult<>(page,size,db.countLines(k,s,rosId,t,p,c,o,customerId),db.listLines(k,s,rosId,t,p,c,o,customerId,size,(page-1)*size));}
-    public Map<String,Object> line(Long id){Map<String,Object>x=db.line(id);if(x==null)throw notFound("家宽/线路");return x;}
+    public PageResult<Map<String,Object>> lines(int page,int size,String keyword,String status,Long rosId,String type,String province,String city,String carrier){
+        page=page(page);size=size(size);String k=n(keyword),s=n(status),t=lineTypeFilter(type),p=n(province),c=n(city),o=n(carrier);
+        return new PageResult<>(page,size,infra.countLines(k,s,rosId,t,p,c,o),infra.listLines(k,s,rosId,t,p,c,o,size,(page-1)*size));
+    }
+    public Map<String,Object> line(Long id){Map<String,Object>x=infra.line(id);if(x==null)throw notFound("家宽/线路");return x;}
     public List<Map<String,Object>> lineIpHistory(Long id,int limit){line(id);return db.lineIpHistory(id,Math.min(500,Math.max(1,limit)));}
     public List<Map<String,Object>> lineOperations(Long id,int limit){line(id);return db.lineOperations(id,Math.min(500,Math.max(1,limit)));}
-    @Transactional public Map<String,Object> setLineType(Long id,String type,String reason,UserPrincipal actor,String sourceIp){line(id);String t=lineType(type);if(db.updateLineType(id,t,actor.userId())==0)throw notFound("家宽/线路");audit.success(actor,"RESOURCE","LINE",id,"SET_LINE_TYPE",required(reason,"操作原因不能为空"),sourceIp);return Map.of("id",id,"lineType",t);}
+    @Transactional public Map<String,Object> setLineType(Long id,String type,String reason,UserPrincipal actor,String sourceIp){
+        line(id);String t=lineType(type);if(db.updateLineType(id,t,actor.userId())==0)throw notFound("家宽/线路");
+        audit.success(actor,"RESOURCE","LINE",id,"SET_LINE_TYPE",required(reason,"操作原因不能为空"),sourceIp);
+        return Map.of("id",id,"lineType",t);
+    }
 
-    public PageResult<Map<String,Object>> pools(int page,int size,String keyword,String status,String province,String city,String carrier){page=page(page);size=size(size);String k=n(keyword),s=n(status),p=n(province),c=n(city),o=n(carrier);return new PageResult<>(page,size,db.countPools(k,s,p,c,o),db.listPools(k,s,p,c,o,size,(page-1)*size));}
+    public PageResult<Map<String,Object>> pools(int page,int size,String keyword,String status,String province,String city,String carrier){
+        page=page(page);size=size(size);String k=n(keyword),s=n(status),p=n(province),c=n(city),o=n(carrier);
+        return new PageResult<>(page,size,db.countPools(k,s,p,c,o),db.listPools(k,s,p,c,o,size,(page-1)*size));
+    }
     public Map<String,Object> pool(Long id){Map<String,Object>x=db.pool(id);if(x==null)throw notFound("资源池");x=new LinkedHashMap<>(x);x.put("usage",db.poolUsage(id));return x;}
     public PageResult<Map<String,Object>> poolLines(Long id,int page,int size,String keyword,String status,String type){pool(id);page=page(page);size=size(size);String k=n(keyword),s=n(status),t=lineTypeFilter(type);return new PageResult<>(page,size,db.countPoolLines(id,k,s,t),db.poolLines(id,k,s,t,size,(page-1)*size));}
     public PageResult<Map<String,Object>> candidatePoolLines(Long id,int page,int size,String keyword,String type){pool(id);page=page(page);size=size(size);String k=n(keyword),t=lineTypeFilter(type);return new PageResult<>(page,size,db.countCandidatePoolLines(id,k,t),db.candidatePoolLines(id,k,t,size,(page-1)*size));}
@@ -53,15 +81,6 @@ public class V12ResourceService {
     @Transactional public int addPoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);if(ids.isEmpty())throw new BusinessException("V12_POOL_LINE_REQUIRED","请选择要加入资源池的线路");validatePoolLines(id,ids);String r=required(reason,"操作原因不能为空");int count=db.addPoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"ADD_LINES",r,sourceIp);return count;}
     @Transactional public int removePoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);if(ids.isEmpty())throw new BusinessException("V12_POOL_LINE_REQUIRED","请选择要移出资源池的线路");String r=required(reason,"操作原因不能为空");int count=db.removePoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"REMOVE_LINES",r,sourceIp);return count;}
     @Transactional public int replacePoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);validatePoolLines(id,ids);String r=required(reason,"操作原因不能为空");int count=db.replacePoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"REPLACE_LINES",r,sourceIp);return count;}
-
-    @Transactional public Map<String,Object> setRosAutoSwitch(Long id,boolean enabled,String reason,UserPrincipal actor,String sourceIp){ros(id);if(db.updateRosAutoSwitch(id,enabled,actor.userId())==0)throw notFound("ROS");audit.success(actor,"RESOURCE","ROS",id,"AUTO_SWITCH_"+(enabled?"ON":"OFF"),required(reason,"操作原因不能为空"),sourceIp);return Map.of("id",id,"autoSwitch",enabled,"upstreamControl","PENDING_ADAPTER","message","平台配置已更新；真实ROS控制待接入上游控制Adapter");}
-    @Transactional public Map<String,Object> setRosHa(Long id,String role,Long replacementId,String switchStatus,String reason,UserPrincipal actor,String sourceIp){
-        ros(id);String r=n(role).isBlank()?"STANDALONE":role.trim().toUpperCase(Locale.ROOT);
-        if(!Set.of("STANDALONE","PRIMARY","BACKUP").contains(r))throw new BusinessException("V12_ROS_HA_ROLE_INVALID","主备类型仅支持 STANDALONE/PRIMARY/BACKUP");
-        if(replacementId!=null){if(Objects.equals(id,replacementId))throw new BusinessException("V12_ROS_HA_SELF_REFERENCE","ROS不能将自己设置为替换对象");ros(replacementId);}
-        String sw=n(switchStatus).isBlank()?"NORMAL":switchStatus.trim().toUpperCase(Locale.ROOT);db.updateRosHa(id,r,replacementId,sw,actor.userId());
-        audit.success(actor,"RESOURCE","ROS",id,"UPDATE_HA",required(reason,"操作原因不能为空"),sourceIp);Map<String,Object> out=new LinkedHashMap<>();out.put("id",id);out.put("haRole",r);out.put("replacementRosId",replacementId);out.put("switchStatus",sw);out.put("upstreamControl","PENDING_ADAPTER");return out;
-    }
 
     private void validatePoolLines(Long poolId,List<Long> ids){for(Long lineId:distinct(ids)){if(lineId==null||!db.lineEligibleForPool(poolId,lineId))throw new BusinessException("V12_POOL_LINE_INELIGIBLE","线路"+lineId+"不是共享/长效线路，或其省/市/运营商与资源池来源属性不一致");}}
     private List<Long> distinct(List<Long> ids){if(ids==null)return List.of();return ids.stream().filter(Objects::nonNull).distinct().toList();}
