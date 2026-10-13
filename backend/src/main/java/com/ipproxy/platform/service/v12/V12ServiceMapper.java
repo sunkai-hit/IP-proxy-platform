@@ -13,8 +13,8 @@ public class V12ServiceMapper {
 
     public String nextServiceNo(){return jdbc.queryForObject("SELECT 'S'||to_char(current_date,'YYYYMMDD')||lpad(nextval('seq_service_no')::text,6,'0')",String.class);}
     public Map<String,Object> customer(Long id){return one("SELECT id,customer_code,customer_name,status FROM customer WHERE id=? AND deleted=FALSE",id);}
-    public Map<String,Object> product(Long id){return one("SELECT id,product_code,product_name,product_type,status,builtin_policy_code,to_jsonb(prd_product)::text product_json FROM prd_product WHERE id=? AND deleted=FALSE",id);}
-    public Map<String,Object> pkg(Long id){return one("SELECT id,package_code,package_name,product_id,service_days,price,currency,status,to_jsonb(prd_package)::text package_json FROM prd_package WHERE id=? AND deleted=FALSE",id);}
+    public Map<String,Object> product(Long id){return one("SELECT id,product_code,product_name,product_type,status,builtin_policy_code,auth_mode_codes::text auth_modes_json,to_jsonb(prd_product)::text product_json FROM prd_product WHERE id=? AND deleted=FALSE",id);}
+    public Map<String,Object> pkg(Long id){return one("SELECT id,package_code,package_name,product_id,service_days,ip_count,price,currency,status,to_jsonb(prd_package)::text package_json FROM prd_package WHERE id=? AND deleted=FALSE",id);}
     public Map<String,Object> order(Long id){return one("SELECT o.*,c.customer_name FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.id=? AND o.deleted=FALSE",id);}
     public List<Map<String,Object>> orderItems(Long id){return jdbc.queryForList("SELECT i.*,p.product_code,p.product_name,p.product_type,k.package_code,k.package_name FROM biz_order_item i JOIN prd_product p ON p.id=i.product_id LEFT JOIN prd_package k ON k.id=i.package_id WHERE i.order_id=? ORDER BY i.line_no",id);}
     public int orderStatus(Long id,String status,Long actor){return jdbc.update("UPDATE biz_order SET status=?,updated_at=now(),updated_by=?,completed_at=CASE WHEN ?='COMPLETED' THEN now() ELSE completed_at END WHERE id=? AND deleted=FALSE",status,actor,status,id);}
@@ -59,6 +59,46 @@ public class V12ServiceMapper {
     public List<Map<String,Object>> releaseRecords(Long id){return jdbc.queryForList("SELECT * FROM svc_release_record WHERE service_id=? ORDER BY created_at DESC",id);}
     public List<Map<String,Object>> longMonitorRecords(Long id){return jdbc.queryForList("SELECT id,monitor_no,target_host,target_port,current_status,enabled,last_checked_at,last_error FROM lm_monitor WHERE service_id=? AND deleted=FALSE ORDER BY created_at DESC",id);}
 
+    /** 开通提交使用订单行锁，防止并发重复开通。 */
+    public Map<String,Object> lockedOrder(Long id){return one("SELECT o.*,c.customer_name FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.id=? AND o.deleted=FALSE FOR UPDATE OF o",id);}
+    public long existingServicesForOrder(Long id){return jdbc.queryForObject("SELECT count(*) FROM svc_instance WHERE order_id=? AND deleted=FALSE",Long.class,id);}
+    public List<Map<String,Object>> availableReverseProxies(Long customerId){return jdbc.queryForList("""
+      SELECT rp.id,rp.proxy_no,rp.purchase_id,p.purchase_no,p.supplier_package_name,s.supplier_name,
+        rp.customer_id,rp.service_id,rp.platform_host,rp.platform_port,rp.protocol_code,
+        rp.effective_at,rp.expire_at,p.effective_at purchase_effective_at,p.expire_at purchase_expire_at,
+        rp.status,p.status purchase_status
+      FROM res_reverse_proxy rp JOIN res_supplier_purchase p ON p.id=rp.purchase_id
+      JOIN res_supplier s ON s.id=p.supplier_id
+      WHERE rp.deleted=FALSE AND p.deleted=FALSE AND rp.customer_id=? AND rp.service_id IS NULL
+        AND rp.status='ACTIVE' AND p.status='ACTIVE'
+      ORDER BY p.expire_at NULLS LAST,rp.id
+      """,customerId);}
+    public Map<String,Object> lockedReverseProxy(Long id){return one("""
+      SELECT rp.*,p.status purchase_status,p.customer_id purchase_customer_id,
+        p.effective_at purchase_effective_at,p.expire_at purchase_expire_at
+      FROM res_reverse_proxy rp JOIN res_supplier_purchase p ON p.id=rp.purchase_id
+      WHERE rp.id=? AND rp.deleted=FALSE AND p.deleted=FALSE FOR UPDATE OF rp
+      """,id);}
+    public long freeExclusiveLineCount(){return jdbc.queryForObject("""
+      SELECT count(*) FROM res_line l WHERE l.deleted=FALSE AND l.online_status='ONLINE'
+        AND l.current_public_ip IS NOT NULL
+        AND NOT EXISTS(SELECT 1 FROM res_pool_line pl JOIN res_pool p ON p.id=pl.pool_id WHERE pl.line_id=l.id AND pl.enabled=TRUE AND p.status='ACTIVE' AND p.deleted=FALSE)
+        AND NOT EXISTS(SELECT 1 FROM res_exclusive_allocation ea WHERE ea.line_id=l.id AND ea.deleted=FALSE AND ea.status IN('LOCKED','ALLOCATED'))
+        AND NOT EXISTS(SELECT 1 FROM svc_resource_binding b JOIN svc_instance svc ON svc.id=b.service_id
+          WHERE b.resource_type='LINE' AND b.resource_id=l.id AND b.status='ACTIVE'
+            AND svc.deleted=FALSE AND svc.status IN('ACTIVE','SUSPENDED','PENDING'))
+      """,Long.class);}
+    /** 行锁 + 数据库独享唯一索引，抵御同时分配。 */
+    public List<Map<String,Object>> lockFreeExclusiveLines(int count){return jdbc.queryForList("""
+      SELECT l.id,l.resource_code,host(l.current_public_ip) current_public_ip,l.http_port,l.socks5_port,l.domain_name
+      FROM res_line l WHERE l.deleted=FALSE AND l.online_status='ONLINE' AND l.current_public_ip IS NOT NULL
+        AND NOT EXISTS(SELECT 1 FROM res_pool_line pl JOIN res_pool p ON p.id=pl.pool_id WHERE pl.line_id=l.id AND pl.enabled=TRUE AND p.status='ACTIVE' AND p.deleted=FALSE)
+        AND NOT EXISTS(SELECT 1 FROM res_exclusive_allocation ea WHERE ea.line_id=l.id AND ea.deleted=FALSE AND ea.status IN('LOCKED','ALLOCATED'))
+        AND NOT EXISTS(SELECT 1 FROM svc_resource_binding b JOIN svc_instance svc ON svc.id=b.service_id
+          WHERE b.resource_type='LINE' AND b.resource_id=l.id AND b.status='ACTIVE'
+            AND svc.deleted=FALSE AND svc.status IN('ACTIVE','SUSPENDED','PENDING'))
+      ORDER BY l.last_sync_at DESC NULLS LAST,l.id LIMIT ? FOR UPDATE OF l SKIP LOCKED
+      """,count);}
     public Map<String,Object> reverseProxy(Long id){return one("SELECT rp.*,p.status purchase_status,p.customer_id purchase_customer_id FROM res_reverse_proxy rp JOIN res_supplier_purchase p ON p.id=rp.purchase_id WHERE rp.id=? AND rp.deleted=FALSE",id);}
     public Map<String,Object> line(Long id){return one("SELECT l.id,l.resource_code,host(l.current_public_ip) current_public_ip,l.http_port,l.socks5_port,l.domain_name,l.vpn_supported,l.online_status,l.line_type,l.customer_id FROM res_line l WHERE l.id=? AND l.deleted=FALSE",id);}
 }
