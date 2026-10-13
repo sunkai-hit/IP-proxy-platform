@@ -32,7 +32,6 @@ const errors=computed(()=>plans.value.flatMap(p=>{
   if(p.reverseProxyIds.length!==Number(item.service_count))return [item.product_name+': 反向代理配置数量不正确']
   return p.reverseProxyIds.flatMap((id:number|null)=>!id?['请为'+item.product_name+'的每个服务选择反向代理']:!proxyEligible(proxies.value.find(x=>x.id===id))?['选择的反向代理状态或有效期不符合要求']:[])
 }))
-const allSelected=computed(()=>plans.value.flatMap(p=>p.reverseProxyIds.filter((x:any)=>x!=null)))
 function dateOk(value:any,limit:any,before:boolean){if(!value||!limit)return true;const a=Date.parse(String(value)),b=Date.parse(String(limit));return !Number.isNaN(a)&&!Number.isNaN(b)&&(before?a<=b:a>=b)}
 function proxyEligible(p:any){return !!p&&p.status==='ACTIVE'&&p.purchase_status==='ACTIVE'&&p.service_id==null&&dateOk(p.effective_at,order.value.expected_effective_at,true)&&dateOk(p.purchase_effective_at,order.value.expected_effective_at,true)&&dateOk(p.expire_at,order.value.expected_expire_at,false)&&dateOk(p.purchase_expire_at,order.value.expected_expire_at,false)}
 function usedElsewhere(id:number,planIndex:number,slot:number){return plans.value.some((p,i)=>p.reverseProxyIds.some((x:any,j:number)=>x===id&&(i!==planIndex||j!==slot)))}
@@ -78,7 +77,7 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
   <el-card v-if="step===1" shadow="never"><h3>配置订单项交付方式</h3>
    <div v-for="(p,i) in plans" :key="p.orderItemId" class="plan">
     <b>{{items[i]?.product_name}} · {{typeNames[items[i]?.product_type]}} · {{items[i]?.service_count}}个服务</b>
-    <el-radio-group :model-value="p.deliveryMode" @update:model-value="v=>changeMode(p,String(v),items[i])" style="margin:12px 0"><el-radio-button value="SELF_OWNED">自有资源</el-radio-button><el-radio-button value="EXTERNAL_PROXY">外部反向代理</el-radio-button></el-radio-group>
+    <el-radio-group :model-value="p.deliveryMode" @update:model-value="changeMode(p,String($event),items[i])" style="margin:12px 0"><el-radio-button value="SELF_OWNED">自有资源</el-radio-button><el-radio-button value="EXTERNAL_PROXY">外部反向代理</el-radio-button></el-radio-group>
     <el-alert v-if="p.deliveryMode==='SELF_OWNED'" :type="items[i]?.warning?'warning':'info'" :closable="false" :title="items[i]?.warning||items[i]?.precheckError||items[i]?.deliveryAdvice||'按内置规则自动选择资源'"/>
     <template v-else><p class="subtle">请为每个服务实例选择一个尚未占用、客户一致且期限覆盖的平台代理入口。采购套餐自动关联。</p>
      <div v-for="(_,j) in p.reverseProxyIds" :key="j" class="proxy-choice"><span>服务 {{j+1}}</span><el-select v-model="p.reverseProxyIds[j]" filterable placeholder="选择可交付的反向代理" style="width:min(100%,680px)"><el-option v-for="proxy in proxies.filter(proxyEligible)" :key="proxy.id" :label="proxyLabel(proxy)" :value="proxy.id" :disabled="usedElsewhere(proxy.id,i,j)"/></el-select></div>
