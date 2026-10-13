@@ -22,7 +22,69 @@ public class V12ServiceLifecycleService {
     public PageResult<Map<String,Object>> services(int page,int size,String keyword,String status,Long customerId,String productType,String deliveryMode){page=Math.max(1,page);size=Math.min(200,Math.max(1,size));String k=n(keyword),s=n(status),t=n(productType),d=n(deliveryMode);return new PageResult<>(page,size,db.countServices(k,s,customerId,t,d),db.services(k,s,customerId,t,d,size,(page-1)*size));}
     public Map<String,Object> service(Long id){Map<String,Object>x=mustService(id);x=new LinkedHashMap<>(x);x.put("resourceBindings",db.bindings(id));x.put("credentials",db.credentials(id));x.put("whitelist",db.whitelist(id));x.put("changes",db.changes(id));x.put("releaseRecords",db.releaseRecords(id));x.put("longMonitors",db.longMonitorRecords(id));return x;}
 
-    @Transactional public Map<String,Object> provisionOrder(Long orderId,String reason,UserPrincipal actor,String ip){Map<String,Object> order=db.order(orderId);if(order==null)throw err("ORDER_NOT_FOUND","订单不存在");if(!"PENDING_PROVISION".equals(String.valueOf(order.get("status"))))throw err("ORDER_STATUS_INVALID","订单必须处于待开通状态");List<Map<String,Object>> out=new ArrayList<>();for(Map<String,Object> item:db.orderItems(orderId)){int count=((Number)item.get("service_count")).intValue();for(int i=0;i<count;i++)out.add(provision(new ProvisionInput(((Number)order.get("customer_id")).longValue(),((Number)item.get("product_id")).longValue(),item.get("package_id")==null?null:((Number)item.get("package_id")).longValue(),"SELF_OWNED",null,null,(OffsetDateTime)order.get("expected_effective_at"),(OffsetDateTime)order.get("expected_expire_at"),"订单自动开通"),orderId,((Number)item.get("id")).longValue(),actor,ip));}db.orderStatus(orderId,"PROVISIONED",actor.userId());audit.success(actor,"SERVICE","ORDER",orderId,"PROVISION_V12",required(reason,"开通原因不能为空"),ip);return Map.of("orderId",orderId,"services",out);}
+    public record ProvisionPlan(Long orderItemId,String deliveryMode,List<Long> reverseProxyIds){}
+    public Map<String,Object> provisionPreview(Long orderId){
+        Map<String,Object> order=db.order(orderId);
+        if(order==null)throw err("ORDER_NOT_FOUND","订单不存在");
+        if(!"PENDING_PROVISION".equals(String.valueOf(order.get("status"))))throw err("ORDER_STATUS_INVALID","订单不是待开通状态");
+        List<Map<String,Object>> items=new ArrayList<>();
+        for(Map<String,Object> item:db.orderItems(orderId)){
+            Map<String,Object> row=new LinkedHashMap<>(item);
+            String type=String.valueOf(item.get("product_type"));
+            row.put("deliveryAdvice",switch(type){case "SHORT_IP"->"共享资源池动态分配";case "LONG_IP"->"长效线路固定绑定";case "EXCLUSIVE_IP"->"独享线路占用";case "VPN"->"VPN专项数据面";case "TUNNEL"->"隧道专项数据面";default->"请核对产品";});
+            if("EXCLUSIVE_IP".equals(type))row.put("availableExclusiveLines",db.freeExclusiveLineCount());
+            if(Set.of("VPN","TUNNEL").contains(type)&&adapter instanceof com.ipproxy.platform.service.adapter.NoopServiceProvisionAdapter)
+                row.put("warning","实际数据面适配器尚未配置，无法真正开通");
+            items.add(row);
+        }
+        return Map.of("order",order,"items",items,"availableReverseProxies",db.availableReverseProxies(((Number)order.get("customer_id")).longValue()),"alreadyProvisioned",db.existingServicesForOrder(orderId)>0);
+    }
+
+    @Transactional public Map<String,Object> provisionOrder(Long orderId,String reason,List<ProvisionPlan> plans,UserPrincipal actor,String ip){
+        required(reason,"开通原因不能为空");
+        Map<String,Object> order=db.lockedOrder(orderId);
+        if(order==null)throw err("ORDER_NOT_FOUND","订单不存在");
+        if(!"PENDING_PROVISION".equals(String.valueOf(order.get("status"))))throw err("ORDER_STATUS_INVALID","订单必须处于待开通状态");
+        if(db.existingServicesForOrder(orderId)>0)throw err("ORDER_ALREADY_PROVISIONED","订单已存在开通服务，请核对后处理，不可重复开通");
+        List<Map<String,Object>> items=db.orderItems(orderId);
+        if(items.isEmpty())throw err("ORDER_ITEMS_REQUIRED","订单不存在可开通明细");
+        if(plans==null||plans.size()!=items.size())throw err("PROVISION_PLAN_REQUIRED","请逐订单项填写开通计划");
+        Map<Long,ProvisionPlan> pmap=new LinkedHashMap<>();
+        for(ProvisionPlan p:plans){
+            if(p==null||p.orderItemId()==null||pmap.putIfAbsent(p.orderItemId(),p)!=null)
+                throw err("PROVISION_PLAN_INVALID","存在重复或无效订单项");
+        }
+        Set<Long> usedProxyIds=new HashSet<>();
+        List<Map<String,Object>> results=new ArrayList<>();
+        Long customerId=((Number)order.get("customer_id")).longValue();
+        for(Map<String,Object> item:items){
+            Long itemId=((Number)item.get("id")).longValue();
+            ProvisionPlan p=pmap.remove(itemId);
+            if(p==null)throw err("PROVISION_PLAN_MISSING","订单项缺少开通计划");
+            String delivery=n(p.deliveryMode()).toUpperCase(Locale.ROOT);
+            int count=((Number)item.get("service_count")).intValue();
+            if(count<1||count>100)throw err("PROVISION_COUNT_INVALID","服务数量无效");
+            if(!Set.of("SELF_OWNED","EXTERNAL_PROXY").contains(delivery))throw err("DELIVERY_MODE_INVALID","不支持的交付方式");
+            List<Long> proxyIds=p.reverseProxyIds()==null?List.of():p.reverseProxyIds();
+            if("EXTERNAL_PROXY".equals(delivery)){
+                if(proxyIds.size()!=count)throw err("PROXY_COUNT_MISMATCH","每个外部服务必须选择一个反向代理");
+                for(Long proxyId:proxyIds)if(proxyId==null||!usedProxyIds.add(proxyId))throw err("PROXY_DUPLICATE","反向代理不能重复绑定");
+            }else if(!proxyIds.isEmpty())throw err("PROVISION_PLAN_INVALID","自有交付不应选择反向代理");
+            for(int i=0;i<count;i++){
+                Map<String,Object> created=provision(new ProvisionInput(customerId,((Number)item.get("product_id")).longValue(),
+                  item.get("package_id")==null?null:((Number)item.get("package_id")).longValue(),
+                  delivery,null,"EXTERNAL_PROXY".equals(delivery)?proxyIds.get(i):null,
+                  (OffsetDateTime)order.get("expected_effective_at"),(OffsetDateTime)order.get("expected_expire_at"),reason),
+                  orderId,itemId,actor,ip);
+                if(!"ACTIVE".equals(String.valueOf(created.get("status"))))throw err("PROVISION_NOT_COMPLETE","开通未全部完成，订单保持待开通");
+                results.add(created);
+            }
+        }
+        if(!pmap.isEmpty())throw err("PROVISION_PLAN_INVALID","包含不属于本订单的订单项");
+        db.orderStatus(orderId,"PROVISIONED",actor.userId());
+        audit.success(actor,"SERVICE","ORDER",orderId,"PROVISION_V12",reason.trim(),ip);
+        return Map.of("orderId",orderId,"status","PROVISIONED","services",results);
+    }
 
     @Transactional public Map<String,Object> manualProvision(ProvisionInput in,UserPrincipal actor,String ip){return provision(in,null,null,actor,ip);}
 
