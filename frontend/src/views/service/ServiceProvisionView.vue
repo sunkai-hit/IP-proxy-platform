@@ -43,6 +43,7 @@ async function openOrder(id:number){loading.value=true;try{
  plans.value=(v.items||[]).map((it:any)=>({orderItemId:Number(it.id),deliveryMode:'SELF_OWNED',reverseProxyIds:[] as (number|null)[]}))
  await router.replace({path:'/service-provision',query:{orderId:String(id)}})
 }catch{ElMessage.error('该订单当前无法进入开通流程')}finally{loading.value=false}}
+async function refreshPreview(){loading.value=true;try{snapshot.value=unwrap(await orderServiceApi.provisionPreview(Number(order.value.id)));ElMessage.success('资源状态已刷新，提交时仍会最终重验')}catch{ElMessage.error('预检刷新失败')}finally{loading.value=false}}
 function changeMode(p:any,mode:string,item:any){p.deliveryMode=mode;p.reverseProxyIds=mode==='EXTERNAL_PROXY'?Array(Number(item.service_count||1)).fill(null):[]}
 function next(){if(step.value===1&&errors.value.length){ElMessage.warning(errors.value[0]);return}step.value=Math.min(3,step.value+1)}
 function back(){step.value=Math.max(0,step.value-1)}
@@ -85,9 +86,9 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
     </template>
    </div>
   </el-card>
-  <el-card v-if="step===2" shadow="never"><h3>资源预检</h3><el-alert v-if="errors.length" type="error" :closable="false" title="存在需要处理的资源问题"/><el-alert v-else type="success" :closable="false" title="当前配置满足前端预检；提交时后端将重新检查资源与并发占用"/>
+  <el-card v-if="step===2" shadow="never"><div class="filters" style="justify-content:space-between"><h3>资源预检</h3><el-button @click="refreshPreview">刷新资源预检</el-button></div><el-alert v-if="errors.length" type="error" :closable="false" title="存在需要处理的资源问题"/><el-alert v-else type="success" :closable="false" title="当前配置满足前端预检；提交时后端将重新检查资源与并发占用"/>
    <p v-for="(e,i) in errors" :key="i" class="error">• {{e}}</p>
-   <el-descriptions :column="1" border style="margin-top:16px"><el-descriptions-item v-for="(p,i) in plans" :key="p.orderItemId" :label="items[i]?.product_name">{{modeNames[p.deliveryMode]}} · {{items[i]?.service_count}} 个实例 · {{p.deliveryMode==='EXTERNAL_PROXY'?p.reverseProxyIds.length+' 个代理入口':'系统内置资源规则'}} <span v-if="items[i]?.product_type==='EXCLUSIVE_IP'&&p.deliveryMode==='SELF_OWNED'">· 独享可用线路 {{items[i]?.availableExclusiveLines||0}}</span></el-descriptions-item></el-descriptions>
+   <el-descriptions :column="1" border style="margin-top:16px"><el-descriptions-item v-for="(p,i) in plans" :key="p.orderItemId" :label="items[i]?.product_name">{{modeNames[p.deliveryMode]}} · {{items[i]?.service_count}} 个实例 · {{p.deliveryMode==='EXTERNAL_PROXY'?p.reverseProxyIds.length+' 个代理入口':(items[i]?.resourcePrecheck?.poolCode||'独立产品资源')}} <span v-if="p.deliveryMode==='SELF_OWNED'&&items[i]?.resourcePrecheck?.lineCode">· 推荐线路 {{items[i]?.resourcePrecheck?.lineCode}}</span> <span v-if="items[i]?.product_type==='EXCLUSIVE_IP'&&p.deliveryMode==='SELF_OWNED'">· 独享可用线路 {{items[i]?.availableExclusiveLines||0}}</span></el-descriptions-item></el-descriptions>
   </el-card>
   <el-card v-if="step===3" shadow="never"><h3>确认执行开通</h3><el-alert type="warning" :closable="false" title="确认后将创建服务实例并实际绑定资源。订单和资源状态会在后端提交时再次校验。"/>
    <el-descriptions :column="1" border style="margin-top:16px"><el-descriptions-item v-for="(p,i) in plans" :key="p.orderItemId" :label="items[i]?.product_name">{{modeNames[p.deliveryMode]}} · {{items[i]?.service_count}} 个服务</el-descriptions-item></el-descriptions>
