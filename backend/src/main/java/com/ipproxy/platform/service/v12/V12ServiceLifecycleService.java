@@ -32,7 +32,22 @@ public class V12ServiceLifecycleService {
             Map<String,Object> row=new LinkedHashMap<>(item);
             String type=String.valueOf(item.get("product_type"));
             row.put("deliveryAdvice",switch(type){case "SHORT_IP"->"共享资源池动态分配";case "LONG_IP"->"长效线路固定绑定";case "EXCLUSIVE_IP"->"独享线路占用";case "VPN"->"VPN专项数据面";case "TUNNEL"->"隧道专项数据面";default->"请核对产品";});
-            if("EXCLUSIVE_IP".equals(type))row.put("availableExclusiveLines",db.freeExclusiveLineCount());
+            if("EXCLUSIVE_IP".equals(type)){
+                int needed=db.exclusiveRequiredLines(((Number)item.get("product_id")).longValue(),
+                    item.get("package_id")==null?null:((Number)item.get("package_id")).longValue());
+                row.put("exclusiveLinesPerService",needed);
+                row.put("availableExclusiveLines",db.freeExclusiveLineCount());
+                if(db.freeExclusiveLineCount()<(long)needed*((Number)item.get("service_count")).intValue())
+                    row.put("precheckError","独享线路不足");
+            }
+            if(Set.of("SHORT_IP","LONG_IP").contains(type)){
+                try{
+                    BuiltinResourcePolicy.Decision d=policy.decide(type,((Number)item.get("product_id")).longValue(),
+                        item.get("package_id")==null?null:((Number)item.get("package_id")).longValue(),
+                        ((Number)order.get("customer_id")).longValue());
+                    row.put("resourcePrecheck",Map.of("poolCode",d.poolCode(),"lineCode",d.lineCode()==null?"动态选择":d.lineCode()));
+                }catch(BusinessException ex){row.put("precheckError","当前可用资源不足，请核查资源池与线路状态");}
+            }
             if(Set.of("VPN","TUNNEL").contains(type)&&adapter instanceof com.ipproxy.platform.service.adapter.NoopServiceProvisionAdapter)
                 row.put("warning","实际数据面适配器尚未配置，无法真正开通");
             items.add(row);
@@ -109,7 +124,7 @@ public class V12ServiceLifecycleService {
         Map<String,Object> ctx=new LinkedHashMap<>();ctx.put("serviceNo",serviceNo);ctx.put("customerId",in.customerId());ctx.put("deliveryMode",delivery);ctx.put("policyCode",policyCode);
         if("SELF_OWNED".equals(delivery)){
             if("EXCLUSIVE_IP".equals(productType)){
-                int need=pkg!=null&&pkg.get("ip_count") instanceof Number&&((Number)pkg.get("ip_count")).intValue()>0?((Number)pkg.get("ip_count")).intValue():1;
+                int need=db.exclusiveRequiredLines(in.productId(),in.packageId());
                 if(need>200)throw err("EXCLUSIVE_QUOTA_INVALID","独享线路数超出开通上限");
                 List<Map<String,Object>> lines=db.lockFreeExclusiveLines(need);
                 if(lines.size()!=need)throw err("EXCLUSIVE_RESOURCE_UNAVAILABLE","独享资源不足，需要"+need+"条可用线路");
