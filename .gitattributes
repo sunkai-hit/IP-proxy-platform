@@ -1,0 +1,3 @@
+# Office文档视为二进制，不启用文本合并或自动换行。
+*.docx binary
+*.doc binary
