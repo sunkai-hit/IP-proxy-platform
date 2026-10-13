@@ -144,7 +144,7 @@ public class V12ServiceLifecycleService {
         }
         Map<String,Object> credential;
         if("EXTERNAL_PROXY".equals(delivery)){
-            credential=Map.of("type","EXISTING_PLATFORM_AUTH","account",n(String.valueOf(externalProxy.get("platform_account"))),
+            credential=Map.of("type","EXISTING_PLATFORM_AUTH","account",Objects.toString(externalProxy.get("platform_account"),""),
                 "mask","平台代理已有认证配置；不生成未下发的新密钥","secret","");
         }else credential=issueCredential(sid,serviceNo,productType,String.valueOf(product.get("auth_modes_json")),expire,actor.userId());
         db.serviceStatus(sid,"ACTIVE",null,actor.userId());audit.success(actor,"SERVICE","SERVICE",sid,"PROVISION_V12",n(in.remark()).isBlank()?"V1.2服务开通":in.remark(),ip);Map<String,Object> out=new LinkedHashMap<>();out.put("serviceId",sid);out.put("serviceNo",serviceNo);out.put("deliveryMode",delivery);out.put("builtinPolicyCode",policyCode);out.put("status","ACTIVE");out.put("oneTimeCredential",credential);
@@ -154,6 +154,8 @@ public class V12ServiceLifecycleService {
 
     private Map<String,Object> issueCredential(Long serviceId,String serviceNo,String productType,String authModesJson,OffsetDateTime expire,Long actor){
         String auth=n(authModesJson).toUpperCase(Locale.ROOT);
+        if(auth.contains("WHITELIST")&&!auth.contains("TOKEN")&&!auth.contains("USERNAME_PASSWORD"))
+            return Map.of("type","WHITELIST","account","","mask","请先配置客户访问IP白名单","secret","");
         String type=auth.contains("USERNAME_PASSWORD")?"USERNAME_PASSWORD":auth.contains("TOKEN")?"TOKEN":switch(productType){case "VPN"->"USERNAME_PASSWORD";case "TUNNEL"->"TUNNEL_ACCOUNT";default->"TOKEN";};String secret=UUID.randomUUID().toString().replace("-","")+Long.toString(System.nanoTime(),36);String account="TOKEN".equals(type)?null:"svc_"+serviceNo.toLowerCase(Locale.ROOT);String mask=secret.substring(0,6)+"••••••"+secret.substring(secret.length()-4);Long id=db.insertCredential(serviceId,type,account,sha(secret),mask,expire,j(Map.of("issuedBy","V1.2")),actor);return Map.of("credentialId",id,"type",type,"account",account==null?"":account,"secret",secret,"mask",mask);}
     private String sha(String s){try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));}catch(Exception e){throw new IllegalStateException(e);}}
     private Map<String,Object> mustService(Long id){Map<String,Object>x=db.service(id);if(x==null)throw err("SERVICE_NOT_FOUND","服务不存在");return x;}
