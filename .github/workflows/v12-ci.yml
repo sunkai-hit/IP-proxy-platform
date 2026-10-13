@@ -92,6 +92,19 @@ jobs:
           SVC=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"productId\":$PID2,\"packageId\":$PKGID,\"deliveryMode\":\"SELF_OWNED\",\"remark\":\"CI\"}" http://localhost:8080/api/admin/v1/services/provision)
           SID=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="ACTIVE" and d["deliveryMode"]=="SELF_OWNED"; print(d["serviceId"])' <<< "$SVC")
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID >/dev/null
+
+          # New-order provisioning: preview -> explicit item plan -> fulfill -> prevent duplicate
+          ORDER=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"orderType\":\"NEW\",\"currency\":\"CNY\",\"items\":[{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":2}]}" http://localhost:8080/api/admin/v1/orders)
+          OID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI confirm"}' http://localhost:8080/api/admin/v1/orders/$OID/confirm >/dev/null
+          PREVIEW=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/orders/$OID/provision-preview)
+          ITEMID=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert len(d["items"])==1 and d["items"][0]["service_count"]==2; print(d["items"][0]["id"])' <<< "$PREVIEW")
+          PLAN=$(curl -fsS -H "$H" -H "$J" -d "{\"reason\":\"CI provision\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="PROVISIONED" and len(d["services"])==2 and all(x["status"]=="ACTIVE" for x in d["services"])' <<< "$PLAN"
+          REPEAT_CODE=$(curl -s -o /tmp/repeat-provision.json -w '%{http_code}' -H "$H" -H "$J" -d "{\"reason\":\"repeat\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
+          test "$REPEAT_CODE" -ge 400
+          echo 'Order provisioning preview/plan/idempotency smoke passed'
+
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/long-monitor/overview >/dev/null
           curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=CENTOS' >/dev/null
           curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=ROS' >/dev/null
