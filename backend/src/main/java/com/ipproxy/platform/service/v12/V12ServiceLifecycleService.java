@@ -104,9 +104,9 @@ public class V12ServiceLifecycleService {
     @Transactional public Map<String,Object> manualProvision(ProvisionInput in,UserPrincipal actor,String ip){required(in.remark(),"手工开通必须填写操作原因");return provision(in,null,null,actor,ip);}
 
     private Map<String,Object> provision(ProvisionInput in,Long orderId,Long itemId,UserPrincipal actor,String ip){Map<String,Object> customer=db.customer(in.customerId());if(customer==null||!"ACTIVE".equals(String.valueOf(customer.get("status"))))throw err("CUSTOMER_NOT_ACTIVE","客户不存在或非正常状态");Map<String,Object> product=db.product(in.productId());if(product==null||!"ACTIVE".equals(String.valueOf(product.get("status"))))throw err("PRODUCT_NOT_ACTIVE","产品不存在或未启用");Map<String,Object> pkg=in.packageId()==null?null:db.pkg(in.packageId());if(pkg!=null&&!"ACTIVE".equals(String.valueOf(pkg.get("status"))))throw err("PACKAGE_NOT_ACTIVE","套餐已停用");if(pkg!=null&&!Objects.equals(((Number)pkg.get("product_id")).longValue(),in.productId()))throw err("PACKAGE_PRODUCT_MISMATCH","套餐不属于当前产品");String productType=String.valueOf(product.get("product_type"));String delivery=n(in.deliveryMode()).isBlank()?"SELF_OWNED":in.deliveryMode().trim().toUpperCase(Locale.ROOT);if(!Set.of("SELF_OWNED","EXTERNAL_PROXY").contains(delivery))throw err("DELIVERY_MODE_INVALID","未知服务交付方式");OffsetDateTime effective=in.effectiveAt()==null?OffsetDateTime.now(ZoneOffset.UTC):in.effectiveAt();OffsetDateTime expire=in.expireAt();if(expire==null&&pkg!=null)expire=effective.plusDays(((Number)pkg.get("service_days")).longValue());if(expire==null)throw err("SERVICE_EXPIRE_REQUIRED","必须选择服务到期时间或有效套餐");if(!expire.isAfter(effective))throw err("SERVICE_DATE_INVALID","到期时间必须晚于生效时间");String serviceNo=db.nextServiceNo();String quota=pkg==null?"{}":j(Map.of("packageId",pkg.get("id"),"packageCode",pkg.get("package_code"),"serviceDays",pkg.get("service_days")));
-        BuiltinResourcePolicy.Decision decision=null;Long purchaseId=null,reverseProxyId=null;String policyCode;
+        BuiltinResourcePolicy.Decision decision=null;Long purchaseId=null,reverseProxyId=null;Map<String,Object> externalProxy=null;String policyCode;
         if("SELF_OWNED".equals(delivery)){decision=policy.decide(productType,in.productId(),in.packageId(),in.customerId());policyCode=decision.policyCode();}
-        else {reverseProxyId=in.reverseProxyId();if(reverseProxyId==null)throw err("REVERSE_PROXY_REQUIRED","外部交付必须选择反向代理配置");Map<String,Object> rp=db.lockedReverseProxy(reverseProxyId);
+        else {reverseProxyId=in.reverseProxyId();if(reverseProxyId==null)throw err("REVERSE_PROXY_REQUIRED","外部交付必须选择反向代理配置");Map<String,Object> rp=db.lockedReverseProxy(reverseProxyId);externalProxy=rp;
             if(rp==null)throw err("REVERSE_PROXY_NOT_FOUND","反向代理不存在");
             if(!Objects.equals(((Number)rp.get("customer_id")).longValue(),in.customerId()))throw err("REVERSE_PROXY_CUSTOMER_MISMATCH","反向代理与客户不匹配");
             if(!"ACTIVE".equals(String.valueOf(rp.get("status"))))throw err("REVERSE_PROXY_NOT_READY","反向代理未启用");
@@ -115,7 +115,7 @@ public class V12ServiceLifecycleService {
             OffsetDateTime fromRp=(OffsetDateTime)rp.get("effective_at"),untilRp=(OffsetDateTime)rp.get("expire_at");
             OffsetDateTime fromPurchase=(OffsetDateTime)rp.get("purchase_effective_at"),untilPurchase=(OffsetDateTime)rp.get("purchase_expire_at");
             if((fromRp!=null&&fromRp.isAfter(effective))||(fromPurchase!=null&&fromPurchase.isAfter(effective))||
-              (untilRp!=null&&untilRp.isBefore(expire))||(untilPurchase!=null&&untilPurchase.isBefore(expire)))
+              (untilRp!=null&&untilRp.isBefore(expire))||(untilPurchase==null||untilPurchase.isBefore(expire)))
               throw err("PROXY_TERM_MISMATCH","代理或采购套餐不能覆盖服务有效期");
             purchaseId=((Number)rp.get("purchase_id")).longValue();
             if(in.supplierPurchaseId()!=null&&!in.supplierPurchaseId().equals(purchaseId))throw err("PURCHASE_PROXY_MISMATCH","采购套餐与反向代理不匹配");
@@ -142,7 +142,15 @@ public class V12ServiceLifecycleService {
         }else{
             db.bind(sid,"SUPPLIER_PURCHASE",purchaseId,"PRIMARY",j(Map.of("deliveryMode","EXTERNAL_PROXY")),actor.userId());db.bind(sid,"REVERSE_PROXY",reverseProxyId,"ENTRY",j(Map.of("deliveryMode","EXTERNAL_PROXY")),actor.userId());if(db.attachReverseProxy(reverseProxyId,sid,actor.userId())!=1)throw err("PROXY_ATTACH_FAILED","无法绑定反向代理");ctx.put("reverseProxyId",reverseProxyId);
         }
-        Map<String,Object> credential=issueCredential(sid,serviceNo,productType,String.valueOf(product.get("auth_modes_json")),expire,actor.userId());db.serviceStatus(sid,"ACTIVE",null,actor.userId());audit.success(actor,"SERVICE","SERVICE",sid,"PROVISION_V12",n(in.remark()).isBlank()?"V1.2服务开通":in.remark(),ip);Map<String,Object> out=new LinkedHashMap<>();out.put("serviceId",sid);out.put("serviceNo",serviceNo);out.put("deliveryMode",delivery);out.put("builtinPolicyCode",policyCode);out.put("status","ACTIVE");out.put("oneTimeCredential",credential);return out;}
+        Map<String,Object> credential;
+        if("EXTERNAL_PROXY".equals(delivery)){
+            credential=Map.of("type","EXISTING_PLATFORM_AUTH","account",n(String.valueOf(externalProxy.get("platform_account"))),
+                "mask","平台代理已有认证配置；不生成未下发的新密钥","secret","");
+        }else credential=issueCredential(sid,serviceNo,productType,String.valueOf(product.get("auth_modes_json")),expire,actor.userId());
+        db.serviceStatus(sid,"ACTIVE",null,actor.userId());audit.success(actor,"SERVICE","SERVICE",sid,"PROVISION_V12",n(in.remark()).isBlank()?"V1.2服务开通":in.remark(),ip);Map<String,Object> out=new LinkedHashMap<>();out.put("serviceId",sid);out.put("serviceNo",serviceNo);out.put("deliveryMode",delivery);out.put("builtinPolicyCode",policyCode);out.put("status","ACTIVE");out.put("oneTimeCredential",credential);
+        out.put("deliveryStage","EXTERNAL_PROXY".equals(delivery)?"PROXY_ACTIVE":
+            adapter instanceof com.ipproxy.platform.service.adapter.NoopServiceProvisionAdapter?"MANAGEMENT_ONLY":"ADAPTER_PROVISIONED");
+        return out;}
 
     private Map<String,Object> issueCredential(Long serviceId,String serviceNo,String productType,String authModesJson,OffsetDateTime expire,Long actor){
         String auth=n(authModesJson).toUpperCase(Locale.ROOT);
