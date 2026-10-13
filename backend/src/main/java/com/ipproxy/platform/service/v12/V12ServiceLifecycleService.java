@@ -27,6 +27,7 @@ public class V12ServiceLifecycleService {
         Map<String,Object> order=db.order(orderId);
         if(order==null)throw err("ORDER_NOT_FOUND","订单不存在");
         if(!"PENDING_PROVISION".equals(String.valueOf(order.get("status"))))throw err("ORDER_STATUS_INVALID","订单不是待开通状态");
+        if(!"NEW".equals(String.valueOf(order.get("order_type"))))throw err("ORDER_TYPE_INVALID","续费、扩容、变更订单须走服务变更流程，不能重复新开通");
         List<Map<String,Object>> items=new ArrayList<>();
         for(Map<String,Object> item:db.orderItems(orderId)){
             Map<String,Object> row=new LinkedHashMap<>(item);
@@ -60,6 +61,7 @@ public class V12ServiceLifecycleService {
         Map<String,Object> order=db.lockedOrder(orderId);
         if(order==null)throw err("ORDER_NOT_FOUND","订单不存在");
         if(!"PENDING_PROVISION".equals(String.valueOf(order.get("status"))))throw err("ORDER_STATUS_INVALID","订单必须处于待开通状态");
+        if(!"NEW".equals(String.valueOf(order.get("order_type"))))throw err("ORDER_TYPE_INVALID","只有新购订单可创建全新服务实例，其他订单须走变更流程");
         if(db.existingServicesForOrder(orderId)>0)throw err("ORDER_ALREADY_PROVISIONED","订单已存在开通服务，请核对后处理，不可重复开通");
         List<Map<String,Object>> items=db.orderItems(orderId);
         if(items.isEmpty())throw err("ORDER_ITEMS_REQUIRED","订单不存在可开通明细");
