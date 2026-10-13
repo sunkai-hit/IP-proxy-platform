@@ -80,7 +80,7 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
     <el-radio-group :model-value="p.deliveryMode" @update:model-value="changeMode(p,String($event),items[i])" style="margin:12px 0"><el-radio-button value="SELF_OWNED">自有资源</el-radio-button><el-radio-button value="EXTERNAL_PROXY">外部反向代理</el-radio-button></el-radio-group>
     <el-alert v-if="p.deliveryMode==='SELF_OWNED'" :type="items[i]?.warning?'warning':'info'" :closable="false" :title="items[i]?.warning||items[i]?.precheckError||items[i]?.deliveryAdvice||'按内置规则自动选择资源'"/>
     <template v-else><p class="subtle">请为每个服务实例选择一个尚未占用、客户一致且期限覆盖的平台代理入口。采购套餐自动关联。</p>
-     <div v-for="(_,j) in p.reverseProxyIds" :key="j" class="proxy-choice"><span>服务 {{j+1}}</span><el-select v-model="p.reverseProxyIds[j]" filterable placeholder="选择可交付的反向代理" style="width:min(100%,680px)"><el-option v-for="proxy in proxies.filter(proxyEligible)" :key="proxy.id" :label="proxyLabel(proxy)" :value="proxy.id" :disabled="usedElsewhere(proxy.id,i,j)"/></el-select></div>
+     <div v-for="(_,j) in p.reverseProxyIds" :key="j" class="proxy-choice"><span>服务 {{Number(j)+1}}</span><el-select v-model="p.reverseProxyIds[j]" filterable placeholder="选择可交付的反向代理" style="width:min(100%,680px)"><el-option v-for="proxy in proxies.filter(proxyEligible)" :key="proxy.id" :label="proxyLabel(proxy)" :value="proxy.id" :disabled="usedElsewhere(proxy.id,Number(i),Number(j))"/></el-select></div>
      <el-empty v-if="!proxies.filter(proxyEligible).length" description="暂无符合当前订单期限的可交付反向代理；请先完成供应商采购与反向代理配置"/>
     </template>
    </div>
