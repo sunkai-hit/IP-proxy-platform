@@ -16,7 +16,7 @@ public class V12ServiceMapper {
     public Map<String,Object> product(Long id){return one("SELECT id,product_code,product_name,product_type,status,builtin_policy_code,auth_mode_codes::text auth_modes_json,to_jsonb(prd_product)::text product_json FROM prd_product WHERE id=? AND deleted=FALSE",id);}
     public Map<String,Object> pkg(Long id){return one("SELECT id,package_code,package_name,product_id,service_days,ip_count,price,currency,status,to_jsonb(prd_package)::text package_json FROM prd_package WHERE id=? AND deleted=FALSE",id);}
     public Map<String,Object> order(Long id){return one("SELECT o.*,c.customer_name FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.id=? AND o.deleted=FALSE",id);}
-    public List<Map<String,Object>> orderItems(Long id){return jdbc.queryForList("SELECT i.*,p.product_code,p.product_name,p.product_type,k.package_code,k.package_name FROM biz_order_item i JOIN prd_product p ON p.id=i.product_id LEFT JOIN prd_package k ON k.id=i.package_id WHERE i.order_id=? ORDER BY i.line_no",id);}
+    public List<Map<String,Object>> orderItems(Long id){return jdbc.queryForList("SELECT i.*,p.product_code,p.product_name,p.product_type,k.package_code,k.package_name,k.ip_count FROM biz_order_item i JOIN prd_product p ON p.id=i.product_id LEFT JOIN prd_package k ON k.id=i.package_id WHERE i.order_id=? ORDER BY i.line_no",id);}
     public int orderStatus(Long id,String status,Long actor){return jdbc.update("UPDATE biz_order SET status=?,updated_at=now(),updated_by=?,completed_at=CASE WHEN ?='COMPLETED' THEN now() ELSE completed_at END WHERE id=? AND deleted=FALSE",status,actor,status,id);}
 
     public Long insertService(String no,Long customerId,Long orderId,Long itemId,Long productId,Long packageId,String productType,String productJson,String packageJson,String quotaJson,OffsetDateTime effective,OffsetDateTime expire,String deliveryMode,String policyCode,Long purchaseId,Long reverseProxyId,Long actor){return jdbc.queryForObject("""
@@ -79,6 +79,14 @@ public class V12ServiceMapper {
       FROM res_reverse_proxy rp JOIN res_supplier_purchase p ON p.id=rp.purchase_id
       WHERE rp.id=? AND rp.deleted=FALSE AND p.deleted=FALSE FOR UPDATE OF rp
       """,id);}
+    public int exclusiveRequiredLines(Long productId,Long packageId){
+        Integer n=jdbc.queryForObject("""
+          SELECT COALESCE(NULLIF(k.ip_count,0),cfg.resource_count_default,1)
+          FROM prd_product p LEFT JOIN prd_package k ON k.id=? AND k.product_id=p.id AND k.deleted=FALSE
+          LEFT JOIN prd_exclusive_ip_config cfg ON cfg.product_id=p.id WHERE p.id=?
+          """,Integer.class,packageId,productId);
+        return n==null?1:n;
+    }
     public long freeExclusiveLineCount(){return jdbc.queryForObject("""
       SELECT count(*) FROM res_line l WHERE l.deleted=FALSE AND l.online_status='ONLINE'
         AND l.current_public_ip IS NOT NULL
