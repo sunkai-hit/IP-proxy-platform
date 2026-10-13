@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/admin/v1")
@@ -23,10 +24,12 @@ public class OrderServiceController {
     @GetMapping("/orders/{id}") public ApiResponse<?> order(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"order:read");return ApiResponse.success(service.order(id));}
     @PostMapping("/orders/{id}/confirm") public ApiResponse<?> confirm(@PathVariable Long id,@RequestBody ReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"order:status");service.confirmOrder(id,b.reason(),p,ip(r));return ApiResponse.success();}
     @PostMapping("/orders/{id}/cancel") public ApiResponse<?> cancel(@PathVariable Long id,@RequestBody ReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"order:status");service.cancelOrder(id,b.reason(),p,ip(r));return ApiResponse.success();}
-    @PostMapping("/orders/{id}/provision") public ApiResponse<?> provision(@PathVariable Long id,@RequestBody ReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"order:provision");return ApiResponse.success(lifecycle.provisionOrder(id,b.reason(),p,ip(r)));}
+    public record ProvisionOrderRequest(String reason,List<V12ServiceLifecycleService.ProvisionPlan> plans){}
+    @GetMapping("/orders/{id}/provision-preview") public ApiResponse<?> provisionPreview(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"service:provision");return ApiResponse.success(lifecycle.provisionPreview(id));}
+    @PostMapping("/orders/{id}/provision") public ApiResponse<?> provision(@PathVariable Long id,@RequestBody ProvisionOrderRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"order:provision");return ApiResponse.success(lifecycle.provisionOrder(id,b.reason(),b.plans(),p,ip(r)));}
 
     @GetMapping("/services") public ApiResponse<?> services(@RequestParam(defaultValue="1")int page,@RequestParam(defaultValue="20")int size,@RequestParam(defaultValue="")String keyword,@RequestParam(defaultValue="")String status,@RequestParam(required=false)Long customerId,@RequestParam(defaultValue="")String productType,@RequestParam(defaultValue="")String deliveryMode,@AuthenticationPrincipal UserPrincipal p){require(p,"service:read");return ApiResponse.success(lifecycle.services(page,size,keyword,status,customerId,productType,deliveryMode));}
-    @PostMapping("/services/provision") public ApiResponse<?> manual(@RequestBody V12ServiceLifecycleService.ProvisionInput b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"service:provision");if("EXTERNAL_PROXY".equalsIgnoreCase(b.deliveryMode()))require(p,"service:provision:external");return ApiResponse.success(lifecycle.manualProvision(b,p,ip(r)));}
+    @PostMapping("/services/provision") public ApiResponse<?> manual(@RequestBody V12ServiceLifecycleService.ProvisionInput b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"service:provision:manual");if("EXTERNAL_PROXY".equalsIgnoreCase(b.deliveryMode()))require(p,"service:provision:external");return ApiResponse.success(lifecycle.manualProvision(b,p,ip(r)));}
     @GetMapping("/services/{id}") public ApiResponse<?> detail(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"service:read");return ApiResponse.success(lifecycle.service(id));}
     @GetMapping("/services/{id}/credentials") public ApiResponse<?> credentials(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"service:credential:read");return ApiResponse.success(lifecycle.service(id).get("credentials"));}
     @PostMapping("/services/{id}/credentials/reset") public ApiResponse<?> reset(@PathVariable Long id,@RequestBody ReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"service:credential:reset");return ApiResponse.success(service.resetCredential(id,b.reason(),p,ip(r)));}
