@@ -31,8 +31,74 @@ public class ExternalDeliveryService {
 
     public PageResult<Map<String,Object>> proxies(int page,int size,String keyword,String status,Long customerId){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countProxies(k,s,customerId),db.proxies(k,s,customerId,size,(page-1)*size));}
     public Map<String,Object> proxy(Long id){Map<String,Object>x=db.proxy(id);if(x==null)throw notFound("反向代理");Map<String,Object> out=new LinkedHashMap<>(x);out.remove("upstream_secret_cipher");out.remove("platform_secret_cipher");out.put("upstreamSecretConfigured",x.get("upstream_secret_cipher")!=null);out.put("platformSecretConfigured",x.get("platform_secret_cipher")!=null);out.put("operationLogs",db.proxyLogs(id,100));return out;}
-    @Transactional public Long createProxy(ProxyInput in,UserPrincipal actor,String ip){validateProxy(in);Map<String,Object> purchase=purchase(in.purchaseId());Long customerId=in.customerId()!=null?in.customerId():number(purchase.get("customer_id"));if(customerId==null)throw new BusinessException("PROXY_CUSTOMER_REQUIRED","反向代理必须绑定客户");if(purchase.get("customer_id")!=null&&!Objects.equals(number(purchase.get("customer_id")),customerId))throw new BusinessException("PROXY_PURCHASE_CUSTOMER_MISMATCH","反向代理与采购套餐的客户归属不一致");if(db.hasOtherPurchaseCustomer(in.purchaseId(),customerId))throw new BusinessException("PROXY_PURCHASE_CROSS_CUSTOMER","同一采购套餐已被其他客户占用，V1.2禁止跨客户共享");String no="RP-"+OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))+"-"+Integer.toHexString(new Random().nextInt(65536)).toUpperCase(Locale.ROOT);Long id=db.insertProxy(no,in.purchaseId(),customerId,in.serviceId(),in.protocolCode().trim().toUpperCase(Locale.ROOT),in.upstreamHost().trim(),in.upstreamPort(),n(in.upstreamAccount()),cipher.encrypt(in.upstreamSecret()),in.platformHost().trim(),in.platformPort(),n(in.platformAccount()),cipher.encrypt(in.platformSecret()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());db.proxyLog(id,"CREATE","SUCCESS","创建反向代理配置",actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"CREATE","创建反向代理交付",ip);return id;}
-    @Transactional public void updateProxy(Long id,ProxyInput in,UserPrincipal actor,String ip){proxy(id);validateProxy(in);db.updateProxy(id,in.serviceId(),in.protocolCode().trim().toUpperCase(Locale.ROOT),in.upstreamHost().trim(),in.upstreamPort(),n(in.upstreamAccount()),n(in.upstreamSecret()).isBlank()?null:cipher.encrypt(in.upstreamSecret()),in.platformHost().trim(),in.platformPort(),n(in.platformAccount()),n(in.platformSecret()).isBlank()?null:cipher.encrypt(in.platformSecret()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());db.proxyLog(id,"UPDATE","SUCCESS","修改反向代理配置",actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"UPDATE","修改反向代理交付",ip);}
+    private void requirePaidDedicatedPurchase(Map<String,Object> purchase,Long customerId){
+        if(customerId==null || purchase.get("customer_id")==null ||
+           !Objects.equals(number(purchase.get("customer_id")),customerId))
+            throw new BusinessException("PROXY_PURCHASE_CUSTOMER_MISMATCH",
+                "该采购尚未明确属于当前客户，禁止将库存采购直接转为客户代理；须按已付款客户订单登记专属采购");
+        if(!"ACTIVE".equals(String.valueOf(purchase.get("status"))))
+            throw new BusinessException("PROXY_PURCHASE_INACTIVE","采购套餐不是有效状态，禁止绑定新的客户平台代理");
+        Long originId=number(purchase.get("source_customer_order_id"));
+        Map<String,Object> paid=originId==null?null:db.paymentConfirmedOrder(originId);
+        if(paid==null || !Objects.equals(number(paid.get("customer_id")),customerId) ||
+            !"PAID_CONFIRMED".equals(String.valueOf(paid.get("payment_status"))) ||
+            "CANCELLED".equals(String.valueOf(paid.get("status"))))
+            throw new BusinessException("PROXY_CUSTOMER_PAYMENT_REQUIRED",
+                "该客户采购缺少同客户已核实付款的来源订单，禁止创建或变更平台代理交付");
+        if(purchase.get("expire_at")==null ||
+           !((OffsetDateTime)purchase.get("expire_at")).isAfter(OffsetDateTime.now()))
+            throw new BusinessException("PROXY_PURCHASE_EXPIRED",
+                "供应商套餐已过期或缺少有效期，不允许创建新的平台代理交付");
+    }
+    private void requireProxyServiceOwnership(Long serviceId,Long customerId,Map<String,Object> purchase){
+        if(serviceId==null)return;
+        Map<String,Object> svc=db.serviceOwnership(serviceId);
+        if(svc==null || !Objects.equals(number(svc.get("customer_id")),customerId))
+            throw new BusinessException("PROXY_SERVICE_CUSTOMER_MISMATCH","关联服务不存在或不属于采购授权客户");
+        if(Set.of("TERMINATED","PROVISION_FAILED").contains(String.valueOf(svc.get("status"))))
+            throw new BusinessException("PROXY_SERVICE_INVALID","终止或开通失败的服务不得绑定新平台代理");
+        if(svc.get("expire_at") instanceof OffsetDateTime serviceUntil &&
+           purchase.get("expire_at") instanceof OffsetDateTime supplierUntil &&
+           supplierUntil.isBefore(serviceUntil))
+            throw new BusinessException("PROXY_UPSTREAM_TERM_SHORT",
+                "供应商采购到期早于关联客户服务到期，必须核实上游续购与覆盖期");
+    }
+    @Transactional public Long createProxy(ProxyInput in,UserPrincipal actor,String ip){
+        validateProxy(in);
+        Map<String,Object> purchase=purchase(in.purchaseId());
+        Long customerId=in.customerId()!=null?in.customerId():number(purchase.get("customer_id"));
+        requirePaidDedicatedPurchase(purchase,customerId);
+        requireProxyServiceOwnership(in.serviceId(),customerId,purchase);
+        if(db.hasOtherPurchaseCustomer(in.purchaseId(),customerId))
+            throw new BusinessException("PROXY_PURCHASE_CROSS_CUSTOMER","同一采购套餐已被其他客户占用，V1.2禁止跨客户共享");
+        String no="RP-"+OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))+"-"+Integer.toHexString(new Random().nextInt(65536)).toUpperCase(Locale.ROOT);
+        Long id=db.insertProxy(no,in.purchaseId(),customerId,in.serviceId(),
+            in.protocolCode().trim().toUpperCase(Locale.ROOT),in.upstreamHost().trim(),in.upstreamPort(),
+            n(in.upstreamAccount()),cipher.encrypt(in.upstreamSecret()),in.platformHost().trim(),in.platformPort(),
+            n(in.platformAccount()),cipher.encrypt(in.platformSecret()),in.effectiveAt(),in.expireAt(),
+            n(in.remark()),actor.userId());
+        db.proxyLog(id,"CREATE","SUCCESS","登记平台代理配置；尚未验证真实网关交付",actor.userId());
+        audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"CREATE","登记平台代理配置（未验证真实交付）",ip);
+        return id;
+    }
+    @Transactional public void updateProxy(Long id,ProxyInput in,UserPrincipal actor,String ip){
+        Map<String,Object> old=proxy(id);
+        validateProxy(in);
+        if(!Objects.equals(number(old.get("purchase_id")),in.purchaseId()) ||
+           (in.customerId()!=null&&!Objects.equals(number(old.get("customer_id")),in.customerId())))
+            throw new BusinessException("PROXY_OWNERSHIP_IMMUTABLE","代理的采购及客户归属不可通过修改配置变更");
+        Map<String,Object> purchase=purchase(in.purchaseId());
+        requirePaidDedicatedPurchase(purchase,number(old.get("customer_id")));
+        requireProxyServiceOwnership(in.serviceId(),number(old.get("customer_id")),purchase);
+        db.updateProxy(id,in.serviceId(),in.protocolCode().trim().toUpperCase(Locale.ROOT),
+            in.upstreamHost().trim(),in.upstreamPort(),n(in.upstreamAccount()),
+            n(in.upstreamSecret()).isBlank()?null:cipher.encrypt(in.upstreamSecret()),
+            in.platformHost().trim(),in.platformPort(),n(in.platformAccount()),
+            n(in.platformSecret()).isBlank()?null:cipher.encrypt(in.platformSecret()),
+            in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());
+        db.proxyLog(id,"UPDATE","SUCCESS","修改代理配置，未验证网络生效",actor.userId());
+        audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"UPDATE","修改反向代理交付配置",ip);
+    }
     // Noop/PENDING / transport ACK must not be interpreted as actual proxy data-plane verification.
     private void realProxyResult(ReverseProxyAdapter.Result result,String action) {
         if(result==null || !result.success() || result.detail()==null
