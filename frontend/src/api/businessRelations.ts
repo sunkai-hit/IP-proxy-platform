@@ -6,6 +6,7 @@ const base='/relations'
 export const businessRelationsApi={
   customerOrders:(id:number)=>http.get(`${base}/customers/${id}/orders`),
   orderServices:(id:number)=>http.get(`${base}/orders/${id}/services`),
+  packageServices:(id:number)=>http.get(`${base}/packages/${id}/services`),
   serviceBindings:(id:number)=>http.get(`${base}/services/${id}/bindings`),
   paidRenewalOrders:(id:number)=>http.get(`${base}/services/${id}/paid-renewal-orders`),
   linePools:(id:number)=>http.get(`${base}/lines/${id}/pools`),
