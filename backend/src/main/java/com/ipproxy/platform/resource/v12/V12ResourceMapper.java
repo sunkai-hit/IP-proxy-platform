@@ -215,6 +215,12 @@ public class V12ResourceMapper {
         WHERE id=? AND deleted=FALSE
         """,name,purpose,province,city,carrier,regionsJson,carriersJson,actor,id);}
     public int addPoolLines(Long poolId,List<Long> lineIds,String reason){int n=0;for(Long lineId:lineIds){n+=jdbc.update("INSERT INTO res_pool_line(pool_id,line_id,source_reason,enabled,joined_at,removed_at) VALUES(?,?,?,TRUE,now(),NULL) ON CONFLICT(pool_id,line_id) DO UPDATE SET source_reason=EXCLUDED.source_reason,enabled=TRUE,joined_at=now(),removed_at=NULL",poolId,lineId,reason);}return n;}
+    public boolean enabledPoolLine(Long poolId,Long lineId){
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+          SELECT EXISTS(SELECT 1 FROM res_pool_line
+            WHERE pool_id=? AND line_id=? AND enabled=TRUE)
+          """,Boolean.class,poolId,lineId));
+    }
     public boolean activeServiceUsesPool(Long poolId){
         return Boolean.TRUE.equals(jdbc.queryForObject("""
           SELECT EXISTS(SELECT 1 FROM svc_resource_binding b
