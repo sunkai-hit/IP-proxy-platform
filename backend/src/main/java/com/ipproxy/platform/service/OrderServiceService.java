@@ -32,6 +32,18 @@ public class OrderServiceService {
             Map<String,Object> target=mustService(in.renewalServiceId());
             if(!Objects.equals(longv(target.get("customer_id")),in.customerId()))throw err("RENEW_CUSTOMER_MISMATCH","续费目标服务不属于本客户");
             if(Set.of("TERMINATED","PROVISION_FAILED").contains(s(target.get("status"))))throw err("RENEW_SERVICE_INVALID","该服务不能续费");
+            if(Set.of("LONG_IP","EXCLUSIVE_IP").contains(s(target.get("product_type")))){
+                OffsetDateTime originalExpiry=dateOf(target.get("expire_at"));
+                Object originalGrace=target.get("grace_days_snapshot");
+                if(originalExpiry==null||originalGrace==null)
+                    throw err("RENEW_GRACE_SNAPSHOT_MISSING","原服务缺少到期时间或原合同宽限快照，必须先核对旧合同");
+                int originalGraceDays=((Number)originalGrace).intValue();
+                if(originalGraceDays<0)throw err("RENEW_GRACE_SNAPSHOT_INVALID","原合同宽限记录异常，请先核对");
+                OffsetDateTime originalGraceEnd=dateOf(target.get("grace_until_at"));
+                if(originalGraceEnd==null)originalGraceEnd=originalExpiry.plusDays(originalGraceDays);
+                if(OffsetDateTime.now(ZoneOffset.UTC).isAfter(originalGraceEnd))
+                    throw err("RENEW_OUTSIDE_GRACE","已超过原合同固定IP宽限截止，不得新建原服务续费订单；请走新购及真实重新交付");
+            }
             if(in.items().size()!=1)throw err("RENEW_SINGLE_ITEM_REQUIRED","每张续费订单只可对应一个既有服务");
             OrderItemInput only=in.items().getFirst();
             if(only.packageId()==null||!Objects.equals(only.productId(),longv(target.get("product_id")))||
