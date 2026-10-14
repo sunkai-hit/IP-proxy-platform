@@ -108,7 +108,7 @@ onMounted(async()=>{await load();await loadRenewalOrders()})
         </el-form-item>
         <el-alert v-if="form.action==='renew'&&form.serviceId&&!paidRenewalOrders.length" type="warning" :closable="false" style="margin-bottom:16px">
          <template #title>没有此服务已核实付款的续费订单。请先新建续费订单、确认订单并由授权人员核实收款；不能直接改服务期限。</template>
-         <el-button style="margin-top:8px" @click="router.push({path:'/orders',query:{customerId:String(current.customer_id),newOrder:'1'}})">为此客户新建续费订单</el-button>
+         <el-button style="margin-top:8px" @click="router.push({path:'/orders',query:{customerId:String(current.customer_id),newOrder:'1',orderType:'RENEW',renewalServiceId:String(form.serviceId)}})">为此客户新建续费订单</el-button>
         </el-alert>
         <el-form-item v-if="form.action==='renew'" label="续费天数" required><el-input-number v-model="form.days" :min="1"/></el-form-item>
         <el-form-item label="操作原因" required><el-input v-model="form.reason" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="填写可审计的业务原因"/></el-form-item>
