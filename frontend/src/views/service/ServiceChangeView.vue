@@ -3,6 +3,7 @@ import {computed,onMounted,reactive,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessage,ElMessageBox} from 'element-plus'
 import {orderServiceApi} from '@/api/orderService'
+import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
 const route=useRoute(),router=useRouter(),auth=useAuthStore()
 const loading=ref(false),saving=ref(false),services=ref<any[]>([]),paidRenewalOrders=ref<any[]>([]),result=ref<any>(null)
@@ -30,11 +31,9 @@ async function loadRenewalOrders(){
  paidRenewalOrders.value=[];form.renewalOrderId=null
  if(!current.value)return
  try{
-  const d=data(await orderServiceApi.orders({page:1,size:200,
-    customerId:current.value.customer_id,status:'PENDING_PROVISION'}))
-  paidRenewalOrders.value=(d.items||[]).filter((o:any)=>
-    o.order_type==='RENEW'&&o.payment_status==='PAID_CONFIRMED'&&
-    Number(o.renewal_service_id)===Number(form.serviceId))
+  const d=data(await businessRelationsApi.paidRenewalOrders(Number(form.serviceId)))
+  paidRenewalOrders.value=d.items||[]
+  if(d.truncated)ElMessage.warning('当前服务已付款续费订单超过200笔；较早订单请至订单管理核对')
   const requested=Number(route.query.renewalOrderId)
   if(requested>0&&paidRenewalOrders.value.some(o=>Number(o.id)===requested)){
     form.renewalOrderId=requested
