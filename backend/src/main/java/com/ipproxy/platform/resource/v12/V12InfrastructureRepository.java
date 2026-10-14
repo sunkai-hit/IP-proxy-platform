@@ -103,11 +103,11 @@ public class V12InfrastructureRepository {
 
     public Map<String,Object> ros(Long id){
         return one("""
-            SELECT r.id,r.resource_code,r.resource_name,r.record_name,r.host_type,host(r.management_ip) management_ip_text,
+            SELECT r.id,r.resource_code,r.resource_name,r.record_name,r.centos_id,c.resource_code centos_code,c.resource_name centos_name,r.host_type,host(r.management_ip) management_ip_text,
               r.region_code,r.carrier_code,r.online_status,r.cpu_usage,r.memory_usage,r.system_load,r.disk_usage,
               r.line_total,r.line_online,r.line_abnormal,r.current_ip_count,r.bas_count,r.uptime_seconds,
               r.last_communicated_at,r.last_report_at,r.last_sync_at
-            FROM res_ros r WHERE r.id=? AND r.deleted=FALSE
+            FROM res_ros r LEFT JOIN res_centos c ON c.id=r.centos_id AND c.deleted=FALSE WHERE r.id=? AND r.deleted=FALSE
             """,id);
     }
 
