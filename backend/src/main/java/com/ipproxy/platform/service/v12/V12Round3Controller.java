@@ -48,7 +48,7 @@ public class V12Round3Controller {
         if(row==null)throw error("SERVICE_NOT_FOUND","服务不存在");
         return row;
     }
-    public record GraceInput(Integer graceDays,String reason){}
+    public record GraceInput(Integer graceDays,String reason,Boolean zeroGraceRiskAccepted){}
     public record ExpiryReconcileInput(Integer limit,String reason){}
     public record CandidateInput(Long backupCandidateId){}
     public record FailoverInput(Long backupCandidateId,Integer expectedServiceVersion,String reason){}
@@ -75,6 +75,8 @@ public class V12Round3Controller {
             throw error("PACKAGE_GRACE_INVALID","必须明确提供非负的宽限天数；0天表示到期立即停服并进入受控回收");
         if(input.reason()==null||input.reason().isBlank())
             throw error("PACKAGE_REASON_REQUIRED","必须填写修改原因");
+        if(input.graceDays()==0&&!Boolean.TRUE.equals(input.zeroGraceRiskAccepted()))
+            throw error("PACKAGE_ZERO_GRACE_ACK_REQUIRED","0天宽限必须明确确认到期立即停服及真实受控回收风险");
         Map<String,Object> p=first("""
           SELECT k.id,p.product_type FROM prd_package k JOIN prd_product p ON p.id=k.product_id
           WHERE k.id=? AND k.deleted=FALSE FOR UPDATE OF k
@@ -84,7 +86,7 @@ public class V12Round3Controller {
             throw error("PACKAGE_GRACE_NOT_APPLICABLE","只有长效与独享套餐支持固定IP宽限");
         jdbc.update("UPDATE prd_package SET grace_days=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=?",
                     input.graceDays(),actor.userId(),id);
-        audit.success(actor,"PRODUCT","PACKAGE",id,"UPDATE_GRACE_R3",input.reason().trim(),request.getRemoteAddr());
+        audit.success(actor,"PRODUCT","PACKAGE",id,"UPDATE_GRACE_R3",input.reason().trim()+(input.graceDays()==0?"；已明确确认0天宽限风险":""),request.getRemoteAddr());
         return ApiResponse.success(Map.of("packageId",id,"graceDays",input.graceDays(),"existingServicesUnaffected",true));
     }
 
