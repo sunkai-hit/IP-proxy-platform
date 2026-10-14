@@ -140,4 +140,51 @@ public class V12BusinessRelationsController {
           ORDER BY s.created_at DESC,s.id DESC LIMIT 201
           """,id,id),"SERVICE_PURCHASE_REFERENCE_NOT_RUNTIME_PROOF"));
     }
+    @GetMapping("/services/{id}/bindings")
+    public ApiResponse<?> serviceBindings(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
+        require(p,"service:read");
+        if(!Boolean.TRUE.equals(jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM svc_instance WHERE id=? AND deleted=FALSE)",
+            Boolean.class,id)))
+            throw new BusinessException("RELATION_PARENT_NOT_FOUND","关联服务不存在");
+        return ApiResponse.success(result(jdbc.queryForList("""
+          SELECT b.id,b.resource_type,b.resource_id,b.binding_role,b.status,
+                 b.effective_at,b.released_at,
+                 CASE b.resource_type
+                   WHEN 'POOL' THEN pool.pool_name
+                   WHEN 'CENTOS' THEN centos.resource_code
+                   WHEN 'ROS' THEN ros.resource_code
+                   WHEN 'LINE' THEN line.resource_code
+                   WHEN 'IP' THEN host(ip.ip_address)
+                   WHEN 'DOMAIN' THEN domain.domain_name
+                   WHEN 'SUPPLIER' THEN supplier.supplier_name
+                   WHEN 'SUPPLIER_PURCHASE' THEN purchase.purchase_no
+                   WHEN 'REVERSE_PROXY' THEN proxy.proxy_no
+                   ELSE NULL END display_name,
+                 CASE b.resource_type
+                   WHEN 'POOL' THEN '/resource-pools/'||pool.id
+                   WHEN 'CENTOS' THEN '/resources/centos/'||centos.id
+                   WHEN 'ROS' THEN '/resources/ros/'||ros.id
+                   WHEN 'LINE' THEN '/resources/lines/'||line.id
+                   WHEN 'DOMAIN' THEN '/domains/'||domain.id
+                   WHEN 'SUPPLIER' THEN '/suppliers/'||supplier.id
+                   WHEN 'SUPPLIER_PURCHASE' THEN '/supplier-purchases/'||purchase.id
+                   WHEN 'REVERSE_PROXY' THEN '/reverse-proxies/'||proxy.id
+                   ELSE NULL END related_path
+          FROM svc_resource_binding b
+          LEFT JOIN res_pool pool ON b.resource_type='POOL' AND pool.id=b.resource_id AND pool.deleted=FALSE
+          LEFT JOIN res_centos centos ON b.resource_type='CENTOS' AND centos.id=b.resource_id AND centos.deleted=FALSE
+          LEFT JOIN res_ros ros ON b.resource_type='ROS' AND ros.id=b.resource_id AND ros.deleted=FALSE
+          LEFT JOIN res_line line ON b.resource_type='LINE' AND line.id=b.resource_id AND line.deleted=FALSE
+          LEFT JOIN res_ip ip ON b.resource_type='IP' AND ip.id=b.resource_id AND ip.deleted=FALSE
+          LEFT JOIN res_domain domain ON b.resource_type='DOMAIN' AND domain.id=b.resource_id AND domain.deleted=FALSE
+          LEFT JOIN res_supplier supplier ON b.resource_type='SUPPLIER' AND supplier.id=b.resource_id AND supplier.deleted=FALSE
+          LEFT JOIN res_supplier_purchase purchase ON b.resource_type='SUPPLIER_PURCHASE'
+            AND purchase.id=b.resource_id AND purchase.deleted=FALSE
+          LEFT JOIN res_reverse_proxy proxy ON b.resource_type='REVERSE_PROXY'
+            AND proxy.id=b.resource_id AND proxy.deleted=FALSE
+          WHERE b.service_id=? ORDER BY b.created_at DESC,b.id DESC LIMIT 201
+          """,id),"SERVICE_RESOURCE_BINDING_READONLY_NO_RAW_METADATA"));
+    }
+
 }
