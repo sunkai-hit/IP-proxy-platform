@@ -132,13 +132,17 @@ public class V12ServiceLifecycleService {
                 if(lines.size()!=need)throw err("EXCLUSIVE_RESOURCE_UNAVAILABLE","独享资源不足，需要"+need+"条可用线路");
                 for(Map<String,Object> line:lines){
                     Long lid=((Number)line.get("id")).longValue();
-                    db.allocateExclusiveLine(sid,lid,in.customerId(),expire,String.valueOf(line.get("current_public_ip")),j(line),actor.userId());
+                    db.allocateExclusiveLine(sid,lid,in.customerId(),expire,expire.plusDays(((Number)pkg.get("grace_days")).intValue()),String.valueOf(line.get("current_public_ip")),j(line),actor.userId());
                     db.bind(sid,"LINE",lid,"EXCLUSIVE",j(line),actor.userId());
                 }
                 ctx.put("exclusiveLines",lines.stream().map(e->e.get("id")).toList());
             }
             if(decision.poolId()!=null){db.bind(sid,"POOL",decision.poolId(),"PRIMARY",j(Map.of("poolCode",decision.poolCode(),"policyCode",decision.policyCode())),actor.userId());ctx.put("poolId",decision.poolId());}
-            if(decision.lineId()!=null){Map<String,Object> line=db.line(decision.lineId());db.bind(sid,"LINE",decision.lineId(),"OUTBOUND",j(line),actor.userId());ctx.put("lineId",decision.lineId());}
+            if(decision.lineId()!=null){Map<String,Object> line=db.line(decision.lineId());db.bind(sid,"LINE",decision.lineId(),"OUTBOUND",j(line),actor.userId());
+                if("LONG_IP".equals(productType)&&line!=null&&line.get("current_public_ip")!=null)
+                    db.claimLongSharedEgress(sid,in.customerId(),decision.lineId(),String.valueOf(line.get("current_public_ip")),
+                        expire.plusDays(((Number)pkg.get("grace_days")).intValue()));
+                ctx.put("lineId",decision.lineId());}
             if(decision.poolId()==null)ctx.put("resourceMode","PRODUCT_SPECIFIC");
             ServiceProvisionAdapter.Result result=adapter.provision(productType,sid,ctx);if(!result.success())throw err("DELIVERY_ADAPTER_FAILED",result.message());
         }else{
