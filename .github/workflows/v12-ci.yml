@@ -163,10 +163,31 @@ jobs:
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["relation_type"]=="RENEWAL_TARGET"' <<< "$REN_CHILDREN"
           echo 'Order-created service subtables and original service renewal target verified in Mock/DB'
           curl -fsS -H "$H" -H "$J" -d '{"reason":"CI renewal order approval"}' "http://localhost:8080/api/admin/v1/orders/$REN_ID/confirm" >/dev/null
+          UNPAID_RENEW_BODY=$(printf '{"days":30,"renewalOrderId":%s,"reason":"CI renewal must not proceed unpaid"}' "$REN_ID")
+          UNPAID_RENEW_HTTP=$(curl -s -o /tmp/r3-valid-unpaid-renew.json -w '%{http_code}' -H "$H" -H "$J" -d "$UNPAID_RENEW_BODY" "http://localhost:8080/api/admin/v1/services/$SID/renew")
+          test "$UNPAID_RENEW_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-valid-unpaid-renew.json"))["code"]=="RENEW_PAYMENT_OR_TARGET_INVALID"'
           curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-RENEW-ORDER-PAID","reason":"CI synthetic payment evidence"}' "http://localhost:8080/api/admin/v1/orders/$REN_ID/payment-confirmation" >/dev/null
           READY_RENEW=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/services/$SID/paid-renewal-orders")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["order_no"] and x[0]["payment_status"]=="PAID_CONFIRMED" and x[0]["status"]=="PENDING_PROVISION"' <<< "$READY_RENEW"
           echo 'Exactly targeted paid renewal order selection verified with synthetic payment evidence'
+          OLD_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/services/$SID")
+          OLD_EXP=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["expire_at"])' <<< "$OLD_TERM")
+          BAD_TERM_BODY=$(printf '{"days":7,"renewalOrderId":%s,"reason":"CI term mismatch"}' "$REN_ID")
+          BAD_TERM_HTTP=$(curl -s -o /tmp/r3-valid-term-mismatch.json -w '%{http_code}' -H "$H" -H "$J" -d "$BAD_TERM_BODY" "http://localhost:8080/api/admin/v1/services/$SID/renew")
+          test "$BAD_TERM_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-valid-term-mismatch.json"))["code"]=="RENEW_TERM_MISMATCH"'
+          MOCK_RENEW_BODY=$(printf '{"days":30,"renewalOrderId":%s,"reason":"CI paid mock must not extend term"}' "$REN_ID")
+          MOCK_RENEW_HTTP=$(curl -s -o /tmp/r3-valid-mock-renew.json -w '%{http_code}' -H "$H" -H "$J" -d "$MOCK_RENEW_BODY" "http://localhost:8080/api/admin/v1/services/$SID/renew")
+          test "$MOCK_RENEW_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-valid-mock-renew.json"))["code"]=="DATA_PLANE_ADAPTER_UNAVAILABLE"'
+          NEW_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/services/$SID")
+          NEW_EXP=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["expire_at"])' <<< "$NEW_TERM")
+          test "$OLD_EXP" = "$NEW_EXP"
+          RENEW_STATUS=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM biz_order WHERE id=$REN_ID")
+          test "$RENEW_STATUS" = "PENDING_PROVISION"
+          echo 'Unpaid, mismatched term and Mock renewal fail closed with exact business errors; DB term/order unchanged'
+
 
 
           # Synthetic supplier -> purchase -> proxy -> service drill-down only.
