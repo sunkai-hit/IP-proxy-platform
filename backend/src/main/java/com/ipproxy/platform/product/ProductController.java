@@ -34,7 +34,8 @@ public class ProductController {
     @GetMapping("/packages/{id}") public ApiResponse<?> pkg(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"product:package:read");return ApiResponse.success(service.pkg(id));}
     @PutMapping("/packages/{id}") public ApiResponse<?> updatePackage(@PathVariable Long id,@RequestBody ProductService.PackageInput b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"product:package:write");service.updatePackage(id,b,p,ip(r));return ApiResponse.success();}
     @PostMapping("/packages/{id}/copy") public ApiResponse<?> copyPackage(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"product:package:write");return ApiResponse.success(Map.of("id",service.copyPackage(id,b.reason(),p,ip(r))));}
-    @PostMapping("/packages/{id}/enable") public ApiResponse<?> enablePackage(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"product:package:write");service.packageStatus(id,"ACTIVE",b.reason(),p,ip(r));return ApiResponse.success();}
+    public record PackageEnableRequest(String reason,Boolean zeroGraceRiskAccepted){}
+    @PostMapping("/packages/{id}/enable") public ApiResponse<?> enablePackage(@PathVariable Long id,@RequestBody PackageEnableRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"product:package:write");service.packageStatus(id,"ACTIVE",b.reason(),b.zeroGraceRiskAccepted(),p,ip(r));return ApiResponse.success();}
     @PostMapping("/packages/{id}/disable") public ApiResponse<?> disablePackage(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"product:package:write");service.packageStatus(id,"DISABLED",b.reason(),p,ip(r));return ApiResponse.success();}
 
     /**
