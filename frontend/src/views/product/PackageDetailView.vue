@@ -90,7 +90,7 @@ onMounted(load)
    <el-table-column prop="delivery_stage" label="真实交付阶段" min-width="135"/>
    <el-table-column prop="expire_at" label="服务到期时刻" min-width="175"/>
    <el-table-column label="原合同宽限" width="120"><template #default="s">
-    {{s.row.grace_days_snapshot==null?'待核对':s.row.grace_days_snapshot+'天'}}
+    {{!['LONG_IP','EXCLUSIVE_IP'].includes(s.row.product_type)?'不适用':s.row.grace_days_snapshot==null?'原合同待核对':s.row.grace_days_snapshot+'天'}}
    </template></el-table-column>
    <el-table-column prop="grace_until_at" label="出口保留截止" min-width="175"/>
    <el-table-column prop="expiry_phase" label="到期阶段" min-width="120"/>
