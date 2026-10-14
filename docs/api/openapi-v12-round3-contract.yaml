@@ -177,7 +177,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [STOP_PENDING, GRACE_HELD, RENEW_RESTORE_PENDING, RELEASE_PENDING, RELEASE_BLOCKED, RELEASED]
+            enum: [NONE, STOP_PENDING, GRACE_HELD, RENEW_RESTORE_PENDING, RELEASE_PENDING, RELEASE_BLOCKED, RELEASED]
       responses:
         '200':
           description: 业务到期与真实关闭执行状态分别列示
@@ -187,6 +187,49 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DeliverySummary'
+  /v12/service-expiry/reconcile:
+    post:
+      tags: [Lifecycle]
+      summary: 受控扫描到期服务并登记待核验任务（不执行远端动作）
+      operationId: planExpiryTasksR3
+      description: |
+        需要 service:release 权限及可审计的原因。操作幂等：
+        同一服务、到期时刻和动作只会创建一个 operation_key。
+        PRECHECK_BLOCKED 不代表已停服；不能解除合同固定IPv4授权。
+        定时扫描共用同一安全逻辑，严禁把扫描成功当作数据面执行成功。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 200
+                  default: 200
+      responses:
+        '200':
+          description: 扫描结果（只读/管理面任务登记，无远端执行）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scanned: {type: integer}
+                  created: {type: integer}
+                  existing: {type: integer}
+                  missingGrace: {type: integer}
+                  realActionsExecuted: {type: integer, enum: [0]}
+                  dataPlaneVerified: {type: boolean, enum: [false]}
+                  message: {type: string}
+        '403':
+          $ref: '#/components/responses/BusinessError'
   /v12/delivery-actions/{operationKey}:
     get:
       tags: [Delivery]
