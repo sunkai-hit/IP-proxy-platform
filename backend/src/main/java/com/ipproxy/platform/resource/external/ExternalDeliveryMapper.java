@@ -80,6 +80,11 @@ public class ExternalDeliveryMapper {
     public void linkPurchaseToPaidOrder(Long id,Long orderId){
         jdbc.update("UPDATE res_supplier_purchase SET source_customer_order_id=? WHERE id=?",orderId,id);
     }
+    public boolean hasOtherPurchaseCustomer(Long purchaseId,Long customerId){
+        return Boolean.TRUE.equals(jdbc.queryForObject(
+          "SELECT EXISTS(SELECT 1 FROM res_reverse_proxy WHERE purchase_id=? AND customer_id<>? AND deleted=FALSE)",
+          Boolean.class,purchaseId,customerId));
+    }
     public List<Map<String,Object>> purchaseOptions(){return jdbc.queryForList("SELECT p.id,p.purchase_no code,p.supplier_package_name name,p.customer_id,s.supplier_name,p.expire_at FROM res_supplier_purchase p JOIN res_supplier s ON s.id=p.supplier_id WHERE p.deleted=FALSE AND p.status='ACTIVE' ORDER BY p.expire_at NULLS LAST");}
     public List<Map<String,Object>> serviceOptions(Long customerId){return jdbc.queryForList("SELECT id,service_no code,service_no||' / '||product_type name,product_type,status FROM svc_instance WHERE deleted=FALSE AND (? IS NULL OR customer_id=?) AND status IN ('PENDING','ACTIVE','SUSPENDED') ORDER BY created_at DESC",customerId,customerId);}
 }
