@@ -60,7 +60,15 @@ public class ResourceService {
 
     public PageResult<Map<String,Object>> exclusive(int p,int s,String k,String status){p=page(p);s=size(s);k=text(k);status=text(status);return new PageResult<>(p,s,mapper.countExclusive(k,status),mapper.listExclusive(k,status,s,(p-1)*s));}
     public Map<String,Object> exclusive(Long id){Map<String,Object> r=mapper.getExclusive(id);if(r==null)throw new BusinessException("RESOURCE_EXCLUSIVE_NOT_FOUND","独享资源记录不存在");return r;}
-    @Transactional public void releaseExclusive(Long id,String reason,UserPrincipal actor,String ip){exclusive(id);if(mapper.releaseExclusive(id,required(reason,"释放原因不能为空"),actor.userId())==0)throw new BusinessException("RESOURCE_EXCLUSIVE_STATUS_INVALID","当前独享资源状态不可释放");audit(actor,"EXCLUSIVE_ALLOCATION",id,"RELEASE",ip,reason);}
+    @Transactional public void releaseExclusive(Long id,String reason,UserPrincipal actor,String ip){
+        // The historic endpoint changes res_exclusive_allocation only. It cannot prove
+        // remote service stop, egress unbind or physical IPv4 reclamation.
+        // V1.2 must not let a record status bypass the service release saga.
+        exclusive(id);
+        required(reason,"释放原因不能为空");
+        throw new BusinessException("EXCLUSIVE_RELEASE_REQUIRES_VERIFIED_LIFECYCLE",
+            "独享资源不得在列表直接释放；请进入关联服务完成真实停服和出口回收核验，存量占用须先核对");
+    }
 
     public PageResult<Map<String,Object>> domains(int p,int s,String k,String status){p=page(p);s=size(s);k=text(k);status=text(status);return new PageResult<>(p,s,mapper.countDomains(k,status),mapper.listDomains(k,status,s,(p-1)*s));}
     public Map<String,Object> domain(Long id){Map<String,Object> r=mapper.getDomain(id);if(r==null)throw new BusinessException("RESOURCE_DOMAIN_NOT_FOUND","域名配置不存在");return r;}
