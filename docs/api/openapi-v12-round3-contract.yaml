@@ -1,0 +1,325 @@
+openapi: 3.0.3
+info:
+  title: IP代理平台 V1.2 第三轮统一业务增量契约
+  version: 1.2.0-r3-draft
+  description: |
+    待双方接口评审，不等于已实现的API。以原openapi-admin-v1及各专题API为底；
+    这些接口是新旧契约差异。真实数据面由五类产品组及资源API组确认。
+servers:
+  - url: /api/admin/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Packages
+  - name: Delivery
+  - name: Egress
+  - name: Failover
+  - name: Lifecycle
+paths:
+  /v12/packages/{packageId}/grace:
+    get:
+      tags: [Packages]
+      summary: 查询长效/独享套餐宽限规则
+      operationId: getPackageGraceR3
+      parameters:
+        - $ref: '#/components/parameters/PackageId'
+      responses:
+        '200':
+          description: 套餐详情与宽限设置
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraceResponse'
+    put:
+      tags: [Packages]
+      summary: 受控设置套餐宽限天数，历史服务不追溯
+      operationId: updatePackageGraceR3
+      parameters:
+        - $ref: '#/components/parameters/PackageId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [graceDays, reason]
+              properties:
+                graceDays:
+                  type: integer
+                  minimum: 0
+                  description: 是否允许0及默认值待业务审批；不得隐式补0
+                reason:
+                  type: string
+                  minLength: 1
+      responses:
+        '200':
+          description: 更新成功，已有服务快照保持不变
+        '400':
+          $ref: '#/components/responses/BusinessError'
+        '403':
+          $ref: '#/components/responses/BusinessError'
+  /v12/services/{serviceId}/delivery-summary:
+    get:
+      tags: [Delivery]
+      summary: 服务真实交付摘要（只读）
+      operationId: getDeliverySummaryR3
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: 管理面/真实交付状态及固定出口分开
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliverySummary'
+  /v12/services/{serviceId}/egress-claims:
+    get:
+      tags: [Egress]
+      summary: 服务公网出口授权与保留状态
+      operationId: listEgressClaimsR3
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: 仅返回授权范围的客户与IP占用信息
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EgressClaim'
+  /v12/services/{serviceId}/backup-candidates:
+    get:
+      tags: [Failover]
+      summary: 查询服务可配置的人工备用候选
+      operationId: listBackupCandidatesR3
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '200':
+          description: 候选资格不代表真实切换已可执行
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BackupCandidate'
+  /v12/services/{serviceId}/failover-preview:
+    post:
+      tags: [Failover]
+      summary: 人工主备切换预检（不执行）
+      operationId: failoverPreviewR3
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [backupCandidateId]
+              properties:
+                backupCandidateId:
+                  type: integer
+                  format: int64
+      responses:
+        '200':
+          description: 原/新IPv4、平台入口、客户固定IP承诺与阻断原因
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreflightResult'
+        '409':
+          $ref: '#/components/responses/BusinessError'
+  /v12/services/{serviceId}/failover-tasks:
+    post:
+      tags: [Failover]
+      summary: 提交人工主备切换（仅真实接口签署后实现）
+      operationId: createFailoverTaskR3
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [backupCandidateId, expectedServiceVersion, reason]
+              properties:
+                backupCandidateId:
+                  type: integer
+                  format: int64
+                expectedServiceVersion:
+                  type: integer
+                reason:
+                  type: string
+                  minLength: 1
+      responses:
+        '202':
+          description: 返回任务已受理，不代表真实切换成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionTask'
+        '409':
+          $ref: '#/components/responses/BusinessError'
+        '503':
+          $ref: '#/components/responses/BusinessError'
+  /v12/service-expiry/queue:
+    get:
+      tags: [Lifecycle]
+      summary: 到期、宽限停服及释放待处理队列
+      operationId: listExpiryQueueR3
+      parameters:
+        - name: phase
+          in: query
+          schema:
+            type: string
+            enum: [STOP_PENDING, GRACE_HELD, RENEW_RESTORE_PENDING, RELEASE_PENDING, RELEASE_BLOCKED, RELEASED]
+      responses:
+        '200':
+          description: 业务到期与真实关闭执行状态分别列示
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeliverySummary'
+  /v12/delivery-actions/{operationKey}:
+    get:
+      tags: [Delivery]
+      summary: 幂等任务查询与真实远端回执（敏感字段脱敏）
+      operationId: getDeliveryActionR3
+      parameters:
+        - name: operationKey
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 操作阶段、错误与补偿
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionTask'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ServiceId:
+      name: serviceId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    PackageId:
+      name: packageId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: 跨系统写操作的全局幂等键
+  responses:
+    BusinessError:
+      description: 业务阻断、越权或外部接口未就绪
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code: {type: string}
+              message: {type: string}
+              operationKey: {type: string, nullable: true}
+  schemas:
+    GraceResponse:
+      type: object
+      properties:
+        packageId: {type: integer, format: int64}
+        productType: {type: string, enum: [LONG_IP, EXCLUSIVE_IP]}
+        graceDays: {type: integer, nullable: true, minimum: 0}
+        activeServiceCount: {type: integer}
+        existingServicesUnaffected: {type: boolean, example: true}
+    DeliverySummary:
+      type: object
+      properties:
+        serviceId: {type: integer, format: int64}
+        serviceNo: {type: string}
+        customerName: {type: string}
+        productType: {type: string, enum: [SHORT_IP, LONG_IP, EXCLUSIVE_IP, VPN, TUNNEL]}
+        businessStatus: {type: string}
+        deliveryStage: {type: string, description: 非真实验证状态不能叫已交付}
+        lastDeliveryVerifiedAt: {type: string, format: date-time, nullable: true}
+        expireAt: {type: string, format: date-time, nullable: true}
+        graceDaysSnapshot: {type: integer, nullable: true}
+        graceUntilAt: {type: string, format: date-time, nullable: true}
+        expiryPhase: {type: string}
+        contractedEgressIpv4: {type: string, nullable: true}
+        currentReportedIpv4: {type: string, nullable: true}
+        platformEntry: {type: string, nullable: true}
+        dataSource: {type: string}
+        sampledAt: {type: string, format: date-time, nullable: true}
+    EgressClaim:
+      type: object
+      properties:
+        id: {type: integer, format: int64}
+        egressIpv4: {type: string}
+        mode: {type: string, enum: [SHARED, EXCLUSIVE]}
+        claimStatus: {type: string, enum: [RESERVED, ACTIVE, GRACE_HELD, RELEASE_PENDING, RELEASED]}
+        customerId: {type: integer, format: int64}
+        sourceLineId: {type: integer, format: int64, nullable: true}
+        holdUntilAt: {type: string, format: date-time, nullable: true}
+        verifiedAt: {type: string, format: date-time, nullable: true}
+    BackupCandidate:
+      type: object
+      properties:
+        id: {type: integer, format: int64}
+        lineId: {type: integer, format: int64}
+        expectedIpv4: {type: string, nullable: true}
+        health: {type: string, enum: [ONLINE, OFFLINE, UNKNOWN]}
+        eligible: {type: boolean}
+        reason: {type: string, nullable: true}
+        checkedAt: {type: string, format: date-time, nullable: true}
+    PreflightResult:
+      type: object
+      properties:
+        allowed: {type: boolean}
+        blockers:
+          type: array
+          items: {type: string}
+        fromIpv4: {type: string, nullable: true}
+        toIpv4: {type: string, nullable: true}
+        changesFixedIp: {type: boolean}
+        fromPlatformEntry: {type: string, nullable: true}
+        toPlatformEntry: {type: string, nullable: true}
+        adapterReady: {type: boolean}
+        checkedAt: {type: string, format: date-time}
+    ActionTask:
+      type: object
+      properties:
+        operationKey: {type: string}
+        serviceId: {type: integer, format: int64}
+        action: {type: string}
+        taskStatus: {type: string, enum: [PENDING, PRECHECK_BLOCKED, RUNNING, VERIFYING, SUCCEEDED, FAILED, COMPENSATION_REQUIRED]}
+        stage: {type: string}
+        attemptCount: {type: integer}
+        remoteOperationId: {type: string, nullable: true}
+        lastErrorCode: {type: string, nullable: true}
+        lastErrorMessage: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+        finishedAt: {type: string, format: date-time, nullable: true}
