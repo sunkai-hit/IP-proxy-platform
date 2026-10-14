@@ -9,7 +9,7 @@ const router=useRouter(),auth=useAuthStore()
 const rows=ref<any[]>([]),total=ref(0),loading=ref(false),saving=ref(false),drawer=ref(false)
 const suppliers=ref<any[]>([]),customers=ref<any[]>([]),paidOrders=ref<any[]>([])
 const q=reactive<any>({page:1,size:20,keyword:'',status:''})
-const form=reactive<any>({supplierId:null,customerId:null,sourceCustomerOrderId:null,supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',remainingQuota:'',purchaseCost:'',currency:'CNY',remark:''})
+const form=reactive<any>({supplierId:null,customerId:null,sourceCustomerOrderId:null,supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',remainingQuota:'',purchaseCost:null,currency:'CNY',effectiveAt:'',expireAt:'',remark:''})
 const data=(r:any)=>r.data.data
 async function load(){
  loading.value=true
@@ -31,6 +31,7 @@ async function loadPaidOrders(){
 function add(){Object.assign(form,{supplierId:null,customerId:null,sourceCustomerOrderId:null,supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',remainingQuota:'',purchaseCost:'',currency:'CNY',remark:''});paidOrders.value=[];drawer.value=true}
 async function save(){
  if(!form.supplierId||!String(form.supplierPackageName).trim()){ElMessage.warning('请填写供应商和供应商套餐');return}
+ if(!form.expireAt){ElMessage.warning('请填写供应商采购到期时间，以验证能否覆盖客户服务期限');return}
  if(form.customerId&&!form.sourceCustomerOrderId){ElMessage.warning('指定客户的采购记录必须关联已核实付款的客户订单');return}
  saving.value=true
  try{
@@ -64,6 +65,8 @@ onMounted(async()=>{await Promise.all([load(),loadOptions()])})
    <el-form-item label="供应商套餐名称" required><el-input v-model="form.supplierPackageName" maxlength="255"/></el-form-item>
    <el-form-item label="供应商套餐编号（可选）"><el-input v-model="form.supplierPackageNo"/></el-form-item>
    <el-form-item label="采购账号（可选）"><el-input v-model="form.purchaseAccount"/></el-form-item>
+   <el-form-item label="供应商生效时间"><el-date-picker v-model="form.effectiveAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="可选" style="width:100%"/></el-form-item>
+   <el-form-item label="供应商到期时间" required><el-date-picker v-model="form.expireAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="必须据供应商实际有效期填写" style="width:100%"/></el-form-item>
    <el-form-item label="采购成本（选填，不参与业务）"><el-input-number v-model="form.purchaseCost" :min="0" :precision="2" style="width:100%"/></el-form-item>
    <el-form-item label="套餐额度（选填，不扣减）"><el-input v-model="form.packageQuota"/></el-form-item>
    <el-form-item label="剩余额度（选填，不扣减）"><el-input v-model="form.remainingQuota"/></el-form-item>
