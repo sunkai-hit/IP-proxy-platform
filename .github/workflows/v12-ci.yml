@@ -137,6 +137,28 @@ jobs:
           UNCHANGED_POOL_LINES=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM res_pool_line WHERE pool_id=$POOLID AND enabled=TRUE")
           test "$UNCHANGED_POOL_LINES" -eq 2
           echo 'CentOS/ROS/line linkage, server-masked broadband account, N:M pool and in-use source protection verified'
+          # Synthetic same-customer second service must NOT reuse an exclusive
+          # contracted IPv4 even if the source line is the same. No real IP is allocated.
+          for INDEX in A B; do
+            docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "
+              INSERT INTO svc_instance(service_no,customer_id,product_id,package_id,
+                product_type,product_snapshot,package_snapshot,quota_snapshot,
+                effective_at,expire_at,status,delivery_stage)
+              SELECT 'CI-EXCLUSIVE-RES-$INDEX',customer_id,product_id,package_id,
+                'EXCLUSIVE_IP',product_snapshot,package_snapshot,quota_snapshot,
+                now(),now()+interval '30 days','ACTIVE','MOCK_ONLY'
+              FROM svc_instance WHERE id=$SID" >/dev/null
+          done
+          EX_CI_A=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-EXCLUSIVE-RES-A'")
+          EX_CI_B=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-EXCLUSIVE-RES-B'")
+          docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status) VALUES($EX_CI_A,$CID,$L1,'198.51.100.42','EXCLUSIVE','RESERVED')" >/dev/null
+          if docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status) VALUES($EX_CI_B,$CID,$L1,'198.51.100.42','EXCLUSIVE','RESERVED')" >/tmp/r3-exclusive-conflict.log 2>&1; then
+            echo 'Exclusive IPv4 conflict was wrongly accepted' >&2
+            exit 1
+          fi
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_egress_claim WHERE egress_ipv4='198.51.100.42'::inet AND claim_status<>'RELEASED'")" -eq 1
+          echo 'Same-customer different-service exclusive IPv4 collision rejected without extra claim'
+
 
           docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "
             INSERT INTO svc_instance(
