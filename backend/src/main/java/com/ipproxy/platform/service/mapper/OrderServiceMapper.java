@@ -30,6 +30,14 @@ public class OrderServiceMapper {
     public Long insertOrder(String no,Long customerId,String type,BigDecimal total,String currency,OffsetDateTime effective,OffsetDateTime expire,Long owner,String remark,Long renewalServiceId,Long actor){return jdbc.queryForObject("INSERT INTO biz_order(order_no,customer_id,order_type,status,total_amount,currency,expected_effective_at,expected_expire_at,owner_user_id,remark,renewal_service_id,created_by,updated_by) VALUES(?,?,?,'PENDING_CONFIRM',?,?,?,?,?,?,?,?,?) RETURNING id",Long.class,no,customerId,type,total,currency,effective,expire,owner,remark,renewalServiceId,actor,actor);}
     public Long insertItem(Long orderId,int line,Long productId,Long packageId,int qty,BigDecimal unit,BigDecimal amount,String productJson,String packageJson,int serviceCount,String remark){return jdbc.queryForObject("INSERT INTO biz_order_item(order_id,line_no,product_id,package_id,quantity,unit_price,line_amount,product_snapshot,package_snapshot,entitlement_snapshot,service_count,remark) VALUES(?,?,?,?,?,?,?,CAST(? AS jsonb),CAST(NULLIF(?,'') AS jsonb),'{}'::jsonb,?,?) RETURNING id",Long.class,orderId,line,productId,packageId,qty,unit,amount,productJson,packageJson==null?"":packageJson,serviceCount,remark);}
     public int orderStatus(Long id,String status,Long actor){return jdbc.update("UPDATE biz_order SET status=?,updated_at=now(),updated_by=?,confirmed_at=CASE WHEN ?='PENDING_PROVISION' THEN now() ELSE confirmed_at END,completed_at=CASE WHEN ?='COMPLETED' THEN now() ELSE completed_at END,cancelled_at=CASE WHEN ?='CANCELLED' THEN now() ELSE cancelled_at END WHERE id=? AND deleted=FALSE",status,actor,status,status,status,id);}
+    public boolean hasUnreconciledOtherLegacyEgress(Long serviceId){
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+          SELECT EXISTS(SELECT 1 FROM res_exclusive_allocation a
+            WHERE a.deleted=FALSE AND a.status IN ('LOCKED','ALLOCATED','PENDING_RECYCLE')
+            AND a.current_ip_snapshot IS NULL
+            AND a.service_id IS DISTINCT FROM ?)
+        """,Boolean.class,serviceId));
+    }
     public Map<String,Object> lockedRenewalOrder(Long id){
         return one("SELECT id,customer_id,renewal_service_id,order_type,status,payment_status FROM biz_order WHERE id=? AND deleted=FALSE FOR UPDATE",id);
     }
