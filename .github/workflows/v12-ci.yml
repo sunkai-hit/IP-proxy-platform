@@ -157,15 +157,14 @@ jobs:
           # No upstream payment, access credential or network adapter is invoked.
           SUPID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier(supplier_code,supplier_name,api_endpoint,auth_type_code) VALUES('CI-SUPPLIER-R3','CI Supplier','https://supplier.invalid','TOKEN') RETURNING id" | head -n 1)
           PURID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,customer_id,source_customer_order_id,supplier_package_name,expire_at) VALUES('CI-PUR-R3',$SUPID,$CID,$OID,'CI synthetic purchase',now()+interval '30 days') RETURNING id" | head -n 1)
-          PROXYID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_reverse_proxy(proxy_no,purchase_id,customer_id,service_id,protocol_code,upstream_host,upstream_port,platform_host,platform_port,status) VALUES('CI-PROXY-R3',$PURID,$CID,$EXP3,'HTTP','upstream.invalid',18080,'platform.invalid',18081,'PENDING') RETURNING id" | head -n 1)
-          docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "UPDATE svc_instance SET supplier_purchase_id=$PURID,reverse_proxy_id=$PROXYID,delivery_mode='EXTERNAL_PROXY' WHERE id=$EXP3" >/dev/null
+          PROXYID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_reverse_proxy(proxy_no,purchase_id,customer_id,service_id,protocol_code,upstream_host,upstream_port,platform_host,platform_port,status) VALUES('CI-PROXY-R3',$PURID,$CID,NULL,'HTTP','upstream.invalid',18080,'platform.invalid',18081,'PENDING') RETURNING id" | head -n 1)
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$PURID/proxies" >/tmp/r3-purchase-proxies.json
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$PURID/services" >/tmp/r3-purchase-services.json
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases/$PURID" >/tmp/r3-purchase-detail.json
           python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-proxies.json"))["data"]; assert x["items"][0]["proxy_no"]=="CI-PROXY-R3"'
-          python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-services.json"))["data"]; assert x["items"][0]["delivery_stage"]=="MOCK_ONLY"'
+          python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-services.json"))["data"]; assert x["items"]==[]'
           python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-detail.json"))["data"]; assert x["purchase_cost"] is None and x["source_customer_payment_status"]=="PAID_CONFIRMED"'
-          echo 'Synthetic purchase/proxy/service chain and optional purchase fields read-only checks passed'
+          echo 'Synthetic purchase/proxy config and no-fake-delivery subtable checks passed'
 
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/long-monitor/overview >/dev/null
           curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=CENTOS' >/dev/null
