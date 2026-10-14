@@ -155,6 +155,23 @@ jobs:
           REPEAT_CODE=$(curl -s -o /tmp/repeat-provision.json -w '%{http_code}' -H "$H" -H "$J" -d "{\"reason\":\"repeat\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
           test "$REPEAT_CODE" -ge 400
           echo 'Order provisioning preview/plan/idempotency smoke passed'
+          # Renewal must target one same-customer service, use a paid RENEW order, and
+          # must not extend the service on Mock-only product acknowledgements.
+          OLD_SVC=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID)
+          OLD_EXP=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["expire_at"])' <<< "$OLD_SVC")
+          REN=$(curl -fsS -H "$H" -H "$J" -d "{\\\"customerId\\\":$CID,\\\"orderType\\\":\\\"RENEW\\\",\\\"renewalServiceId\\\":$SID,\\\"items\\\":[{\\\"productId\\\":$PID2,\\\"packageId\\\":$PKGID,\\\"quantity\\\":1,\\\"serviceCount\\\":1}]}" http://localhost:8080/api/admin/v1/orders)
+          ROID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$REN")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI renew confirm"}' http://localhost:8080/api/admin/v1/orders/$ROID/confirm >/dev/null
+          UNPAID_RENEW=$(curl -s -o /tmp/r3-unpaid-renew.json -w '%{http_code}' -H "$H" -H "$J" -d "{\\\"days\\\":30,\\\"renewalOrderId\\\":$ROID,\\\"reason\\\":\\\"CI block unpaid renewal\\\"}" http://localhost:8080/api/admin/v1/services/$SID/renew)
+          test "$UNPAID_RENEW" -ge 400
+          curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-RENEW-PAID-1","reason":"CI payment proof"}' http://localhost:8080/api/admin/v1/orders/$ROID/payment-confirmation >/dev/null
+          MOCK_RENEW=$(curl -s -o /tmp/r3-mock-renew.json -w '%{http_code}' -H "$H" -H "$J" -d "{\\\"days\\\":30,\\\"renewalOrderId\\\":$ROID,\\\"reason\\\":\\\"CI mock renewal must not succeed\\\"}" http://localhost:8080/api/admin/v1/services/$SID/renew)
+          test "$MOCK_RENEW" -ge 400
+          NEW_SVC=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID)
+          NEW_EXP=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["expire_at"])' <<< "$NEW_SVC")
+          test "$OLD_EXP" = "$NEW_EXP"
+          echo 'R3 paid renewal gating verified, mock adapter cannot extend term'
+
 
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/long-monitor/overview >/dev/null
           curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=CENTOS' >/dev/null
