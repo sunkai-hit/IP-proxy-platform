@@ -79,8 +79,22 @@ public class V12ResourceService {
         audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"UPDATE","更新V1.2来源属性资源池",sourceIp);
     }
     @Transactional public int addPoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);if(ids.isEmpty())throw new BusinessException("V12_POOL_LINE_REQUIRED","请选择要加入资源池的线路");validatePoolLines(id,ids);String r=required(reason,"操作原因不能为空");int count=db.addPoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"ADD_LINES",r,sourceIp);return count;}
-    @Transactional public int removePoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);if(ids.isEmpty())throw new BusinessException("V12_POOL_LINE_REQUIRED","请选择要移出资源池的线路");String r=required(reason,"操作原因不能为空");int count=db.removePoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"REMOVE_LINES",r,sourceIp);return count;}
-    @Transactional public int replacePoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);validatePoolLines(id,ids);String r=required(reason,"操作原因不能为空");int count=db.replacePoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"REPLACE_LINES",r,sourceIp);return count;}
+    @Transactional public int removePoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);if(ids.isEmpty())throw new BusinessException("V12_POOL_LINE_REQUIRED","请选择要移出资源池的线路");String r=required(reason,"操作原因不能为空");validatePoolRemoval(id,ids);int count=db.removePoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"REMOVE_LINES",r,sourceIp);return count;}
+    @Transactional public int replacePoolLines(Long id,List<Long> lineIds,String reason,UserPrincipal actor,String sourceIp){pool(id);List<Long> ids=distinct(lineIds);validatePoolLines(id,ids);String r=required(reason,"操作原因不能为空");List<Long> toRemove=db.poolLineIds(id).stream().filter(existingId->!ids.contains(existingId)).toList();validatePoolRemoval(id,toRemove);int count=db.replacePoolLines(id,ids,r);audit.success(actor,"RESOURCE","RESOURCE_POOL",id,"REPLACE_LINES",r,sourceIp);return count;}
+
+    private void validatePoolRemoval(Long poolId,List<Long> lineIds){
+        List<Long> enabled=lineIds.stream().filter(lineId->db.enabledPoolLine(poolId,lineId)).toList();
+        if(enabled.isEmpty())return;
+        for(Long lineId:enabled){
+            if(db.activePoolFixedExitUsesLine(poolId,lineId))
+                throw new BusinessException("POOL_LINE_ACTIVE_FIXED_EGRESS",
+                    "线路仍承担关联服务的未释放固定公网出口，不可直接移出来源池；请先核验服务和出口回收");
+        }
+        if(db.activeServiceUsesPool(poolId)&&
+            enabled.size()>=db.countPoolLines(poolId,"","",""))
+            throw new BusinessException("POOL_LAST_SOURCE_IN_USE",
+                "该资源池仍有未终止服务绑定，不可移出所有来源线路并使资源池失去交付来源");
+    }
 
     private void validatePoolLines(Long poolId,List<Long> ids){for(Long lineId:distinct(ids)){if(lineId==null||!db.lineEligibleForPool(poolId,lineId))throw new BusinessException("V12_POOL_LINE_INELIGIBLE","线路"+lineId+"不是共享/长效线路，或其省/市/运营商与资源池来源属性不一致");}}
     private List<Long> distinct(List<Long> ids){if(ids==null)return List.of();return ids.stream().filter(Objects::nonNull).distinct().toList();}
