@@ -177,6 +177,12 @@ jobs:
           ZERO_STATUS=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM prd_package WHERE id=$ZPKGID")
           test "$ZERO_STATUS" = "ACTIVE"
           echo 'Zero-day package create and reactivation both require server-side explicit risk acknowledgement'
+          ZERO_ALT_UNACK=$(curl -s -o /tmp/r3-zero-alt-unack.json -w '%{http_code}' -H "$H" -H "$J" -X PUT -d '{"graceDays":0,"reason":"CI alternate path without risk receipt"}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace")
+          test "$ZERO_ALT_UNACK" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-zero-alt-unack.json"))["code"]=="PACKAGE_ZERO_GRACE_ACK_REQUIRED"'
+          curl -fsS -H "$H" -H "$J" -X PUT -d '{"graceDays":0,"reason":"CI explicit zero risk receipt","zeroGraceRiskAccepted":true}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace" >/dev/null
+          echo 'Alternate V12 package grace editing endpoint also rejects zero-day risk bypass'
+
 
 
  
