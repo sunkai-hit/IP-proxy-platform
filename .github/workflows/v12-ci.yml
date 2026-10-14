@@ -99,6 +99,12 @@ jobs:
           python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]==[]' <<< "$CLAIMS"
           GRACE=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/packages/$PKGID/grace)
           python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["packageId"]>0 and d["graceDays"] is None' <<< "$GRACE"
+          # Lifecycle operations must not silently claim success against Mock-only adapters.
+          STOP_CODE=$(curl -s -o /tmp/r3-mock-stop.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"R3 mock pause must be blocked"}' http://localhost:8080/api/admin/v1/services/$SID/suspend)
+          test "$STOP_CODE" -ge 400
+          AFTER_BLOCK=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="ACTIVE"' <<< "$AFTER_BLOCK"
+          echo 'R3 mocked lifecycle safe gate verified'
           echo 'R3 API read model / grace contract smoke passed (Mock only)'
 
           # New-order provisioning: preview -> explicit item plan -> fulfill -> prevent duplicate
