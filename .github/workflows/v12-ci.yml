@@ -162,6 +162,22 @@ jobs:
           AUTO_REPLACE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT auto_replace FROM prd_long_ip_config WHERE product_id=$LPID")
           test "$AUTO_REPLACE" = "f"
           echo 'LONG_IP manual-only product backend and database config guard verified'
+          ZERO_PKG_BASE=$(printf '{"packageCode":"CI-ZERO-GRACE-R3","productId":%s,"packageName":"CI zero grace long","serviceDays":30,"price":25,"currency":"CNY","graceDays":0}' "$LPID")
+          ZERO_UNACK=$(curl -s -o /tmp/r3-zero-create-unack.json -w '%{http_code}' -H "$H" -H "$J" -d "$ZERO_PKG_BASE" http://localhost:8080/api/admin/v1/packages)
+          test "$ZERO_UNACK" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-zero-create-unack.json"))["code"]=="PACKAGE_ZERO_GRACE_ACK_REQUIRED"'
+          ZERO_PKG_JSON=$(printf '{"packageCode":"CI-ZERO-GRACE-R3","productId":%s,"packageName":"CI zero grace long","serviceDays":30,"price":25,"currency":"CNY","graceDays":0,"zeroGraceRiskAccepted":true}' "$LPID")
+          ZERO_PKG=$(curl -fsS -H "$H" -H "$J" -d "$ZERO_PKG_JSON" http://localhost:8080/api/admin/v1/packages)
+          ZPKGID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$ZERO_PKG")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI disable new zero day package"}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/disable" >/dev/null
+          ZERO_ENABLE_UNACK=$(curl -s -o /tmp/r3-zero-enable-unack.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI no zero day acknowledgement"}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/enable")
+          test "$ZERO_ENABLE_UNACK" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-zero-enable-unack.json"))["code"]=="PACKAGE_ZERO_GRACE_ACK_REQUIRED"'
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI acknowledged immediate expiration risk","zeroGraceRiskAccepted":true}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/enable" >/dev/null
+          ZERO_STATUS=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM prd_package WHERE id=$ZPKGID")
+          test "$ZERO_STATUS" = "ACTIVE"
+          echo 'Zero-day package create and reactivation both require server-side explicit risk acknowledgement'
+
 
  
           # New-order provisioning: preview -> explicit item plan -> fulfill -> prevent duplicate
