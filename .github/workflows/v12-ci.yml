@@ -186,6 +186,27 @@ jobs:
           python3 -c 'import json; assert json.load(open("/tmp/r3-zero-alt-unack.json"))["code"]=="PACKAGE_ZERO_GRACE_ACK_REQUIRED"'
           curl -fsS -H "$H" -H "$J" -X PUT -d '{"graceDays":0,"reason":"CI explicit zero risk receipt","zeroGraceRiskAccepted":true}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace" >/dev/null
           echo 'Alternate V12 package grace editing endpoint also rejects zero-day risk bypass'
+          # Original contracted grace must remain independent of later package edits.
+          HIST_SERVICE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
+            INSERT INTO svc_instance(
+              service_no,customer_id,product_id,package_id,product_type,
+              product_snapshot,package_snapshot,quota_snapshot,
+              effective_at,expire_at,status,grace_days_snapshot,grace_until_at,
+              expiry_phase,delivery_stage
+            )
+            SELECT 'CI-R3-OLD-CONTRACT',$CID,p.id,k.id,'LONG_IP',
+                   to_jsonb(p),to_jsonb(k),'{}'::jsonb,
+                   now()-interval '3 days',now()+interval '30 days',
+                   'ACTIVE',0,now()+interval '30 days','NONE','MOCK_ONLY'
+            FROM prd_product p JOIN prd_package k ON k.product_id=p.id
+            WHERE p.id=$LPID AND k.id=$ZPKGID RETURNING id" | head -n1)
+          curl -fsS -H "$H" -H "$J" -X PUT -d '{"graceDays":3,"reason":"CI new sales term, not historical entitlement"}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace" >/dev/null
+          PACKAGE_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace")
+          HIST_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/services/$HIST_SERVICE")
+          HIST_CHILD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/packages/$ZPKGID/services")
+          python3 -c 'import json,sys; pkg=json.loads(sys.argv[1])["data"]; old=json.loads(sys.argv[2])["data"]; child=json.loads(sys.argv[3])["data"]["items"]; assert pkg["graceDays"]==3 and old["grace_days_snapshot"]==0 and any(v["id"]==old["id"] and v["grace_days_snapshot"]==0 for v in child)' "$PACKAGE_TERM" "$HIST_TERM" "$HIST_CHILD"
+          echo 'Current package grace changed to 3 days; original service contract stayed at 0 days'
+
 
 
 
