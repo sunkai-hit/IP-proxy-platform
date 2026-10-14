@@ -52,6 +52,11 @@ onMounted(load)
    <el-descriptions-item label="供应商生效">{{fmt(row.effective_at)}}</el-descriptions-item>
    <el-descriptions-item label="供应商到期">{{fmt(row.expire_at)}}</el-descriptions-item>
    <el-descriptions-item label="采购账号（掩码）">{{mask(row.purchase_account)}}</el-descriptions-item>
+   <el-descriptions-item label="客户收款关联">
+    <el-button v-if="row.source_customer_order_id&&auth.hasPermission('order:read')" link type="primary" @click="router.push('/orders/'+row.source_customer_order_id)">{{row.source_customer_order_no||'查看付款来源订单'}}</el-button>
+    <span v-else>{{row.source_customer_order_id?'需订单权限查看':'未关联（库存/存量）'}}</span>
+   </el-descriptions-item>
+   <el-descriptions-item label="付款核实记录">{{row.source_customer_payment_status||'无关联来源'}}</el-descriptions-item>
    <el-descriptions-item label="供应商认证">{{row.secretConfigured?'已配置（不可回显）':'未配置'}}</el-descriptions-item>
    <el-descriptions-item label="登记说明" :span="2">{{fmt(row.remark)}}</el-descriptions-item>
   </el-descriptions>
