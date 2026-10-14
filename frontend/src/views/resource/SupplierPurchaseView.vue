@@ -3,7 +3,6 @@ import { onMounted,reactive,ref,watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { externalDeliveryApi } from '@/api/externalDelivery'
-import { orderServiceApi } from '@/api/orderService'
 import { useAuthStore } from '@/stores/auth'
 
 const router=useRouter(),auth=useAuthStore()
@@ -26,9 +25,8 @@ async function loadPaidOrders(){
  form.sourceCustomerOrderId=null;paidOrders.value=[]
  if(!form.customerId)return
  try{
-  const d=data(await orderServiceApi.orders({page:1,size:200,customerId:form.customerId}))
-  paidOrders.value=(d.items||[]).filter((o:any)=>o.payment_status==='PAID_CONFIRMED'&&o.status!=='CANCELLED')
- }catch{ElMessage.warning('当前账号无订单查询权限；无法核实客户付款，请联系具有订单权限的人员')}
+  paidOrders.value=data(await externalDeliveryApi.paidOrdersForPurchase(form.customerId))||[]
+ }catch{ElMessage.warning('无法读取该客户已核实付款的订单，请检查权限或付款状态')}
 }
 function add(){Object.assign(form,{supplierId:null,customerId:null,sourceCustomerOrderId:null,supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',remainingQuota:'',purchaseCost:'',currency:'CNY',remark:''});paidOrders.value=[];drawer.value=true}
 async function save(){
@@ -36,7 +34,7 @@ async function save(){
  if(form.customerId&&!form.sourceCustomerOrderId){ElMessage.warning('指定客户的采购记录必须关联已核实付款的客户订单');return}
  saving.value=true
  try{
-  const payload={...form,customerId:form.customerId||null,sourceCustomerOrderId:form.customerId?form.sourceCustomerOrderId:null,purchaseCost:form.purchaseCost===''?null:Number(form.purchaseCost),packageQuota:form.packageQuota||null,remainingQuota:form.remainingQuota||null}
+  const payload={...form,customerId:form.customerId||null,sourceCustomerOrderId:form.customerId?form.sourceCustomerOrderId:null,purchaseCost:form.purchaseCost===''||form.purchaseCost==null?null:Number(form.purchaseCost),packageQuota:form.packageQuota||null,remainingQuota:form.remainingQuota||null}
   await externalDeliveryApi.createPurchase(payload)
   ElMessage.success('供应商采购记录已保存；不代表平台自动向供应商付款')
   drawer.value=false;await load()
