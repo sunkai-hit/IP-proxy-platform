@@ -60,20 +60,47 @@ public class ResourceMapper {
     public List<Map<String,Object>> listPoolIps(Long poolId,String keyword,int size,int offset){return jdbc.queryForList("SELECT ip.id,host(ip.ip_address) ip_address,ip.source_type,ip.region_code,ip.carrier_code,ip.available_status,ip.latency_ms,ip.quality_score,pi.source_reason,pi.joined_at FROM res_pool_ip pi JOIN res_ip ip ON ip.id=pi.ip_id WHERE pi.pool_id=? AND pi.enabled=TRUE AND (?='' OR host(ip.ip_address) ILIKE '%'||?||'%') ORDER BY ip.quality_score DESC NULLS LAST,ip.id DESC LIMIT ? OFFSET ?",poolId,keyword,keyword,size,offset);}
 
     public long countExclusive(String keyword,String status){return jdbc.queryForObject("SELECT count(*) FROM res_exclusive_allocation a JOIN customer c ON c.id=a.customer_id WHERE a.deleted=FALSE AND (?='' OR a.allocation_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%') AND (?='' OR a.status=?)",Long.class,keyword,keyword,keyword,status,status);}
-    public List<Map<String,Object>> listExclusive(String keyword,String status,int size,int offset){return jdbc.queryForList("SELECT a.id,a.allocation_no,a.resource_type,a.ip_id,host(ip.ip_address) ip_address,a.line_id,l.resource_name line_name,a.customer_id,c.customer_code,c.customer_name,a.service_id,a.status,a.locked_at,a.effective_at,a.expire_at,a.released_at,a.release_reason,a.health_status,a.created_at,
-  svc.service_no,svc.status service_status,svc.delivery_stage,
-  svc.expiry_phase,svc.grace_until_at,
-  COALESCE((SELECT e.claim_status FROM svc_egress_claim e
-    WHERE e.service_id=a.service_id AND e.claim_status<>'RELEASED'
-    ORDER BY e.id DESC LIMIT 1),'NO_VERIFIED_CLAIM') egress_claim_status
- FROM res_exclusive_allocation a JOIN customer c ON c.id=a.customer_id LEFT JOIN res_ip ip ON ip.id=a.ip_id LEFT JOIN res_line l ON l.id=a.line_id LEFT JOIN svc_instance svc ON svc.id=a.service_id AND svc.deleted=FALSE WHERE a.deleted=FALSE AND (?='' OR a.allocation_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%') AND (?='' OR a.status=?) ORDER BY a.created_at DESC,a.id DESC LIMIT ? OFFSET ?",keyword,keyword,keyword,status,status,size,offset);}
-    public Map<String,Object> getExclusive(Long id){return one("SELECT a.id,a.allocation_no,a.resource_type,a.ip_id,host(ip.ip_address) ip_address,a.line_id,l.resource_name line_name,a.customer_id,c.customer_code,c.customer_name,a.service_id,a.status,a.locked_at,a.effective_at,a.expire_at,a.released_at,a.release_reason,a.health_status,a.created_at,
-  svc.service_no,svc.status service_status,svc.delivery_stage,
-  svc.expiry_phase,svc.grace_until_at,
-  COALESCE((SELECT e.claim_status FROM svc_egress_claim e
-    WHERE e.service_id=a.service_id AND e.claim_status<>'RELEASED'
-    ORDER BY e.id DESC LIMIT 1),'NO_VERIFIED_CLAIM') egress_claim_status
- FROM res_exclusive_allocation a JOIN customer c ON c.id=a.customer_id LEFT JOIN res_ip ip ON ip.id=a.ip_id LEFT JOIN res_line l ON l.id=a.line_id LEFT JOIN svc_instance svc ON svc.id=a.service_id AND svc.deleted=FALSE WHERE a.id=? AND a.deleted=FALSE",id);}
+    public List<Map<String,Object>> listExclusive(String keyword,String status,int size,int offset){
+        return jdbc.queryForList("""
+          SELECT a.id,a.allocation_no,a.resource_type,a.ip_id,host(ip.ip_address) ip_address,
+                 a.line_id,l.resource_name line_name,a.customer_id,c.customer_code,c.customer_name,
+                 a.service_id,a.status,a.locked_at,a.effective_at,a.expire_at,
+                 a.released_at,a.release_reason,a.health_status,a.created_at,
+                 svc.service_no,svc.status service_status,svc.delivery_stage,
+                 svc.expiry_phase,svc.grace_until_at,
+                 COALESCE((SELECT e.claim_status FROM svc_egress_claim e
+                   WHERE e.service_id=a.service_id AND e.claim_status<>'RELEASED'
+                   ORDER BY e.id DESC LIMIT 1),'NO_VERIFIED_CLAIM') egress_claim_status
+               FROM res_exclusive_allocation a
+               JOIN customer c ON c.id=a.customer_id
+               LEFT JOIN res_ip ip ON ip.id=a.ip_id
+               LEFT JOIN res_line l ON l.id=a.line_id
+               LEFT JOIN svc_instance svc ON svc.id=a.service_id AND svc.deleted=FALSE
+               WHERE a.deleted=FALSE
+            AND (?='' OR a.allocation_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%')
+            AND (?='' OR a.status=?)
+          ORDER BY a.created_at DESC,a.id DESC LIMIT ? OFFSET ?
+          """,keyword,keyword,keyword,status,status,size,offset);
+    }
+    public Map<String,Object> getExclusive(Long id){
+        return one("""
+          SELECT a.id,a.allocation_no,a.resource_type,a.ip_id,host(ip.ip_address) ip_address,
+                 a.line_id,l.resource_name line_name,a.customer_id,c.customer_code,c.customer_name,
+                 a.service_id,a.status,a.locked_at,a.effective_at,a.expire_at,
+                 a.released_at,a.release_reason,a.health_status,a.created_at,
+                 svc.service_no,svc.status service_status,svc.delivery_stage,
+                 svc.expiry_phase,svc.grace_until_at,
+                 COALESCE((SELECT e.claim_status FROM svc_egress_claim e
+                   WHERE e.service_id=a.service_id AND e.claim_status<>'RELEASED'
+                   ORDER BY e.id DESC LIMIT 1),'NO_VERIFIED_CLAIM') egress_claim_status
+               FROM res_exclusive_allocation a
+               JOIN customer c ON c.id=a.customer_id
+               LEFT JOIN res_ip ip ON ip.id=a.ip_id
+               LEFT JOIN res_line l ON l.id=a.line_id
+               LEFT JOIN svc_instance svc ON svc.id=a.service_id AND svc.deleted=FALSE
+               WHERE a.id=? AND a.deleted=FALSE
+          """,id);
+    }
     public int releaseExclusive(Long id,String reason,Long actorId){return jdbc.update("UPDATE res_exclusive_allocation SET status='PENDING_RECYCLE',released_at=now(),release_reason=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE AND status IN ('LOCKED','ALLOCATED')",reason,actorId,id);}
 
     public long countDomains(String keyword,String status){return jdbc.queryForObject("SELECT count(*) FROM res_domain d WHERE d.deleted=FALSE AND (?='' OR d.domain_name ILIKE '%'||?||'%') AND (?='' OR d.status=?)",Long.class,keyword,keyword,status,status);}
