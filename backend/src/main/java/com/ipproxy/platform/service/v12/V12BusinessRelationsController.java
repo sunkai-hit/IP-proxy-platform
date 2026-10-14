@@ -160,6 +160,23 @@ public class V12BusinessRelationsController {
           """,id),"SAME_SERVICE_PAID_RENEWAL_ORDERS"));
     }
 
+    @GetMapping("/packages/{id}/services")
+    public ApiResponse<?> packageServices(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
+        require(p,"product:package:read");require(p,"service:read");
+        if(id==null||id<=0||!Boolean.TRUE.equals(jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM prd_package WHERE id=? AND deleted=FALSE)",Boolean.class,id)))
+            throw new BusinessException("RELATION_PARENT_NOT_FOUND","套餐不存在");
+        return ApiResponse.success(result(jdbc.queryForList("""
+          SELECT s.id,s.service_no,c.customer_name,s.product_type,
+                 s.status,s.delivery_stage,s.delivery_mode,s.effective_at,s.expire_at,
+                 s.grace_days_snapshot,s.grace_until_at,s.expiry_phase,
+                 s.created_at
+          FROM svc_instance s JOIN customer c ON c.id=s.customer_id
+          WHERE s.deleted=FALSE AND s.package_id=?
+          ORDER BY s.created_at DESC,s.id DESC LIMIT 201
+          """,id),"SERVICE_CONTRACT_SNAPSHOT_NOT_LIVE_PACKAGE_RULE"));
+    }
+
     @GetMapping("/orders/{id}/services")
     public ApiResponse<?> orderServices(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
         require(p,"order:read");require(p,"service:read");
