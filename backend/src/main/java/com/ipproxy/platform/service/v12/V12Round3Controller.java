@@ -138,17 +138,83 @@ public class V12Round3Controller {
     @PostMapping("/services/{id}/failover-preview")
     public ApiResponse<?> preview(@PathVariable Long id,@RequestBody CandidateInput in,
                                   @AuthenticationPrincipal UserPrincipal actor) {
-        require(actor,"service:read");service(id);
-        if(in==null||in.backupCandidateId()==null)throw error("BACKUP_REQUIRED","请选择该服务的备用候选");
+        require(actor,"service:read");
+        Map<String,Object> s=service(id);
+        if(in==null||in.backupCandidateId()==null)
+            throw error("BACKUP_REQUIRED","请选择该服务的备用候选");
         Map<String,Object> b=first("""
-          SELECT id,host(expected_ipv4) expected_ip FROM svc_backup_candidate
-          WHERE id=? AND service_id=? AND candidate_status='CANDIDATE'
+          SELECT b.id,b.line_id,b.candidate_status,b.health_status,b.last_checked_at,
+                 host(b.expected_ipv4) expected_ipv4,
+                 l.resource_code line_code,host(l.current_public_ip) current_public_ipv4,
+                 l.online_status,l.last_sync_at,l.province_code,l.city_code,l.carrier_code
+          FROM svc_backup_candidate b JOIN res_line l ON l.id=b.line_id AND l.deleted=FALSE
+          WHERE b.id=? AND b.service_id=?
           """,in.backupCandidateId(),id);
         if(b==null)throw error("BACKUP_NOT_OWNED","备选不存在或不属于当前服务");
+        Map<String,Object> current=first("""
+          SELECT host(e.egress_ipv4) active_ipv4,e.claim_mode,e.claim_status,
+                 e.source_line_id,l.resource_code source_line_code,
+                 l.province_code,l.city_code,l.carrier_code
+          FROM svc_egress_claim e LEFT JOIN res_line l ON l.id=e.source_line_id
+          WHERE e.service_id=? AND e.claim_status<>'RELEASED'
+          ORDER BY e.id DESC LIMIT 1
+          """,id);
+        String from=current==null?null:(String)current.get("active_ipv4");
+        String expected=(String)b.get("expected_ipv4");
+        String reported=(String)b.get("current_public_ipv4");
+        boolean unknown=from==null||expected==null;
+        boolean changed=unknown||!Objects.equals(from,expected);
+        Boolean sameRegion=current==null?null:Objects.equals(current.get("province_code"),b.get("province_code"))
+           &&Objects.equals(current.get("city_code"),b.get("city_code"));
+        Boolean sameCarrier=current==null?null:Objects.equals(current.get("carrier_code"),b.get("carrier_code"));
+        boolean conflicted=false;
+        if(expected!=null){
+            conflicted=Boolean.TRUE.equals(jdbc.queryForObject("""
+              SELECT EXISTS(SELECT 1 FROM svc_egress_claim e
+                WHERE e.egress_ipv4=CAST(? AS inet) AND e.service_id<>?
+                AND e.claim_status IN ('RESERVED','ACTIVE','GRACE_HELD','RELEASE_PENDING')
+                AND (?='EXCLUSIVE_IP' OR e.claim_mode='EXCLUSIVE'))
+              """,Boolean.class,expected,id,String.valueOf(s.get("product_type"))));
+        }
+        List<String> blockers=new ArrayList<>();
+        if(!Set.of("LONG_IP","EXCLUSIVE_IP").contains(String.valueOf(s.get("product_type"))))
+            blockers.add("只有长效IP和独享IP服务可以参与此固定出口人工切换");
+        if(!"CANDIDATE".equals(String.valueOf(b.get("candidate_status"))))
+            blockers.add("该候选并非有效备用候选");
+        if(!"ONLINE".equals(String.valueOf(b.get("online_status"))))
+            blockers.add("备用线路当前未上报在线");
+        if(expected==null)blockers.add("候选缺少已核对的预期公网IPv4");
+        if(expected!=null&&!Objects.equals(expected,reported))
+            blockers.add("候选预期IPv4和线路当前上报IPv4不一致，禁止凭旧快照切换");
+        if(from==null)blockers.add("旧固定出口缺少有效占用快照，不得猜测或释放");
+        if(conflicted)blockers.add("候选出口与其他服务未释放占用冲突");
+        if(sameRegion==null||sameCarrier==null)
+            blockers.add("旧出口地区/运营商没有完整证据，须核查合同承诺");
+        if(Boolean.FALSE.equals(sameRegion)||Boolean.FALSE.equals(sameCarrier))
+            blockers.add("跨地区或运营商变化需事先客户同意且产品组确认实际支持");
+        if(changed)blockers.add("变更承诺固定IPv4需客户明确同意或进入故障补偿流程");
+        blockers.add("资源API和五类产品的数据面切换/回退接口尚未签收，真实执行不可用");
         Map<String,Object> out=new LinkedHashMap<>();
-        out.put("allowed",false);out.put("blockers",List.of("真实资源API/产品数据面切换接口尚未完成能力签署"));
-        out.put("toIpv4",b.get("expected_ip"));out.put("adapterReady",false);
-        out.put("changesFixedIp",true);out.put("checkedAt",OffsetDateTime.now());
+        out.put("allowed",false);
+        out.put("adapterReady",false);
+        out.put("blockers",blockers);
+        out.put("serviceId",id);out.put("candidateId",b.get("id"));
+        out.put("fromIpv4",from);out.put("toIpv4",expected);
+        out.put("candidateReportedIpv4",reported);
+        out.put("sourceLineCode",current==null?null:current.get("source_line_code"));
+        out.put("candidateLineCode",b.get("line_code"));
+        out.put("candidateHealth",b.get("health_status"));
+        out.put("candidateLastCheckedAt",b.get("last_checked_at"));
+        out.put("candidateLastSyncAt",b.get("last_sync_at"));
+        out.put("sameRegion",sameRegion);out.put("sameCarrier",sameCarrier);
+        out.put("changesFixedIp",changed);out.put("ipv4Conflict",conflicted);
+        out.put("customerConsentRequired",changed||Boolean.FALSE.equals(sameRegion)||Boolean.FALSE.equals(sameCarrier));
+        out.put("customerConsentVerified",false);
+        out.put("currentPlatformEntry",s.get("platform_host")==null?null:
+            s.get("platform_host")+":"+s.get("platform_port"));
+        out.put("monitoringImpact","需重新确认当前服务的监控目标与通知机器人");
+        out.put("checkedAt",OffsetDateTime.now());
+        out.put("dataSource","MANAGEMENT_SNAPSHOT_NOT_REAL_FAILOVER_PROOF");
         return ApiResponse.success(out);
     }
 
