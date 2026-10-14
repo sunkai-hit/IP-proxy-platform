@@ -152,7 +152,7 @@ public class V12Round3Controller {
           """,in.backupCandidateId(),id);
         if(b==null)throw error("BACKUP_NOT_OWNED","备选不存在或不属于当前服务");
         Map<String,Object> current=first("""
-          SELECT host(e.egress_ipv4) active_ipv4,e.claim_mode,e.claim_status,
+          SELECT host(e.egress_ipv4) active_ipv4,e.claim_mode,e.claim_status,e.verified_at,
                  e.source_line_id,l.resource_code source_line_code,
                  l.province_code,l.city_code,l.carrier_code
           FROM svc_egress_claim e LEFT JOIN res_line l ON l.id=e.source_line_id
@@ -164,9 +164,13 @@ public class V12Round3Controller {
         String reported=(String)b.get("current_public_ipv4");
         boolean unknown=from==null||expected==null;
         boolean changed=unknown||!Objects.equals(from,expected);
-        Boolean sameRegion=current==null?null:Objects.equals(current.get("province_code"),b.get("province_code"))
+        boolean knownRegion=current!=null && current.get("province_code")!=null &&
+            current.get("city_code")!=null && b.get("province_code")!=null && b.get("city_code")!=null;
+        Boolean sameRegion=!knownRegion?null:Objects.equals(current.get("province_code"),b.get("province_code"))
            &&Objects.equals(current.get("city_code"),b.get("city_code"));
-        Boolean sameCarrier=current==null?null:Objects.equals(current.get("carrier_code"),b.get("carrier_code"));
+        boolean knownCarrier=current!=null && current.get("carrier_code")!=null &&
+            b.get("carrier_code")!=null;
+        Boolean sameCarrier=!knownCarrier?null:Objects.equals(current.get("carrier_code"),b.get("carrier_code"));
         boolean conflicted=false;
         if(expected!=null){
             conflicted=Boolean.TRUE.equals(jdbc.queryForObject("""
@@ -187,6 +191,8 @@ public class V12Round3Controller {
         if(expected!=null&&!Objects.equals(expected,reported))
             blockers.add("候选预期IPv4和线路当前上报IPv4不一致，禁止凭旧快照切换");
         if(from==null)blockers.add("旧固定出口缺少有效占用快照，不得猜测或释放");
+        if(current!=null&&current.get("verified_at")==null)
+            blockers.add("原固定出口只有管理面授权记录，尚缺网络实际出口核验证据");
         if(conflicted)blockers.add("候选出口与其他服务未释放占用冲突");
         if(sameRegion==null||sameCarrier==null)
             blockers.add("旧出口地区/运营商没有完整证据，须核查合同承诺");
@@ -199,7 +205,8 @@ public class V12Round3Controller {
         out.put("adapterReady",false);
         out.put("blockers",blockers);
         out.put("serviceId",id);out.put("candidateId",b.get("id"));
-        out.put("fromIpv4",from);out.put("toIpv4",expected);
+        out.put("fromIpv4",from);out.put("fromIpv4VerifiedAt",current==null?null:current.get("verified_at"));
+        out.put("toIpv4",expected);
         out.put("candidateReportedIpv4",reported);
         out.put("sourceLineCode",current==null?null:current.get("source_line_code"));
         out.put("candidateLineCode",b.get("line_code"));
