@@ -371,6 +371,49 @@ jobs:
           python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-services.json"))["data"]; assert x["items"]==[]'
           python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-detail.json"))["data"]; assert x["purchase_cost"] is None and x["source_customer_payment_status"]=="PAID_CONFIRMED"'
           echo 'Synthetic purchase/proxy config and no-fake-delivery subtable checks passed'
+          # Customer-paid procurement -> customer-owned proxy -> service: first-version
+          # management-only positive and negative acceptance, no real supplier or gateway.
+          EXTERNAL_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases?page=1&size=20")
+          PROXY_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies?page=1&size=20")
+          python3 -c 'import json,sys; assert isinstance(json.loads(sys.argv[1])["data"]["items"],list) and isinstance(json.loads(sys.argv[2])["data"]["items"],list)' "$EXTERNAL_LIST" "$PROXY_LIST"
+          CUSTOMER_TWO=$(curl -fsS -H "$H" -H "$J" -d '{"customerName":"CI Other Proxy Customer","customerTypeCode":"ENTERPRISE","contactName":"Other","contactPhone":"13800009999"}' http://localhost:8080/api/admin/v1/customers)
+          CID_TWO=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$CUSTOMER_TWO")
+          WRONG_PURCHASE=$(printf '{"supplierId":%s,"customerId":%s,"sourceCustomerOrderId":%s,"supplierPackageName":"CI wrong customer","expireAt":"2028-10-14T00:00:00Z"}' "$SUPID" "$CID_TWO" "$OID")
+          WRONG_PURCHASE_HTTP=$(curl -s -o /tmp/r3-procure-wrong-owner.json -w '%{http_code}' -H "$H" -H "$J" -d "$WRONG_PURCHASE" http://localhost:8080/api/admin/v1/v12/external-delivery/purchases)
+          test "$WRONG_PURCHASE_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-procure-wrong-owner.json"))["code"]=="PURCHASE_PAYMENT_NOT_VERIFIED"'
+          DEDICATED_PAYLOAD=$(printf '{"supplierId":%s,"customerId":%s,"sourceCustomerOrderId":%s,"supplierPackageName":"CI paid customer package","expireAt":"2028-10-14T00:00:00Z"}' "$SUPID" "$CID" "$OID")
+          DEDICATED=$(curl -fsS -H "$H" -H "$J" -d "$DEDICATED_PAYLOAD" http://localhost:8080/api/admin/v1/v12/external-delivery/purchases)
+          DEDICATED_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$DEDICATED")
+          DEDICATED_DETAIL=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases/$DEDICATED_ID")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["source_customer_payment_status"]=="PAID_CONFIRMED" and x["purchase_cost"] is None and x["package_quota"] is None' <<< "$DEDICATED_DETAIL"
+          STOCK_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,supplier_package_name,expire_at) VALUES('CI-UNASSIGNED-INVENTORY',$SUPID,'unassigned stock',now()+interval '50 days') RETURNING id" | head -n1)
+          STOCK_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$STOCK_ID" "$CID")
+          STOCK_HTTP=$(curl -s -o /tmp/r3-stock-proxy.json -w '%{http_code}' -H "$H" -H "$J" -d "$STOCK_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          test "$STOCK_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-stock-proxy.json"))["code"]=="PROXY_PURCHASE_CUSTOMER_MISMATCH"'
+          BAD_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$DEDICATED_ID" "$CID_TWO")
+          BAD_PROXY_HTTP=$(curl -s -o /tmp/r3-cross-customer-proxy.json -w '%{http_code}' -H "$H" -H "$J" -d "$BAD_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          test "$BAD_PROXY_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-cross-customer-proxy.json"))["code"]=="PROXY_PURCHASE_CUSTOMER_MISMATCH"'
+          OTHER_SERVICE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
+            INSERT INTO svc_instance(service_no,customer_id,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,effective_at,expire_at,status,delivery_stage)
+            SELECT 'CI-OTHER-SERVICE',$CID_TWO,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,now(),now()+interval '28 days','ACTIVE','MOCK_ONLY' FROM svc_instance WHERE id=$SID RETURNING id" | head -n1)
+          WRONG_SERVICE_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"serviceId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$DEDICATED_ID" "$CID" "$OTHER_SERVICE")
+          WRONG_SERVICE_HTTP=$(curl -s -o /tmp/r3-wrong-proxy-service.json -w '%{http_code}' -H "$H" -H "$J" -d "$WRONG_SERVICE_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          test "$WRONG_SERVICE_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-wrong-proxy-service.json"))["code"]=="PROXY_SERVICE_CUSTOMER_MISMATCH"'
+          GOOD_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"serviceId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$DEDICATED_ID" "$CID" "$SID")
+          GOOD_PROXY_RESP=$(curl -fsS -H "$H" -H "$J" -d "$GOOD_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          GOOD_PROXY_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$GOOD_PROXY_RESP")
+          REAL_APPLY_HTTP=$(curl -s -o /tmp/r3-proxy-noop-apply.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI cannot fake remote proxy"}' "http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies/$GOOD_PROXY_ID/apply")
+          test "$REAL_APPLY_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-proxy-noop-apply.json"))["code"]=="EXTERNAL_PROXY_DATA_PLANE_UNVERIFIED"'
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM res_reverse_proxy WHERE id=$GOOD_PROXY_ID")" = "PENDING"
+          PURCHASE_PROXIES=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$DEDICATED_ID/proxies")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["id"]==int(sys.argv[1])' "$GOOD_PROXY_ID" <<< "$PURCHASE_PROXIES"
+          echo 'Customer-paid procurement/proxy ownership and Mock fail-closed delivery verified'
+
 
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/long-monitor/overview >/dev/null
           curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=CENTOS' >/dev/null
