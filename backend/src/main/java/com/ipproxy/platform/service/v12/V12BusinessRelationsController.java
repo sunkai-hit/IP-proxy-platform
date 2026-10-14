@@ -140,6 +140,26 @@ public class V12BusinessRelationsController {
           ORDER BY s.created_at DESC,s.id DESC LIMIT 201
           """,id,id),"SERVICE_PURCHASE_REFERENCE_NOT_RUNTIME_PROOF"));
     }
+    @GetMapping("/services/{id}/paid-renewal-orders")
+    public ApiResponse<?> paidRenewalOrders(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
+        require(p,"service:read");require(p,"order:read");
+        if(id==null||id<=0||!Boolean.TRUE.equals(jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM svc_instance WHERE id=? AND deleted=FALSE)",Boolean.class,id)))
+            throw new BusinessException("RELATION_PARENT_NOT_FOUND","原服务不存在");
+        return ApiResponse.success(result(jdbc.queryForList("""
+          SELECT o.id,o.order_no,o.customer_id,o.renewal_service_id,o.order_type,
+                 o.payment_status,o.payment_verified_at,o.total_amount,o.currency,
+                 o.status,o.created_at
+          FROM biz_order o
+          JOIN svc_instance s ON s.id=o.renewal_service_id AND s.deleted=FALSE
+          WHERE o.renewal_service_id=? AND o.customer_id=s.customer_id
+            AND o.deleted=FALSE AND o.order_type='RENEW'
+            AND o.payment_status='PAID_CONFIRMED'
+            AND o.status='PENDING_PROVISION'
+          ORDER BY o.created_at DESC,o.id DESC LIMIT 201
+          """,id),"SAME_SERVICE_PAID_RENEWAL_ORDERS"));
+    }
+
     @GetMapping("/orders/{id}/services")
     public ApiResponse<?> orderServices(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
         require(p,"order:read");require(p,"service:read");
