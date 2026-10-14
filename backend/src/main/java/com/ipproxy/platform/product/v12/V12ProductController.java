@@ -27,6 +27,14 @@ public class V12ProductController {
     public ApiResponse<?> enable(@PathVariable Long id,@RequestBody ReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){
         require(p,"product:status");Map<String,Object> product=product(id);String type=String.valueOf(product.get("product_type"));
         if(!configExists(id,type))throw new BusinessException("PRODUCT_CONFIG_REQUIRED","产品专项配置未完成");
+        if("LONG_IP".equals(type)){
+            Map<String,Object> c=jdbc.queryForMap(
+              "SELECT bind_type,auto_replace FROM prd_long_ip_config WHERE product_id=?",id);
+            if(!"LINE".equals(String.valueOf(c.get("bind_type"))) ||
+               Boolean.TRUE.equals(c.get("auto_replace")))
+               throw new BusinessException("LONG_IP_LEGACY_AUTO_REPLACE_REVIEW_REQUIRED",
+                   "长效IP历史自动替换或非线路绑定配置尚未完成审核，不允许重新启用产品");
+        }
         String policy="BUILTIN_"+type;
         jdbc.update("UPDATE prd_product SET status='ACTIVE',builtin_policy_code=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",policy,p.userId(),id);
         audit.success(p,"PRODUCT","PRODUCT",id,"ENABLE_V12",reason(b.reason()),ip(r));
