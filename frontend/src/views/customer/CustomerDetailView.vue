@@ -25,7 +25,7 @@ async function load(){
   }else{orders.value=[];ordersError.value=true}
  }finally{loading.value=false}
 }
-function openOrder(){router.push({path:'/orders',query:{customerId:String(id)}})}
+function openOrder(newOrder=false){router.push({path:'/orders',query:{customerId:String(id),...(newOrder?{newOrder:'1'}:{})}})}
 function openService(serviceId:number){router.push('/services/'+serviceId)}
 function metric(v:any){return v==null?'—':v}
 onMounted(load)
@@ -38,7 +38,7 @@ onMounted(load)
   <div class="head-actions">
    <el-tag>{{detail.customer.customer_type_code}}</el-tag>
    <el-tag type="success">{{detail.customer.status}}</el-tag>
-   <el-button v-if="auth.hasPermission('order:write')" type="primary" @click="openOrder">为该客户创建订单</el-button>
+   <el-button v-if="auth.hasPermission('order:write')" type="primary" @click="openOrder(true)">为该客户创建订单</el-button>
    <el-button @click="load">刷新</el-button>
   </div>
  </div>
@@ -67,7 +67,7 @@ onMounted(load)
    <el-tab-pane v-if="auth.hasPermission('order:read')" label="订单明细">
     <el-alert v-if="ordersError" title="订单关联明细暂不可用，不代表客户没有订单。" type="warning" :closable="false"/>
     <el-alert v-if="ordersTruncated" title="仅展示最近200条订单，请进入订单管理筛选查看其余记录。" type="info" :closable="false"/>
-    <el-button style="margin-bottom:12px" @click="openOrder">进入该客户订单管理</el-button>
+    <el-button style="margin-bottom:12px" @click="openOrder(false)">进入该客户订单管理</el-button>
     <el-table :data="orders" stripe border>
      <el-table-column prop="order_no" label="订单号" min-width="165"/>
      <el-table-column prop="order_type" label="业务类型" width="105"/>
