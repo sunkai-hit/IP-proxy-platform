@@ -280,6 +280,10 @@ jobs:
           BOT_DETAIL=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/bots/$BOT_ID")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert "webhook_url" not in x and "access_token_cipher" not in x and "secret_cipher" not in x and "last_test_message" not in x and x["webhook_mask"]=="已配置（不回显地址）" and isinstance(x["monitorReferences"],list)' <<< "$BOT_DETAIL"
           echo 'UI-31 bot secret redaction and monitor reference shape verified'
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/monitors?page=1&size=20" >/dev/null
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/alarms?page=1&size=20" >/dev/null
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/notifications?page=1&size=20" >/dev/null
+          echo 'Monitor, alarm and notification default-list HTTP checks passed'
           echo 'V1.2 core smoke passed'
       - name: Backend log on failure
         if: failure()
