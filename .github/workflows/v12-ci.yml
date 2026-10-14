@@ -204,6 +204,30 @@ jobs:
           REPEAT_CODE=$(curl -s -o /tmp/repeat-provision.json -w '%{http_code}' -H "$H" -H "$J" -d "{\"reason\":\"repeat\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
           test "$REPEAT_CODE" -ge 400
           echo 'Order provisioning preview/plan/idempotency smoke passed'
+          # First-version acceptance: one NEW order, two order items, three service
+          # instances. A confirmed but unpaid order must create no instances.
+          MULTI_ORDER=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"orderType\":\"NEW\",\"items\":[{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":2},{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":1}]}" http://localhost:8080/api/admin/v1/orders)
+          MULTI_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$MULTI_ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI first-version multitem confirmation"}' "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/confirm" >/dev/null
+          MULTI_PREVIEW=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision-preview")
+          read -r MULTI_ITEM1 MULTI_ITEM2 < <(python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["paymentReady"] is False and len(x["items"])==2; print(*(v["id"] for v in x["items"]))' <<< "$MULTI_PREVIEW")
+          MULTI_BODY=$(printf '{"reason":"CI multi-item checkout","plans":[{"orderItemId":%s,"deliveryMode":"SELF_OWNED","reverseProxyIds":[]},{"orderItemId":%s,"deliveryMode":"SELF_OWNED","reverseProxyIds":[]}]}' "$MULTI_ITEM1" "$MULTI_ITEM2")
+          UNPAID_MULTI_HTTP=$(curl -s -o /tmp/r3-multi-unpaid.json -w '%{http_code}' -H "$H" -H "$J" -d "$MULTI_BODY" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision")
+          test "$UNPAID_MULTI_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-multi-unpaid.json"))["code"]=="ORDER_PAYMENT_NOT_CONFIRMED"'
+          MULTI_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_instance WHERE order_id=$MULTI_ID")
+          test "$MULTI_COUNT" = "0"
+          curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-MULTI-RECEIPT","reason":"Synthetic independently verified payment"}' "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/payment-confirmation" >/dev/null
+          MULTI_PROVISION=$(curl -fsS -H "$H" -H "$J" -d "$MULTI_BODY" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["status"]=="PROVISIONED" and len(x["services"])==3 and all(s["deliveryStage"]!="VERIFIED" for s in x["services"])' <<< "$MULTI_PROVISION"
+          MULTI_RELATIONS=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$MULTI_ID/services")
+          python3 -c 'import json,sys,collections; a=json.load(sys.stdin)["data"]["items"]; c=collections.Counter(v["order_item_id"] for v in a); assert sorted(c.values())==[1,2] and all(v["relation_type"]=="CREATED_FROM_ORDER" for v in a)' <<< "$MULTI_RELATIONS"
+          MULTI_REPLAY=$(curl -s -o /tmp/r3-multi-replay.json -w '%{http_code}' -H "$H" -H "$J" -d "$MULTI_BODY" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision")
+          test "$MULTI_REPLAY" -eq 400
+          MULTI_AFTER=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_instance WHERE order_id=$MULTI_ID")
+          test "$MULTI_AFTER" = "3"
+          echo 'First-version two-item/three-service order, payment gate, repeat safety and source links verified (Mock-only)'
+
           # Order detail must distinguish actually created instances from renewal targets.
           ORDER_CHILDREN=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$OID/services")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==2 and all(v["relation_type"]=="CREATED_FROM_ORDER" for v in x)' <<< "$ORDER_CHILDREN"
