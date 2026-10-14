@@ -53,7 +53,7 @@ public class V12ServiceLifecycleService {
                 row.put("warning","实际数据面适配器尚未配置，无法真正开通");
             items.add(row);
         }
-        return Map.of("order",order,"items",items,"availableReverseProxies",db.availableReverseProxies(((Number)order.get("customer_id")).longValue()),"alreadyProvisioned",db.existingServicesForOrder(orderId)>0);
+        return Map.of("order",order,"items",items,"availableReverseProxies",db.availableReverseProxies(((Number)order.get("customer_id")).longValue()),"alreadyProvisioned",db.existingServicesForOrder(orderId)>0,"paymentReady","PAID_CONFIRMED".equals(String.valueOf(order.get("payment_status"))));
     }
 
     @Transactional public Map<String,Object> provisionOrder(Long orderId,String reason,List<ProvisionPlan> plans,UserPrincipal actor,String ip){
@@ -62,6 +62,7 @@ public class V12ServiceLifecycleService {
         if(order==null)throw err("ORDER_NOT_FOUND","订单不存在");
         if(!"PENDING_PROVISION".equals(String.valueOf(order.get("status"))))throw err("ORDER_STATUS_INVALID","订单必须处于待开通状态");
         if(!"NEW".equals(String.valueOf(order.get("order_type"))))throw err("ORDER_TYPE_INVALID","只有新购订单可创建全新服务实例，其他订单须走变更流程");
+        if(!"PAID_CONFIRMED".equals(String.valueOf(order.get("payment_status"))))throw err("ORDER_PAYMENT_NOT_CONFIRMED","客户订单尚无经授权核实的付款凭证；禁止创建或交付新服务，更不得以此安排供应商采购");
         if(db.existingServicesForOrder(orderId)>0)throw err("ORDER_ALREADY_PROVISIONED","订单已存在开通服务，请核对后处理，不可重复开通");
         List<Map<String,Object>> items=db.orderItems(orderId);
         if(items.isEmpty())throw err("ORDER_ITEMS_REQUIRED","订单不存在可开通明细");
