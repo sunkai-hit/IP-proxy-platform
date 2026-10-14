@@ -48,7 +48,7 @@ paths:
                 graceDays:
                   type: integer
                   minimum: 0
-                  description: 是否允许0及默认值待业务审批；不得隐式补0
+                  description: 用户已批准0天，表示到期立即停服并受控回收；无默认值，必须显式填写
                 reason:
                   type: string
                   minLength: 1
