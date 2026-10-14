@@ -14,9 +14,19 @@ public class V12ProductLifecycleService {
     private final JdbcTemplate jdbc; private final OperationAuditRepository audit;
     public V12ProductLifecycleService(JdbcTemplate jdbc,OperationAuditRepository audit){this.jdbc=jdbc;this.audit=audit;}
 
-    @Transactional public void enable(Long id,String reason,UserPrincipal actor,String ip){Map<String,Object> p=product(id);String type=String.valueOf(p.get("product_type"));if(!configExists(id,type))throw new BusinessException("PRODUCT_CONFIG_REQUIRED","产品专项配置未完成");int n=jdbc.update("UPDATE prd_product SET status='ACTIVE',builtin_policy_code=COALESCE(builtin_policy_code,?),updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",policyCode(type),actor.userId(),id);if(n==0)throw new BusinessException("PRODUCT_NOT_FOUND","产品不存在");audit.success(actor,"PRODUCT","PRODUCT",id,"ENABLE_V12",required(reason),ip);}
+    @Transactional public void enable(Long id,String reason,UserPrincipal actor,String ip){Map<String,Object> p=product(id);String type=String.valueOf(p.get("product_type"));if(!configExists(id,type))throw new BusinessException("PRODUCT_CONFIG_REQUIRED","产品专项配置未完成");assertLongManualOnly(id,type);int n=jdbc.update("UPDATE prd_product SET status='ACTIVE',builtin_policy_code=COALESCE(builtin_policy_code,?),updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",policyCode(type),actor.userId(),id);if(n==0)throw new BusinessException("PRODUCT_NOT_FOUND","产品不存在");audit.success(actor,"PRODUCT","PRODUCT",id,"ENABLE_V12",required(reason),ip);}
 
     @Transactional public void disable(Long id,String reason,UserPrincipal actor,String ip){product(id);jdbc.update("UPDATE prd_product SET status='DISABLED',updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",actor.userId(),id);audit.success(actor,"PRODUCT","PRODUCT",id,"DISABLE_V12",required(reason),ip);}
+
+    private void assertLongManualOnly(Long id,String type){
+        if(!"LONG_IP".equals(type))return;
+        Map<String,Object> c=jdbc.queryForMap(
+            "SELECT bind_type,auto_replace FROM prd_long_ip_config WHERE product_id=?",id);
+        if(!"LINE".equals(String.valueOf(c.get("bind_type"))) ||
+           Boolean.TRUE.equals(c.get("auto_replace")))
+            throw new BusinessException("LONG_IP_LEGACY_AUTO_REPLACE_REVIEW_REQUIRED",
+                "长效IP历史配置仍允许自动替换或非线路绑定，请审核并改为人工切换后才能启用产品");
+    }
 
     public Map<String,Object> policy(Long id){Map<String,Object> p=product(id);String type=String.valueOf(p.get("product_type"));return Map.of("productId",id,"productType",type,"policyCode",String.valueOf(p.get("builtin_policy_code")),"businessConfigurable",false,"description",description(type));}
 
