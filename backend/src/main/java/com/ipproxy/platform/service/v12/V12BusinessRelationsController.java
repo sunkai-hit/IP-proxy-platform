@@ -140,6 +140,28 @@ public class V12BusinessRelationsController {
           ORDER BY s.created_at DESC,s.id DESC LIMIT 201
           """,id,id),"SERVICE_PURCHASE_REFERENCE_NOT_RUNTIME_PROOF"));
     }
+    @GetMapping("/orders/{id}/services")
+    public ApiResponse<?> orderServices(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
+        require(p,"order:read");require(p,"service:read");
+        if(id==null||id<=0||!Boolean.TRUE.equals(jdbc.queryForObject(
+            "SELECT EXISTS(SELECT 1 FROM biz_order WHERE id=? AND deleted=FALSE)",Boolean.class,id)))
+            throw new BusinessException("RELATION_PARENT_NOT_FOUND","订单不存在");
+        return ApiResponse.success(result(jdbc.queryForList("""
+          SELECT s.id,s.service_no,s.order_item_id,c.customer_name,
+                 prod.product_name,s.product_type,s.status,s.delivery_stage,
+                 s.delivery_mode,s.effective_at,s.expire_at,s.created_at,
+                 CASE WHEN s.order_id=? THEN 'CREATED_FROM_ORDER'
+                      ELSE 'RENEWAL_TARGET' END relation_type
+          FROM svc_instance s
+          JOIN customer c ON c.id=s.customer_id
+          JOIN prd_product prod ON prod.id=s.product_id
+          JOIN biz_order o ON o.id=?
+          WHERE s.deleted=FALSE AND s.customer_id=o.customer_id
+            AND (s.order_id=o.id OR (o.order_type='RENEW' AND s.id=o.renewal_service_id))
+          ORDER BY relation_type,s.created_at DESC,s.id DESC LIMIT 201
+          """,id,id),"ORDER_SERVICE_CHILD_OR_SAME_CUSTOMER_RENEWAL_TARGET"));
+    }
+
     @GetMapping("/services/{id}/bindings")
     public ApiResponse<?> serviceBindings(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
         require(p,"service:read");
