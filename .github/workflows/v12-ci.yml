@@ -156,6 +156,11 @@ jobs:
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/long-monitor/overview >/dev/null
           curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=CENTOS' >/dev/null
           curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=ROS' >/dev/null
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/statistics/v12/pools/current >/tmp/v12-pool-stats.json
+          for LOG_CATEGORY in centos ros dial ip-change remote domain external operation; do
+            curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/runtime-logs/v12/$LOG_CATEGORY?page=1&size=10" >/tmp/v12-source-log.json
+          done
+          echo 'V1.2 pool membership statistics and eight additional scoped log endpoints queried'
           echo 'V1.2 core smoke passed'
       - name: Backend log on failure
         if: failure()
