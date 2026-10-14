@@ -54,7 +54,12 @@ async function confirm(){if(!snapshot.value?.paymentReady){ElMessage.error('请�
  if(!reason.value.trim()){ElMessage.warning('请输入开通原因');return}
  if(!auth.hasPermission('order:provision')){ElMessage.error('没有订单开通权限');return}
  submitting.value=true
- try{result.value=unwrap(await orderServiceApi.provisionOrder(Number(order.value.id),reason.value.trim(),plans.value));step.value=4;ElMessage.success('订单开通完成')}
+ try{
+  result.value=unwrap(await orderServiceApi.provisionOrder(Number(order.value.id),reason.value.trim(),plans.value))
+  step.value=4
+  if(fullyVerified(result.value?.services||[]))ElMessage.success('各服务实际交付核验通过')
+  else ElMessage.warning('服务实例已登记，尚无全部服务真实交付验证；请逐项回查')
+ }
  catch{ElMessage.error('开通未完成，订单保持待开通；请检查原因后重新预检')}finally{submitting.value=false}}
 function copyText(s:any){if(s)navigator.clipboard?.writeText(String(s)).then(()=>ElMessage.success('已复制'))}
 onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(id>0)await openOrder(id)})
@@ -76,7 +81,7 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
    <el-descriptions :column="3" border><el-descriptions-item label="订单状态">{{order.status}}</el-descriptions-item><el-descriptions-item label="预计生效">{{order.expected_effective_at||'按当前时间'}}</el-descriptions-item><el-descriptions-item label="预计到期">{{order.expected_expire_at||'按套餐周期'}}</el-descriptions-item></el-descriptions>
    <el-table :data="items" stripe style="margin-top:14px"><el-table-column prop="product_name" label="产品"/><el-table-column label="产品类型"><template #default="s">{{typeNames[s.row.product_type]||s.row.product_type}}</template></el-table-column><el-table-column prop="package_name" label="套餐"/><el-table-column prop="service_count" label="服务数" width="100"/></el-table>
   </el-card>
-  <el-card v-if="step===0" shadow="never"><h3>核对订单和付款</h3><el-alert v-if="!snapshot.paymentReady" title="客户付款尚未核实，订单确认不等于付款成功；请到订单详情由授权人员核实付款后再回来刷新。" type="error" :closable="false" show-icon/><el-alert v-else title="订单付款凭证已由授权人员核实，实际开通仍须校验资源和真实数据面。" type="success" :closable="false"/><el-button style="margin-top:8px" @click="refreshPreview">刷新付款与资源状态</el-button><p>客户、产品、套餐和服务数均来自已确认订单，不在本步骤重新编辑。进入下一步配置每个订单项的交付方式。</p><el-alert v-if="snapshot.alreadyProvisioned" title="订单已存在服务记录，系统会禁止再次重复开通，请先核查" type="error" show-icon/></el-card>
+  <el-card v-if="step===0" shadow="never"><h3>核对订单和付款</h3><el-alert v-if="!snapshot.paymentReady" title="客户付款尚未核实，订单确认不等于付款成功；请到订单详情由授权人员核实付款后再回来刷新。" type="error" :closable="false" show-icon/><el-alert v-else title="订单付款凭证已由授权人员核实，实际开通仍须校验资源和真实数据面。" type="success" :closable="false"/><div class="filters" style="margin-top:8px"><el-button @click="router.push('/orders/'+order.id)">打开订单详情核实付款</el-button><el-button @click="refreshPreview">刷新付款与资源状态</el-button></div><p>客户、产品、套餐和服务数均来自已确认订单，不在本步骤重新编辑。进入下一步配置每个订单项的交付方式。</p><el-alert v-if="snapshot.alreadyProvisioned" title="订单已存在服务记录，系统会禁止再次重复开通，请先核查" type="error" show-icon/></el-card>
   <el-card v-if="step===1" shadow="never"><h3>配置订单项交付方式</h3>
    <div v-for="(p,i) in plans" :key="p.orderItemId" class="plan">
     <b>{{items[i]?.product_name}} · {{typeNames[items[i]?.product_type]}} · {{items[i]?.service_count}}个服务</b>
@@ -100,7 +105,7 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
    :title="fullyVerified(result?.services||[])?'真实交付已核验':'开通编排已返回，仍有服务待真实交付核验'"
    sub-title="仅首次显示一次性凭证；Mock/仅管理面状态不代表代理可用，请打开服务详情核验实际交付阶段"/><el-table :data="result?.services||[]" border><el-table-column prop="serviceNo" label="服务编号" min-width="180"/><el-table-column label="交付方式" width="125"><template #default="s">{{modeNames[s.row.deliveryMode]}}</template></el-table-column><el-table-column prop="status" label="状态" width="90"/><el-table-column label="交付确认" width="160"><template #default="s"><el-tag :type="isRealVerified(s.row.deliveryStage)?'success':'warning'">{{isRealVerified(s.row.deliveryStage)?'真实交付已验证':(s.row.deliveryStage||'UNVERIFIED')+' · 未证实真实交付'}}</el-tag></template></el-table-column><el-table-column label="一次性凭证" min-width="250"><template #default="s"><span>{{s.row.oneTimeCredential?.account||s.row.oneTimeCredential?.type}} · </span><el-button v-if="s.row.oneTimeCredential?.secret" link type="primary" @click="copyText(s.row.oneTimeCredential?.secret)">复制密钥（仅本次）</el-button><span v-else class="subtle">{{s.row.oneTimeCredential?.mask||'使用已有认证配置'}}</span></template></el-table-column><el-table-column label="操作" width="100"><template #default="s"><el-button link @click="router.push('/services/'+s.row.serviceId)">服务详情</el-button></template></el-table-column></el-table></el-card>
   <div v-if="step<4" class="footer"><el-button :disabled="step===0" @click="back">上一步</el-button><el-button v-if="step<3" type="primary" :disabled="!snapshot.paymentReady||snapshot.alreadyProvisioned||(step===1&&errors.length>0)||(step===2&&errors.length>0)" @click="next">下一步</el-button><el-button v-else type="primary" :loading="submitting" :disabled="!snapshot.paymentReady||errors.length>0||!reason.trim()||!auth.hasPermission('order:provision')" @click="confirm">确认开通</el-button></div>
-  <div v-else class="footer"><el-button type="primary" @click="closeOrder">返回待开通订单</el-button></div>
+  <div v-else class="footer"><el-button @click="router.push('/orders/'+order.id)">查看订单与收款凭证</el-button><el-button type="primary" @click="closeOrder">返回待开通订单</el-button></div>
  </template>
 </div>
 </template>
