@@ -16,7 +16,13 @@ public interface CustomerMapper {
 
     @Select("""
         SELECT c.id,c.customer_code,c.customer_name,c.customer_type_code,c.contact_name,c.contact_phone,c.contact_email,
-               c.auth_status,c.status,c.owner_user_id,u.display_name owner_name,c.remark,c.created_at,c.updated_at
+               c.auth_status,c.status,c.owner_user_id,u.display_name owner_name,c.remark,c.created_at,c.updated_at,
+               (SELECT count(*) FROM svc_instance s WHERE s.customer_id=c.id AND s.deleted=FALSE
+                  AND s.status NOT IN ('TERMINATED','PROVISION_FAILED')) service_count,
+               (SELECT min(s.expire_at) FROM svc_instance s WHERE s.customer_id=c.id AND s.deleted=FALSE
+                  AND s.status NOT IN ('TERMINATED','PROVISION_FAILED') AND s.expire_at>=now()) next_expire_at,
+               (SELECT count(*) FROM svc_instance s WHERE s.customer_id=c.id AND s.deleted=FALSE
+                  AND s.expiry_phase IN ('STOP_PENDING','GRACE_HELD','RELEASE_PENDING','RELEASE_BLOCKED')) grace_pending_count
         FROM customer c LEFT JOIN sys_user u ON u.id=c.owner_user_id
         WHERE c.deleted=FALSE
           AND (#{keyword}='' OR c.customer_code ILIKE '%'||#{keyword}||'%' OR c.customer_name ILIKE '%'||#{keyword}||'%' OR COALESCE(c.contact_name,'') ILIKE '%'||#{keyword}||'%')
