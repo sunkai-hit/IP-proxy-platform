@@ -7,6 +7,28 @@ import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
 const route=useRoute(),router=useRouter(),auth=useAuthStore()
 const loading=ref(false),saving=ref(false),services=ref<any[]>([]),paidRenewalOrders=ref<any[]>([]),result=ref<any>(null)
+const paidTermDays=ref<number|null>(null),renewOrderError=ref('')
+const dayMs=24*60*60*1000
+function parsedDate(value:any){const time=Date.parse(String(value||''));return Number.isFinite(time)?time:null}
+const renewalImpact=computed(()=>{
+ const svc=current.value
+ if(!svc||form.action!=='renew')return {blocker:'',newExpire:''}
+ const fixed=['LONG_IP','EXCLUSIVE_IP'].includes(svc.product_type)
+ const old=parsedDate(svc.expire_at)
+ if(old===null)return {blocker:'原合同到期时间缺失，必须核对',newExpire:''}
+ const now=Date.now()
+ if(fixed){
+  if(svc.grace_days_snapshot==null)return {blocker:'原合同宽限快照缺失，不能按当前套餐猜测',newExpire:''}
+  const grace=Number(svc.grace_days_snapshot)
+  const graceUntil=parsedDate(svc.grace_until_at)??old+grace*dayMs
+  if(!Number.isFinite(grace)||grace<0)return {blocker:'原合同宽限异常，需先核对',newExpire:''}
+  if(now>graceUntil)return {blocker:'原固定IP宽限已结束，必须走重新开通流程',newExpire:''}
+ }
+ const base=fixed?old:Math.max(old,now)
+ const end=base+Number(form.days)*dayMs
+ if(!Number.isFinite(end)||end<=now)return {blocker:'本单续费时长不足以覆盖当前时间',newExpire:''}
+ return {blocker:'',newExpire:new Date(end).toISOString()}
+})
 const initialAction=String(route.query.action||'renew')
 const form=reactive({serviceId:route.query.serviceId?Number(route.query.serviceId):null as number|null,
  action:['renew','suspend','resume','terminate'].includes(initialAction)?initialAction:'renew',
@@ -14,7 +36,10 @@ const form=reactive({serviceId:route.query.serviceId?Number(route.query.serviceI
 const data=(r:any)=>r.data.data
 const current=computed(()=>services.value.find(s=>s.id===form.serviceId)||null)
 const actionLabels:Record<string,string>={renew:'续费',suspend:'暂停',resume:'恢复',terminate:'终止'}
-const blocked=computed(()=>!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(form.days<1||!form.renewalOrderId||!auth.hasPermission('service:renew'))))
+const blocked=computed(()=>!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(
+ form.days<1||!form.renewalOrderId||!auth.hasPermission('service:renew')||
+ paidTermDays.value===null||form.days!==paidTermDays.value||!!renewalImpact.value.blocker
+)))
 const warning=computed(()=>current.value?.delivery_stage!=='VERIFIED'?'当前管理面可能尚未完成真实数据面验证；操作返回不等于客户真实可访问。':'请确认变更对客户使用与占用出口的影响。')
 async function load(){
   loading.value=true
@@ -28,7 +53,7 @@ async function load(){
   }finally{loading.value=false}
 }
 async function loadRenewalOrders(){
- paidRenewalOrders.value=[];form.renewalOrderId=null
+ paidRenewalOrders.value=[];form.renewalOrderId=null;paidTermDays.value=null;renewOrderError.value=''
  if(!current.value)return
  try{
   const d=data(await businessRelationsApi.paidRenewalOrders(Number(form.serviceId)))
@@ -42,13 +67,31 @@ async function loadRenewalOrders(){
  }catch{ElMessage.warning('无法读取已付款的续费订单，请检查订单查询权限')}
 }
 async function selectRenewalOrder(){
- if(!form.renewalOrderId)return
+ const orderId=Number(form.renewalOrderId)
+ paidTermDays.value=null;renewOrderError.value=''
+ if(!orderId)return
  try{
-  const order=data(await orderServiceApi.order(form.renewalOrderId))
+  const order=data(await orderServiceApi.order(orderId))
+  if(Number(form.renewalOrderId)!==orderId)return
+  if(order?.order_type!=='RENEW'||order?.payment_status!=='PAID_CONFIRMED'||
+    order?.status!=='PENDING_PROVISION'||Number(order?.renewal_service_id)!==Number(form.serviceId)||
+    Number(order?.customer_id)!==Number(current.value?.customer_id)){
+   renewOrderError.value='已选订单状态、付款或原服务归属不符，请回订单详情核对'
+   return
+  }
   let snapshot=order?.items?.[0]?.package_snapshot
   if(typeof snapshot==='string')snapshot=JSON.parse(snapshot)
-  if(Number(snapshot?.service_days)>0)form.days=Number(snapshot.service_days)
- }catch{ElMessage.warning('无法确认续费套餐期限，请核对原订单详情')}
+  const days=Number(snapshot?.service_days)
+  if((order?.items||[]).length!==1||!Number.isInteger(days)||days<=0){
+   renewOrderError.value='续费订单缺少有效套餐期限快照，禁止使用默认30天'
+   return
+  }
+  paidTermDays.value=days
+  form.days=days
+ }catch{
+  if(Number(form.renewalOrderId)===orderId)
+   renewOrderError.value='无法确认续费订单套餐期限快照，必须核对订单详情'
+ }
 }
 async function submit(){
   if(blocked.value){ElMessage.warning('请选择服务、填写原因并检查续费天数');return}
@@ -99,6 +142,7 @@ onMounted(async()=>{await load();await loadRenewalOrders()})
           <el-descriptions-item label="真实交付阶段">{{current.delivery_stage||'UNVERIFIED'}}</el-descriptions-item>
           <el-descriptions-item label="到期时间">{{current.expire_at||'—'}}</el-descriptions-item>
           <el-descriptions-item label="宽限截止">{{current.grace_until_at||'—'}}</el-descriptions-item>
+          <el-descriptions-item v-if="['LONG_IP','EXCLUSIVE_IP'].includes(current.product_type)" label="原合同宽限">{{current.grace_days_snapshot==null?'历史快照缺失，待人工核对':current.grace_days_snapshot+'天（不是当前套餐宽限）'}}</el-descriptions-item>
         </el-descriptions>
         <el-form-item label="变更动作"><el-radio-group v-model="form.action"><el-radio-button value="renew">续费</el-radio-button><el-radio-button value="suspend">暂停</el-radio-button><el-radio-button value="resume">恢复</el-radio-button><el-radio-button value="terminate">终止</el-radio-button></el-radio-group></el-form-item>
         <el-form-item v-if="form.action==='renew'" label="已付款续费订单" required>
@@ -110,7 +154,16 @@ onMounted(async()=>{await load();await loadRenewalOrders()})
          <template #title>没有此服务已核实付款的续费订单。请先新建续费订单、确认订单并由授权人员核实收款；不能直接改服务期限。</template>
          <el-button style="margin-top:8px" @click="router.push({path:'/orders',query:{customerId:String(current.customer_id),newOrder:'1',orderType:'RENEW',renewalServiceId:String(form.serviceId)}})">为此客户新建续费订单</el-button>
         </el-alert>
-        <el-form-item v-if="form.action==='renew'" label="续费天数" required><el-input-number v-model="form.days" :min="1"/></el-form-item>
+        <el-form-item v-if="form.action==='renew'" label="订单期限（天）" required>
+          <el-input-number v-model="form.days" :min="1" :disabled="true"/>
+          <el-text type="info" style="margin-left:10px">以已付款订单的套餐期限快照为准，不得自行修改</el-text>
+        </el-form-item>
+        <el-alert v-if="form.action==='renew'&&renewOrderError" type="error" :closable="false" :title="renewOrderError" style="margin-bottom:12px"/>
+        <el-alert v-if="form.action==='renew'&&renewalImpact.blocker" type="warning" :closable="false" :title="renewalImpact.blocker" style="margin-bottom:12px"/>
+        <el-alert v-if="form.action==='renew'&&paidTermDays!==null&&renewalImpact.newExpire" type="info" :closable="false"
+          :title="'按原服务合同试算的新到期（UTC）：'+renewalImpact.newExpire+'；实际结果以服务端验证后的执行记录为准'" style="margin-bottom:12px"/>
+        <el-button v-if="form.action==='renew'&&form.renewalOrderId&&auth.hasPermission('order:read')" link type="primary"
+          style="margin:0 0 12px" @click="router.push('/orders/'+form.renewalOrderId)">查看此已付款续费订单</el-button>
         <el-form-item label="操作原因" required><el-input v-model="form.reason" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="填写可审计的业务原因"/></el-form-item>
         <el-form-item><el-button type="primary" :disabled="blocked||!auth.hasPermission('service:change')" :loading="saving" @click="submit">预览并确认{{actionLabels[form.action]}}</el-button><el-button v-if="form.serviceId" @click="router.push(`/services/${form.serviceId}`)">查看服务详情与任务</el-button></el-form-item>
       </el-form>
