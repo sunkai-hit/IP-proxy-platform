@@ -28,8 +28,9 @@ public class ExternalDeliveryMapper {
       """,k,k,k,k,k,status,status,supplierId,supplierId,customerId,customerId,size,offset);}
     public Map<String,Object> purchase(Long id){return one("""
       SELECT p.id,p.purchase_no,p.supplier_id,s.supplier_code,s.supplier_name,p.customer_id,c.customer_name,p.supplier_package_name,p.supplier_package_no,
-        p.purchase_account,p.purchase_secret_cipher,p.interface_endpoint,p.package_quota,p.remaining_quota,p.purchase_cost,p.currency,p.effective_at,p.expire_at,p.status,p.remark,p.created_at,p.updated_at
-      FROM res_supplier_purchase p JOIN res_supplier s ON s.id=p.supplier_id LEFT JOIN customer c ON c.id=p.customer_id WHERE p.id=? AND p.deleted=FALSE
+        p.purchase_account,p.purchase_secret_cipher,p.interface_endpoint,p.package_quota,p.remaining_quota,p.purchase_cost,p.currency,p.effective_at,p.expire_at,p.status,p.remark,p.created_at,p.updated_at,
+        p.source_customer_order_id,origin.order_no source_customer_order_no,origin.payment_status source_customer_payment_status
+      FROM res_supplier_purchase p JOIN res_supplier s ON s.id=p.supplier_id LEFT JOIN customer c ON c.id=p.customer_id LEFT JOIN biz_order origin ON origin.id=p.source_customer_order_id WHERE p.id=? AND p.deleted=FALSE
       """,id);}
     public Long insertPurchase(String no,Long supplierId,Long customerId,String packageName,String packageNo,String account,String secret,String endpoint,String quota,String remaining,BigDecimal cost,String currency,OffsetDateTime effective,OffsetDateTime expire,String remark,Long actor){return jdbc.queryForObject("""
       INSERT INTO res_supplier_purchase(purchase_no,supplier_id,customer_id,supplier_package_name,supplier_package_no,purchase_account,purchase_secret_cipher,interface_endpoint,package_quota,remaining_quota,purchase_cost,currency,effective_at,expire_at,status,remark,created_by,updated_by)
