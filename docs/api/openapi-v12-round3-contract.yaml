@@ -36,7 +36,10 @@ paths:
       operationId: updatePackageGraceR3
       parameters:
         - $ref: '#/components/parameters/PackageId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+      description: |
+        受控修改套餐宽限，仅调整未来销售规则。原服务合同快照不变。
+        graceDays=0时必须提供zeroGraceRiskAccepted=true，否则返回PACKAGE_ZERO_GRACE_ACK_REQUIRED。
+        当前接口未实现Idempotency-Key请求头校验，不得宣传该能力。
       requestBody:
         required: true
         content:
@@ -52,6 +55,10 @@ paths:
                 reason:
                   type: string
                   minLength: 1
+                zeroGraceRiskAccepted:
+                  type: boolean
+                  default: false
+                  description: graceDays为0时必须显式为true；否则后端拒绝保存
       responses:
         '200':
           description: 更新成功，已有服务快照保持不变
