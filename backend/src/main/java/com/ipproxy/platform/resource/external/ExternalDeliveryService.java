@@ -21,7 +21,7 @@ public class ExternalDeliveryService {
 
     public PageResult<Map<String,Object>> purchases(int page,int size,String keyword,String status,Long supplierId,Long customerId){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countPurchases(k,s,supplierId,customerId),db.purchases(k,s,supplierId,customerId,size,(page-1)*size));}
     public Map<String,Object> purchase(Long id){Map<String,Object>x=db.purchase(id);if(x==null)throw notFound("外部套餐采购");Map<String,Object> out=new LinkedHashMap<>(x);out.remove("purchase_secret_cipher");out.put("secretConfigured",x.get("purchase_secret_cipher")!=null);return out;}
-    @Transactional public Long createPurchase(PurchaseInput in,UserPrincipal actor,String ip){validatePurchase(in);String no="PUR-"+OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))+"-"+Integer.toHexString(new Random().nextInt(65536)).toUpperCase(Locale.ROOT);Long id=db.insertPurchase(no,in.supplierId(),in.customerId(),in.supplierPackageName().trim(),n(in.supplierPackageNo()),n(in.purchaseAccount()),cipher.encrypt(in.purchaseSecret()),n(in.interfaceEndpoint()),n(in.packageQuota()),n(in.remainingQuota()),money(in.purchaseCost()),currency(in.currency()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"CREATE","新增外部供应商套餐采购",ip);return id;}
+    @Transactional public Long createPurchase(PurchaseInput in,UserPrincipal actor,String ip){validatePurchase(in);requirePaidCustomerOrder(in);String no="PUR-"+OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))+"-"+Integer.toHexString(new Random().nextInt(65536)).toUpperCase(Locale.ROOT);Long id=db.insertPurchase(no,in.supplierId(),in.customerId(),in.supplierPackageName().trim(),n(in.supplierPackageNo()),n(in.purchaseAccount()),cipher.encrypt(in.purchaseSecret()),n(in.interfaceEndpoint()),blankNull(in.packageQuota()),blankNull(in.remainingQuota()),in.purchaseCost(),currency(in.currency()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());if(in.customerId()!=null)db.linkPurchaseToPaidOrder(id,in.sourceCustomerOrderId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"CREATE","新增外部供应商套餐采购",ip);return id;}
     @Transactional public void updatePurchase(Long id,PurchaseInput in,UserPrincipal actor,String ip){purchase(id);validatePurchase(in);db.updatePurchase(id,in.customerId(),in.supplierPackageName().trim(),n(in.supplierPackageNo()),n(in.purchaseAccount()),n(in.purchaseSecret()).isBlank()?null:cipher.encrypt(in.purchaseSecret()),n(in.interfaceEndpoint()),n(in.packageQuota()),n(in.remainingQuota()),money(in.purchaseCost()),currency(in.currency()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"UPDATE","修改外部套餐采购",ip);}
     @Transactional public void purchaseStatus(Long id,String status,String reason,UserPrincipal actor,String ip){purchase(id);String s=n(status).toUpperCase(Locale.ROOT);if(!Set.of("ACTIVE","EXPIRED","DISABLED").contains(s))throw new BusinessException("PURCHASE_STATUS_INVALID","不支持的采购状态");db.purchaseStatus(id,s,actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"STATUS_"+s,required(reason,"操作原因不能为空"),ip);}
 
@@ -67,14 +67,25 @@ public class ExternalDeliveryService {
         return Map.of("status","DISABLED","message",r.message(),"detail",r.detail());
     }
 
+    private void requirePaidCustomerOrder(PurchaseInput in) {
+        if(in.customerId()==null)return;
+        if(in.sourceCustomerOrderId()==null)
+            throw new BusinessException("PURCHASE_PAID_ORDER_REQUIRED","新增客户采购必须关联已核实收款的订单");
+        Map<String,Object> order=db.paymentConfirmedOrder(in.sourceCustomerOrderId());
+        if(order==null || !Objects.equals(number(order.get("customer_id")),in.customerId())
+            || "CANCELLED".equals(order.get("status"))
+            || !"PAID_CONFIRMED".equals(order.get("payment_status")))
+            throw new BusinessException("PURCHASE_PAYMENT_NOT_VERIFIED","客户付款尚未核实，禁止进行客户专属供应商采购");
+    }
+    private String blankNull(String v){return n(v).isBlank()?null:v.trim();}
     private void validatePurchase(PurchaseInput in){if(in==null||in.supplierId()==null)throw new BusinessException("PURCHASE_REQUIRED","供应商不能为空");required(in.supplierPackageName(),"供应商套餐名称不能为空");if(in.expireAt()!=null&&in.effectiveAt()!=null&&in.expireAt().isBefore(in.effectiveAt()))throw new BusinessException("PURCHASE_TIME_INVALID","到期时间不能早于生效时间");}
     private void validateProxy(ProxyInput in){if(in==null||in.purchaseId()==null)throw new BusinessException("PROXY_PURCHASE_REQUIRED","外部采购不能为空");required(in.protocolCode(),"代理协议不能为空");required(in.upstreamHost(),"上游地址不能为空");required(in.platformHost(),"平台代理地址不能为空");if(in.upstreamPort()==null||in.upstreamPort()<1||in.upstreamPort()>65535||in.platformPort()==null||in.platformPort()<1||in.platformPort()>65535)throw new BusinessException("PROXY_PORT_INVALID","端口必须在1-65535之间");}
     private int page(int v){return Math.max(1,v);} private int size(int v){return Math.min(200,Math.max(1,v));}
     private String n(String v){return v==null?"":v.trim();} private String required(String v,String msg){if(n(v).isBlank())throw new BusinessException("V12_REQUIRED",msg);return v.trim();}
-    private BigDecimal money(BigDecimal v){return v==null?BigDecimal.ZERO:v;} private String currency(String v){return n(v).isBlank()?"CNY":v.trim().toUpperCase(Locale.ROOT);}
+    private String currency(String v){return n(v).isBlank()?"CNY":v.trim().toUpperCase(Locale.ROOT);}
     private Long number(Object x){return x instanceof Number n?n.longValue():x==null?null:Long.valueOf(String.valueOf(x));}
     private BusinessException notFound(String n){return new BusinessException("EXTERNAL_DELIVERY_NOT_FOUND",n+"不存在");}
 
-    public record PurchaseInput(Long supplierId,Long customerId,String supplierPackageName,String supplierPackageNo,String purchaseAccount,String purchaseSecret,String interfaceEndpoint,String packageQuota,String remainingQuota,BigDecimal purchaseCost,String currency,OffsetDateTime effectiveAt,OffsetDateTime expireAt,String remark){}
+    public record PurchaseInput(Long supplierId,Long customerId,String supplierPackageName,String supplierPackageNo,String purchaseAccount,String purchaseSecret,String interfaceEndpoint,String packageQuota,String remainingQuota,BigDecimal purchaseCost,String currency,OffsetDateTime effectiveAt,OffsetDateTime expireAt,String remark,Long sourceCustomerOrderId){}
     public record ProxyInput(Long purchaseId,Long customerId,Long serviceId,String protocolCode,String upstreamHost,Integer upstreamPort,String upstreamAccount,String upstreamSecret,String platformHost,Integer platformPort,String platformAccount,String platformSecret,OffsetDateTime effectiveAt,OffsetDateTime expireAt,String remark){}
 }
