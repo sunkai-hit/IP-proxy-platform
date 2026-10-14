@@ -92,6 +92,10 @@ jobs:
           SVC=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"productId\":$PID2,\"packageId\":$PKGID,\"deliveryMode\":\"SELF_OWNED\",\"remark\":\"CI\"}" http://localhost:8080/api/admin/v1/services/provision)
           SID=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="ACTIVE" and d["deliveryMode"]=="SELF_OWNED"; print(d["serviceId"])' <<< "$SVC")
           curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID >/dev/null
+          CUSTOMER_ROWS=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/customers?page=1&size=20")
+          python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]["items"]; c=next(v for v in rows if v["id"]==int(sys.argv[1])); assert c["service_count"]>=1 and "next_expire_at" in c and "grace_pending_count" in c' "$CID" <<< "$CUSTOMER_ROWS"
+          echo 'UI-02 customer list includes service counts, next expiry and grace pending fields'
+
           # R3 read-model and contract smoke; this remains Mock-only, not genuine proxy delivery.
           SUMMARY=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/services/$SID/delivery-summary)
           python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["serviceId"]>0 and d["deliveryStage"] in ("MANAGEMENT_ONLY","MOCK_ONLY","ADAPTER_ACK_UNVERIFIED"); assert d["dataSource"]=="MANAGEMENT_DB_UNVERIFIED"' <<< "$SUMMARY"
