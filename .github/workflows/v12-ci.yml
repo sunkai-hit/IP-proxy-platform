@@ -107,6 +107,38 @@ jobs:
           echo 'R3 mocked lifecycle safe gate verified'
           echo 'R3 API read model / grace contract smoke passed (Mock only)'
 
+          # R3 synthetic fixed-service fixtures exercise the safe planner ONLY.
+          # They do not represent true LONG_IP network delivery or real entitlement migration.
+          PGID=$(docker ps --filter "ancestor=postgres:17-alpine" --format '{{.ID}}' | head -n1)
+          test -n "$PGID"
+          docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "
+            INSERT INTO svc_instance(
+              service_no,customer_id,product_id,package_id,product_type,
+              product_snapshot,package_snapshot,quota_snapshot,
+              effective_at,expire_at,status,grace_days_snapshot,grace_until_at,
+              expiry_phase,delivery_stage
+            )
+            SELECT 'CI-R3-EXP-'||s.id||'-'||v.grace, s.customer_id,s.product_id,s.package_id,
+                   'LONG_IP',s.product_snapshot,s.package_snapshot,s.quota_snapshot,
+                   now()-interval '5 days',now()-interval '2 days','ACTIVE',v.grace,
+                   now()-interval '2 days'+v.grace*interval '1 day','NONE','MOCK_ONLY'
+            FROM svc_instance s CROSS JOIN (VALUES (0),(3)) v(grace) WHERE s.id=$SID
+          "
+          EXP0=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-R3-EXP-$SID-0'")
+          EXP3=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-R3-EXP-$SID-3'")
+          test -n "$EXP0" && test -n "$EXP3"
+          SCAN=$(curl -fsS -H "$H" -H "$J" -d '{"limit":200,"reason":"CI deterministic expiry scan"}' http://localhost:8080/api/admin/v1/v12/service-expiry/reconcile)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["realActionsExecuted"]==0 and d["created"]+d["existing"]>=2' <<< "$SCAN"
+          SECOND=$(curl -fsS -H "$H" -H "$J" -d '{"limit":200,"reason":"CI repeated expiry scan"}' http://localhost:8080/api/admin/v1/v12/service-expiry/reconcile)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["created"]==0 and d["existing"]>=2 and not d["dataPlaneVerified"]' <<< "$SECOND"
+          TASK_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_action_task WHERE service_id IN ($EXP0,$EXP3) AND action_type='STOP_FOR_GRACE'")
+          test "$TASK_COUNT" -eq 2
+          STATUS_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_instance WHERE id IN ($EXP0,$EXP3) AND status='ACTIVE' AND expiry_phase='STOP_PENDING'")
+          test "$STATUS_COUNT" -eq 2
+          CLAIM_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_egress_claim WHERE service_id IN ($EXP0,$EXP3) AND claim_status='RELEASED'")
+          test "$CLAIM_COUNT" -eq 0
+          echo 'R3 expiry planner idempotent, zero-day held, data-plane state unchanged (Mock-only)'
+ 
           # New-order provisioning: preview -> explicit item plan -> fulfill -> prevent duplicate
           ORDER=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"orderType\":\"NEW\",\"currency\":\"CNY\",\"items\":[{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":2}]}" http://localhost:8080/api/admin/v1/orders)
           OID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$ORDER")
