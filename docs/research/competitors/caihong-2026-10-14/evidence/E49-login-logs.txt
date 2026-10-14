@@ -1,0 +1,25 @@
+  - button "删 除"
+  - button "搜 索"
+  - textbox "开始时间"
+  - textbox "结束时间"
+  - textbox "输入用户名"
+        - columnheader "":
+        - columnheader "ID 升序 降序":
+        - columnheader "用户名":
+        - columnheader "ip地址 升序 降序":
+        - columnheader "请求方式 升序 降序":
+        - columnheader "UserAgent 升序 降序":
+        - columnheader "登录时间":
+        - columnheader
+        - columnheader
+  - link "":
+    - /url: javascript:;
+  - link "2":
+    - /url: javascript:;
+  - link "3":
+    - /url: javascript:;
+  - link "684":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

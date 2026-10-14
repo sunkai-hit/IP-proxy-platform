@@ -1,0 +1,23 @@
+  - heading "用户列表" [level=3]
+  - button "删 除"
+  - link "添 加":
+    - /url: http://www.caihongdaili.com/admin/user/create
+  - textbox "请输入用户名/昵称"
+  - textbox "请输入手机号"
+  - button "搜 索"
+        - columnheader "":
+        - columnheader "ID 升序 降序":
+        - columnheader "用户名":
+        - columnheader "昵称":
+        - columnheader "邮箱":
+        - columnheader "电话":
+        - columnheader "创建时间":
+        - columnheader "更新时间":
+        - columnheader
+  - link "":
+    - /url: javascript:;
+  - link "2":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

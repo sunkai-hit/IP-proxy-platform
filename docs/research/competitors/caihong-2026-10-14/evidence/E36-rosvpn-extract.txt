@@ -1,0 +1,21 @@
+  - heading "RosVPN提取记录" [level=3]
+  - textbox "客户"
+  - textbox "类型"
+  - button "搜索"
+        - columnheader "ID 升序 降序":
+        - columnheader "线路ID":
+        - columnheader "IP":
+        - columnheader "客户名":
+        - columnheader "类型":
+        - columnheader "操作时间":
+  - link "":
+    - /url: javascript:;
+  - link "2":
+    - /url: javascript:;
+  - link "3":
+    - /url: javascript:;
+  - link "4":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

@@ -1,0 +1,13 @@
+  - heading "客户手机列表" [level=3]
+  - textbox "请输入客户名"
+  - textbox "请输入手机号"
+  - button "搜索"
+  - button "删除"
+  - link "添加":
+    - /url: http://www.caihongdaili.com/admin/memberphone/create
+        - columnheader
+        - columnheader "ID 升序 降序":
+        - columnheader "客户名":
+        - columnheader "手机号":
+        - columnheader "创建时间 升序 降序":
+        - columnheader

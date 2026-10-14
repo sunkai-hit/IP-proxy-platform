@@ -1,0 +1,14 @@
+  - link "添 加":
+    - /url: http://www.caihongdaili.com/admin/config_group/create
+        - columnheader "":
+        - columnheader "ID 升序 降序":
+        - columnheader "分类名称":
+        - columnheader "排序 升序 降序":
+        - columnheader "创建时间":
+        - columnheader "更新时间":
+        - columnheader
+  - link "":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

@@ -1,0 +1,27 @@
+  - heading "人工二次审核（已通过个人实名认证）" [level=3]
+  - textbox "请输入昵称"
+  - textbox "请输入手机号"
+  - textbox "请选择"
+  - button "搜索"
+        - columnheader "ID 升序 降序":
+        - columnheader "用户名":
+        - columnheader "手机":
+        - columnheader "余额(元)":
+        - columnheader "真实姓名":
+        - columnheader "身份证号":
+        - columnheader "状态":
+        - columnheader "审核人":
+        - columnheader "审核时间":
+        - columnheader "审核":
+        - columnheader
+  - link "":
+    - /url: javascript:;
+  - link "2":
+    - /url: javascript:;
+  - link "3":
+    - /url: javascript:;
+  - link "12":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

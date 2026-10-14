@@ -1,0 +1,20 @@
+  - heading "云手机ROS列表" [level=3]
+  - textbox "请输入主机IP"
+  - textbox "请输入账号"
+  - textbox "请输入备注"
+  - textbox "请输入云手机ID"
+  - textbox "请输入线路IP"
+  - button "搜索"
+  - button "添加"
+        - columnheader "ROS IP 升序 降序":
+        - columnheader "端口":
+        - columnheader "用户名":
+        - columnheader "密码":
+        - columnheader "备注":
+        - columnheader "线路数量 升序 降序":
+        - columnheader "操作":
+  - link "":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

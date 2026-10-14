@@ -1,0 +1,14 @@
+  - heading "切换信息 首页" [level=3]:
+    - button "首页"
+  - textbox "ros搜索"
+  - button "搜索"
+        - columnheader "线路ID":
+        - columnheader "主机Ros":
+        - columnheader "线路名称":
+        - columnheader "IP地址":
+        - columnheader "切换至":
+        - columnheader "备选ID":
+        - columnheader "备选Ros":
+        - columnheader "备选线路":
+        - columnheader "备选IP":
+        - columnheader "绑定域名":

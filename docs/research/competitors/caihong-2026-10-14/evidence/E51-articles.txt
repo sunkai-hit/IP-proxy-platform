@@ -1,0 +1,25 @@
+  - button "删 除"
+  - link "添 加":
+    - /url: http://www.caihongdaili.com/admin/article/create
+  - textbox "请选择分类"
+  - textbox "请输入文章标题"
+  - button "搜 索"
+        - columnheader "":
+        - columnheader "ID 升序 降序":
+        - columnheader "分类":
+        - columnheader "标题":
+        - columnheader "缩略图":
+        - columnheader "类型":
+        - columnheader "关键词":
+        - columnheader "标签":
+        - columnheader "点击量":
+        - columnheader "创建时间":
+        - columnheader "更新时间":
+        - columnheader
+          - link "点击查看":
+            - /url: /uploads/local/20221017/805924ac88af699c273a89e90ecdb21f.png
+  - link "":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

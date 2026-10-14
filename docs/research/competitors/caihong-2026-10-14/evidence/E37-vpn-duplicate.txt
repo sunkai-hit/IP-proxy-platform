@@ -1,0 +1,18 @@
+  - heading "VPN拨号重复池" [level=3]
+  - textbox "请输入名称"
+  - button "搜索"
+  - button "添加"
+        - columnheader "":
+        - columnheader "ID":
+        - columnheader "名称":
+        - columnheader "周期（秒）":
+        - columnheader "备注":
+        - columnheader "线路数量":
+        - columnheader "创建时间":
+        - columnheader "操作":
+        - columnheader
+  - link "":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

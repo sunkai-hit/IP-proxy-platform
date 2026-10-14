@@ -1,0 +1,15 @@
+  - button "删 除"
+  - link "添 加":
+    - /url: http://www.caihongdaili.com/admin/role/create
+        - columnheader "":
+        - columnheader "ID 升序 降序":
+        - columnheader "名称":
+        - columnheader "显示名称":
+        - columnheader "创建时间":
+        - columnheader "更新时间":
+        - columnheader
+  - link "":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"

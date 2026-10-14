@@ -1,0 +1,23 @@
+  - heading "RosVpn套餐列表" [level=3]
+  - textbox "请输入套餐名"
+  - textbox "请输入客户名"
+  - button "搜索"
+  - link "添加":
+    - /url: http://www.caihongdaili.com/admin/memberpackage/createRosvpn
+        - columnheader "ID 升序 降序":
+        - columnheader "套餐名 升序 降序":
+        - columnheader "客户名 升序 降序":
+        - columnheader "开始时间 升序 降序":
+        - columnheader "套餐时长(天) 升序 降序":
+        - columnheader "结束时间 升序 降序":
+        - columnheader "ip数量限制 升序 降序":
+        - columnheader "创建时间 升序 降序":
+        - columnheader "备注 升序 降序":
+        - columnheader "添加人 升序 降序":
+        - columnheader "添加方式 升序 降序":
+        - columnheader
+  - link "":
+    - /url: javascript:;
+  - link "":
+    - /url: javascript:;
+  - button "确定"
