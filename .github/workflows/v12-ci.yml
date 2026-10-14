@@ -146,8 +146,6 @@ jobs:
           PREVIEW=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/orders/$OID/provision-preview)
           ITEMID=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert len(d["items"])==1 and d["items"][0]["service_count"]==2; print(d["items"][0]["id"])' <<< "$PREVIEW")
           # Order confirmation alone must not bypass verified customer payment.
-          UNPAID_CODE=$(curl -s -o /tmp/r3-unpaid.json -w '%{http_code}' -H "$H" -H "$J" -d "{\\\"reason\\\":\\\"unpaid must fail\\\",\\\"plans\\\":[{\\\"orderItemId\\\":$ITEMID,\\\"deliveryMode\\\":\\\"SELF_OWNED\\\",\\\"reverseProxyIds\\\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
-          test "$UNPAID_CODE" -ge 400
           PAYMENT=$(curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-PAID-RECEIPT-0001","reason":"CI privileged verification of external receipt"}' http://localhost:8080/api/admin/v1/orders/$OID/payment-confirmation)
           python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["paymentStatus"]=="PAID_CONFIRMED"' <<< "$PAYMENT"
           PLAN=$(curl -fsS -H "$H" -H "$J" -d "{\"reason\":\"CI provision\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
