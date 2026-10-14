@@ -115,6 +115,29 @@ jobs:
           # They do not represent true LONG_IP network delivery or real entitlement migration.
           PGID=$(docker ps --filter "ancestor=postgres:17-alpine" --format '{{.ID}}' | head -n1)
           test -n "$PGID"
+          # Original resource chain UI acceptance: a line belongs to one ROS and
+          # through it one CentOS; source pools are N:M, not current-IP ownership.
+          LINE_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/lines/$L1")
+          LIST_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/lines?page=1&size=20")
+          python3 -c 'import json,sys; l=json.loads(sys.argv[1])["data"]; rows=json.loads(sys.argv[2])["data"]["items"]; assert "broadband_account" not in l and "broadband_account_mask" in l and all("broadband_account" not in x for x in rows)' "$LINE_RECORD" "$LIST_RECORD"
+          R3_ROSID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["ros_id"])' <<< "$LINE_RECORD")
+          R3_CENTOSID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["centos_id"])' <<< "$LINE_RECORD")
+          ROS_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/ros/$R3_ROSID")
+          CENTOS_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/centos/$R3_CENTOSID")
+          python3 -c 'import json,sys; r=json.loads(sys.argv[1])["data"]; c=json.loads(sys.argv[2])["data"]; assert r["centos_id"]==int(sys.argv[3]) and c["ros"]["id"]==r["id"]' "$ROS_RECORD" "$CENTOS_RECORD" "$R3_CENTOSID"
+          SECOND_POOL=$(curl -fsS -H "$H" -H "$J" -d "{\"poolCode\":\"CI-V12-SECOND\",\"poolName\":\"CI N:M Another Pool\",\"lineIds\":[$L1]}" http://localhost:8080/api/admin/v1/v12/resource-pools)
+          SECOND_POOL_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$SECOND_POOL")
+          R3_POOL_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/lines/$L1/pools")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==2 and len(set(r["id"] for r in x))==2' <<< "$R3_POOL_LIST"
+          ACTIVE_POOL_BINDING=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_resource_binding WHERE service_id=$SID AND resource_type='POOL' AND resource_id=$POOLID AND status='ACTIVE'")
+          test "$ACTIVE_POOL_BINDING" -gt 0
+          POOL_REMOVE_HTTP=$(curl -s -o /tmp/r3-pool-last-source.json -w '%{http_code}' -H "$H" -H "$J" -d "{\"lineIds\":[$L1,$L2],\"reason\":\"CI fail closed for active service source\"}" "http://localhost:8080/api/admin/v1/v12/resource-pools/$POOLID/lines/remove")
+          test "$POOL_REMOVE_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-pool-last-source.json"))["code"]=="POOL_LAST_SOURCE_IN_USE"'
+          UNCHANGED_POOL_LINES=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM res_pool_line WHERE pool_id=$POOLID AND enabled=TRUE")
+          test "$UNCHANGED_POOL_LINES" -eq 2
+          echo 'CentOS/ROS/line linkage, server-masked broadband account, N:M pool and in-use source protection verified'
+
           docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "
             INSERT INTO svc_instance(
               service_no,customer_id,product_id,package_id,product_type,
