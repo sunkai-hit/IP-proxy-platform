@@ -5,6 +5,7 @@ import { http } from './http'
 const base='/relations'
 export const businessRelationsApi={
   customerOrders:(id:number)=>http.get(`${base}/customers/${id}/orders`),
+  orderServices:(id:number)=>http.get(`${base}/orders/${id}/services`),
   serviceBindings:(id:number)=>http.get(`${base}/services/${id}/bindings`),
   linePools:(id:number)=>http.get(`${base}/lines/${id}/pools`),
   lineServices:(id:number)=>http.get(`${base}/lines/${id}/services`),
