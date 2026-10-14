@@ -153,6 +153,16 @@ jobs:
           REPEAT_CODE=$(curl -s -o /tmp/repeat-provision.json -w '%{http_code}' -H "$H" -H "$J" -d "{\"reason\":\"repeat\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
           test "$REPEAT_CODE" -ge 400
           echo 'Order provisioning preview/plan/idempotency smoke passed'
+          # Order detail must distinguish actually created instances from renewal targets.
+          ORDER_CHILDREN=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$OID/services")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==2 and all(v["relation_type"]=="CREATED_FROM_ORDER" for v in x)' <<< "$ORDER_CHILDREN"
+          RENEW_JSON=$(printf '{"customerId":%s,"orderType":"RENEW","renewalServiceId":%s,"items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$SID" "$PID2" "$PKGID")
+          RENEW_ORDER=$(curl -fsS -H "$H" -H "$J" -d "$RENEW_JSON" http://localhost:8080/api/admin/v1/orders)
+          REN_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$RENEW_ORDER")
+          REN_CHILDREN=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$REN_ID/services")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["relation_type"]=="RENEWAL_TARGET"' <<< "$REN_CHILDREN"
+          echo 'Order-created service subtables and original service renewal target verified in Mock/DB'
+
           # Synthetic supplier -> purchase -> proxy -> service drill-down only.
           # No upstream payment, access credential or network adapter is invoked.
           SUPID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier(supplier_code,supplier_name,api_endpoint,auth_type_code) VALUES('CI-SUPPLIER-R3','CI Supplier','https://supplier.invalid','TOKEN') RETURNING id" | head -n 1)
