@@ -23,13 +23,13 @@ public class LongMonitorMapper {
     public long countBots(String k,Long customerId,Boolean enabled){return jdbc.queryForObject("""
       SELECT count(*) FROM lm_bot b JOIN customer c ON c.id=b.customer_id WHERE b.deleted=FALSE
       AND (?='' OR b.bot_no ILIKE '%'||?||'%' OR b.bot_name ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%')
-      AND (? IS NULL OR b.customer_id=?) AND (? IS NULL OR b.enabled=?)
+      AND (CAST(? AS BIGINT) IS NULL OR b.customer_id=?) AND (CAST(? AS BOOLEAN) IS NULL OR b.enabled=?)
       """,Long.class,k,k,k,k,customerId,customerId,enabled,enabled);}
     public List<Map<String,Object>> bots(String k,Long customerId,Boolean enabled,int size,int offset){return jdbc.queryForList("""
       SELECT b.id,b.bot_no,b.customer_id,c.customer_name,b.bot_name,b.bot_type,(b.webhook_url IS NOT NULL AND b.webhook_url<>'') webhook_configured,(b.access_token_cipher IS NOT NULL) access_token_configured,(b.secret_cipher IS NOT NULL) secret_configured,b.enabled,b.last_test_at,b.last_test_status,b.remark,b.created_at,b.updated_at
       FROM lm_bot b JOIN customer c ON c.id=b.customer_id WHERE b.deleted=FALSE
       AND (?='' OR b.bot_no ILIKE '%'||?||'%' OR b.bot_name ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%')
-      AND (? IS NULL OR b.customer_id=?) AND (? IS NULL OR b.enabled=?) ORDER BY b.updated_at DESC,b.id DESC LIMIT ? OFFSET ?
+      AND (CAST(? AS BIGINT) IS NULL OR b.customer_id=?) AND (CAST(? AS BOOLEAN) IS NULL OR b.enabled=?) ORDER BY b.updated_at DESC,b.id DESC LIMIT ? OFFSET ?
       """,k,k,k,k,customerId,customerId,enabled,enabled,size,offset);}
     public Map<String,Object> bot(Long id){return one("SELECT b.*,c.customer_name FROM lm_bot b JOIN customer c ON c.id=b.customer_id WHERE b.id=? AND b.deleted=FALSE",id);}
     public List<Map<String,Object>> botMonitorReferences(Long botId){
