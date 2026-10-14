@@ -71,12 +71,21 @@ public class ExternalDeliveryMapper {
       """,serviceId,protocol,upstreamHost,upstreamPort,upstreamAccount,upstreamSecret,platformHost,platformPort,platformAccount,platformSecret,effective,expire,remark,actor,id);}
     public int proxyStatus(Long id,String status,String error,Long actor){return jdbc.update("UPDATE res_reverse_proxy SET status=?,last_error=?,last_checked_at=now(),updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",status,error,actor,id);}
     public void proxyLog(Long id,String op,String status,String message,Long actor){jdbc.update("INSERT INTO res_reverse_proxy_operation_log(reverse_proxy_id,operation_type,status,message,operator_id) VALUES(?,?,?,?,?)",id,op,status,message,actor);}
-    public List<Map<String,Object>> proxyLogs(Long id,int limit){return jdbc.queryForList("SELECT l.id,l.operation_type,l.status,
- CASE WHEN l.operation_type IN ('CREATE','UPDATE') THEN '仅平台配置记录，不代表网关执行'
- WHEN l.status='SUCCESS' THEN '后端记录为成功，仍需真实连接与执行来源核验'
- ELSE '异常或待核验，请查受控任务' END message,
- u.display_name operator_name,l.created_at
- FROM res_reverse_proxy_operation_log l LEFT JOIN sys_user u ON u.id=l.operator_id WHERE l.reverse_proxy_id=? ORDER BY l.created_at DESC LIMIT ?",id,limit);}
+    public List<Map<String,Object>> proxyLogs(Long id,int limit){
+        return jdbc.queryForList("""
+          SELECT l.id,l.operation_type,l.status,
+            CASE WHEN l.operation_type IN ('CREATE','UPDATE')
+                   THEN '仅平台配置记录，不代表网关执行'
+                 WHEN l.status='SUCCESS'
+                   THEN '后端记录为成功，仍需真实连接与执行来源核验'
+                 ELSE '异常或待核验，请查受控任务' END message,
+            u.display_name operator_name,l.created_at
+          FROM res_reverse_proxy_operation_log l
+          LEFT JOIN sys_user u ON u.id=l.operator_id
+          WHERE l.reverse_proxy_id=?
+          ORDER BY l.created_at DESC LIMIT ?
+          """,id,limit);
+    }
 
     public List<Map<String,Object>> paidOrdersForCustomer(Long customerId) {
         return jdbc.queryForList("""
