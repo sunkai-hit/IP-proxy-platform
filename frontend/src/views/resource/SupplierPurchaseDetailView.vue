@@ -37,7 +37,10 @@ onMounted(load)
   <div><el-button link @click="router.push('/supplier-purchases')">← 返回采购列表</el-button>
    <h2>{{row.purchase_no||'外部采购详情'}}</h2>
    <p>供应商采购 → 平台反向代理 → 客户服务。上游资源是否真实可用，以供应商和网关验证为准。</p></div>
-  <div class="actions"><el-button @click="load">刷新</el-button><el-button v-if="auth.hasPermission('resource:reverse-proxy:read')" type="primary" @click="router.push('/reverse-proxies')">反向代理管理</el-button></div>
+  <div class="actions"><el-button @click="load">刷新</el-button>
+ <el-button v-if="row.customer_id&&row.source_customer_order_id&&auth.hasPermission('resource:reverse-proxy:write')"
+ type="primary" @click="router.push({path:'/reverse-proxies',query:{newProxy:'1',purchaseId:String(id)}})">基于此采购登记代理</el-button>
+ <el-button v-if="auth.hasPermission('resource:reverse-proxy:read')" @click="router.push('/reverse-proxies')">代理列表</el-button></div>
  </div>
  <el-alert type="warning" :closable="false" title="采购登记与平台代理ACTIVE只是平台记录；没有供应商真实有效期和代理通断回执时，不能据此认定客户服务已交付。" show-icon/>
  <el-card shadow="never" v-loading="loading">
