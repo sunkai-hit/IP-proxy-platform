@@ -3,6 +3,7 @@ const root='/v12/external-delivery'
 export const externalDeliveryApi={
   options:(customerId?:number)=>http.get(`${root}/options`,{params:{customerId}}),
   purchases:(params:any)=>http.get(`${root}/purchases`,{params}),
+  paidOrdersForPurchase:(customerId:number)=>http.get(`${root}/purchases/paid-order-options`,{params:{customerId}}),
   purchase:(id:number)=>http.get(`${root}/purchases/${id}`),
   createPurchase:(data:any)=>http.post(`${root}/purchases`,data),
   updatePurchase:(id:number,data:any)=>http.put(`${root}/purchases/${id}`,data),
