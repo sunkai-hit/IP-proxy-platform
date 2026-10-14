@@ -187,6 +187,38 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DeliverySummary'
+  /services/{serviceId}/renew:
+    post:
+      tags: [Lifecycle]
+      summary: 针对一个已付款续费订单恢复或延长指定服务
+      operationId: renewPaidServiceR3
+      description: |
+        renewalOrderId必须对应已确认并PAID_CONFIRMED的RENEW订单，
+        renew_target_service_id与path服务相同且客户一致。天数须和套餐下单快照一致。
+        固定IP宽限内从旧到期时刻顺延，超过宽限按新购重新交付；
+        需真实产品Adapter返回verified=true才更新服务期限或订单完成状态。
+        外部反向代理续费须先客户付款后运营手工续购上游，
+        采购及平台代理真实能力尚未签署时安全拒绝，不能假报成功。
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days, renewalOrderId, reason]
+              properties:
+                days: {type: integer, minimum: 1}
+                renewalOrderId: {type: integer, format: int64}
+                reason: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: 仅在真实续费/恢复核验后返回新到期时刻
+        '400':
+          $ref: '#/components/responses/BusinessError'
+        '403':
+          $ref: '#/components/responses/BusinessError'
   /v12/service-expiry/reconcile:
     post:
       tags: [Lifecycle]
