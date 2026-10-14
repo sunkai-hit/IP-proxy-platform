@@ -55,9 +55,12 @@ async function save(){
  const item=target?{productId:target.product_id,packageId:target.package_id,quantity:1,serviceCount:1}:
    {productId:form.productId,packageId:form.packageId,quantity:form.quantity,serviceCount:form.serviceCount}
  if(form.orderType==='RENEW'&&!item.packageId){ElMessage.warning('原服务没有可续费套餐，请先核对');return}
- await orderServiceApi.createOrder({customerId:form.customerId,orderType:form.orderType,
-  renewalServiceId:target?.id||null,currency:form.currency,remark:form.remark,items:[item]})
- dialog.value=false;ElMessage.success('订单已创建；付款必须另外核实才能续费');load()
+ const created=data(await orderServiceApi.createOrder({customerId:form.customerId,orderType:form.orderType,
+  renewalServiceId:target?.id||null,currency:form.currency,remark:form.remark,items:[item]}))
+ dialog.value=false
+ ElMessage.success('订单已创建，请在详情中确认订单并由授权人员核实付款')
+ if(created?.id)await router.push('/orders/'+created.id)
+ else await load()
 }
 async function action(r:any,type:string){if(type==='provision'){router.push({path:'/service-provision',query:{orderId:String(r.id)}});return}const name:any={confirm:'确认订单',cancel:'取消订单'};const {value}=await ElMessageBox.prompt('请输入'+name[type]+'原因',name[type],{inputValidator:(v)=>!!String(v||'').trim()||'必须填写原因'});if(type==='confirm')await orderServiceApi.confirmOrder(r.id,String(value));if(type==='cancel')await orderServiceApi.cancelOrder(r.id,String(value));ElMessage.success('操作成功');load()}
 watch(()=>form.productId,loadPackages);watch([()=>form.customerId,()=>form.orderType],loadRenewTargets);onMounted(async()=>{await refs();await load();if(route.query.newOrder==='1'&&auth.hasPermission('order:write'))add(route.query.orderType==='RENEW')})
