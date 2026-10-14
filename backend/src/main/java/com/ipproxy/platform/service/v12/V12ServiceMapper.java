@@ -14,7 +14,7 @@ public class V12ServiceMapper {
     public String nextServiceNo(){return jdbc.queryForObject("SELECT 'S'||to_char(current_date,'YYYYMMDD')||lpad(nextval('seq_service_no')::text,6,'0')",String.class);}
     public Map<String,Object> customer(Long id){return one("SELECT id,customer_code,customer_name,status FROM customer WHERE id=? AND deleted=FALSE",id);}
     public Map<String,Object> product(Long id){return one("SELECT id,product_code,product_name,product_type,status,builtin_policy_code,auth_mode_codes::text auth_modes_json,to_jsonb(prd_product)::text product_json FROM prd_product WHERE id=? AND deleted=FALSE",id);}
-    public Map<String,Object> pkg(Long id){return one("SELECT id,package_code,package_name,product_id,service_days,ip_count,price,currency,status,to_jsonb(prd_package)::text package_json FROM prd_package WHERE id=? AND deleted=FALSE",id);}
+    public Map<String,Object> pkg(Long id){return one("SELECT id,package_code,package_name,product_id,service_days,grace_days,ip_count,price,currency,status,to_jsonb(prd_package)::text package_json FROM prd_package WHERE id=? AND deleted=FALSE",id);}
     public Map<String,Object> order(Long id){return one("SELECT o.*,c.customer_name FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.id=? AND o.deleted=FALSE",id);}
     public List<Map<String,Object>> orderItems(Long id){return jdbc.queryForList("SELECT i.*,p.product_code,p.product_name,p.product_type,k.package_code,k.package_name,k.ip_count FROM biz_order_item i JOIN prd_product p ON p.id=i.product_id LEFT JOIN prd_package k ON k.id=i.package_id WHERE i.order_id=? ORDER BY i.line_no",id);}
     public int orderStatus(Long id,String status,Long actor){return jdbc.update("UPDATE biz_order SET status=?,updated_at=now(),updated_by=?,completed_at=CASE WHEN ?='COMPLETED' THEN now() ELSE completed_at END WHERE id=? AND deleted=FALSE",status,actor,status,id);}
@@ -23,12 +23,16 @@ public class V12ServiceMapper {
       INSERT INTO svc_instance(service_no,customer_id,order_id,order_item_id,product_id,package_id,strategy_id,product_type,product_snapshot,package_snapshot,strategy_snapshot,quota_snapshot,effective_at,expire_at,status,delivery_mode,builtin_policy_code,supplier_purchase_id,reverse_proxy_id,created_by,updated_by)
       VALUES(?,?,?,?,?,?,NULL,?,CAST(? AS jsonb),CAST(NULLIF(?,'') AS jsonb),NULL,CAST(? AS jsonb),?,?,'PENDING',?,?,?,?,?,?) RETURNING id
       """,Long.class,no,customerId,orderId,itemId,productId,packageId,productType,productJson,packageJson==null?"":packageJson,quotaJson,effective,expire,deliveryMode,policyCode,purchaseId,reverseProxyId,actor,actor);}
+    public int snapshotGrace(Long id,Integer days,OffsetDateTime expire){return jdbc.update("UPDATE svc_instance SET grace_days_snapshot=?,grace_until_at=? WHERE id=? AND deleted=FALSE",days,days==null?null:expire.plusDays(days),id);}
+    public int deliveryStage(Long id,String stage){return jdbc.update("UPDATE svc_instance SET delivery_stage=?,updated_at=now() WHERE id=? AND deleted=FALSE",stage,id);}
     public int serviceStatus(Long id,String status,String failure,Long actor){return jdbc.update("UPDATE svc_instance SET status=?,failure_reason=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",status,failure,actor,id);}
     public Long bind(Long serviceId,String type,Long resourceId,String role,String metadata,Long actor){return jdbc.queryForObject("INSERT INTO svc_resource_binding(service_id,resource_type,resource_id,binding_role,metadata,created_by) VALUES(?,?,?,?,CAST(? AS jsonb),?) RETURNING id",Long.class,serviceId,type,resourceId,role,metadata,actor);}
-    public Long allocateExclusiveLine(Long serviceId,Long lineId,Long customerId,OffsetDateTime expire,String currentIp,String snapshot,Long actor){return jdbc.queryForObject("""
+    public Long allocateExclusiveLine(Long serviceId,Long lineId,Long customerId,OffsetDateTime expire,String currentIp,String snapshot,Long actor){Long allocationId=jdbc.queryForObject("""
       INSERT INTO res_exclusive_allocation(allocation_no,resource_type,ip_id,line_id,customer_id,service_id,status,locked_at,effective_at,expire_at,current_ip_snapshot,service_snapshot,created_by,updated_by)
       VALUES('EA-'||replace(gen_random_uuid()::text,'-',''),'LINE',NULL,?,?,?,'ALLOCATED',now(),now(),?,CAST(NULLIF(?,'') AS inet),CAST(? AS jsonb),?,?) RETURNING id
-      """,Long.class,lineId,customerId,serviceId,expire,currentIp,snapshot,actor,actor);}
+      """,Long.class,lineId,customerId,serviceId,expire,currentIp,snapshot,actor,actor);
+      jdbc.update("INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status,hold_until_at) VALUES(?,?,?,CAST(? AS inet),'EXCLUSIVE','RESERVED',?)",serviceId,customerId,lineId,currentIp,expire);
+      return allocationId;}
     public int attachReverseProxy(Long proxyId,Long serviceId,Long actor){return jdbc.update("UPDATE res_reverse_proxy SET service_id=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",serviceId,actor,proxyId);}
     public Long insertCredential(Long serviceId,String type,String account,String hash,String mask,OffsetDateTime expire,String metadata,Long actor){return jdbc.queryForObject("INSERT INTO svc_credential(service_id,credential_type,account_name,secret_hash,secret_mask,expire_at,metadata,created_by,updated_by) VALUES(?,?,?,?,?,?,CAST(? AS jsonb),?,?) RETURNING id",Long.class,serviceId,type,account,hash,mask,expire,metadata,actor,actor);}
 
@@ -57,6 +61,9 @@ public class V12ServiceMapper {
     public List<Map<String,Object>> whitelist(Long id){return jdbc.queryForList("SELECT id,host(ip_address) ip_address,status,remark,created_at FROM svc_whitelist WHERE service_id=? AND deleted=FALSE ORDER BY created_at DESC",id);}
     public List<Map<String,Object>> changes(Long id){return jdbc.queryForList("SELECT id,change_no,change_type,before_snapshot,after_snapshot,reason,status,operator_id,started_at,finished_at,error_message,created_at FROM svc_change WHERE service_id=? AND deleted=FALSE ORDER BY created_at DESC",id);}
     public List<Map<String,Object>> releaseRecords(Long id){return jdbc.queryForList("SELECT * FROM svc_release_record WHERE service_id=? ORDER BY created_at DESC",id);}
+    public List<Map<String,Object>> egressClaims(Long id){return jdbc.queryForList("SELECT id,host(egress_ipv4) egress_ipv4,claim_mode,claim_status,source_line_id,hold_until_at,verified_at FROM svc_egress_claim WHERE service_id=? ORDER BY id",id);}
+    public List<Map<String,Object>> backupCandidates(Long id){return jdbc.queryForList("SELECT b.id,b.line_id,l.resource_code,host(b.expected_ipv4) expected_ipv4,b.candidate_status,b.health_status,b.last_checked_at FROM svc_backup_candidate b JOIN res_line l ON l.id=b.line_id WHERE b.service_id=? ORDER BY b.id",id);}
+    public List<Map<String,Object>> actionTasks(Long id){return jdbc.queryForList("SELECT operation_key,action_type,task_status,stage,remote_operation_id,attempt_count,last_error_code,last_error_message,created_at,updated_at FROM svc_action_task WHERE service_id=? ORDER BY created_at DESC",id);}
     public List<Map<String,Object>> longMonitorRecords(Long id){return jdbc.queryForList("SELECT id,monitor_no,target_host,target_port,current_status,enabled,last_checked_at,last_error FROM lm_monitor WHERE service_id=? AND deleted=FALSE ORDER BY created_at DESC",id);}
 
     /** 开通提交使用订单行锁，防止并发重复开通。 */
@@ -92,6 +99,7 @@ public class V12ServiceMapper {
         AND l.current_public_ip IS NOT NULL
         AND NOT EXISTS(SELECT 1 FROM res_pool_line pl JOIN res_pool p ON p.id=pl.pool_id WHERE pl.line_id=l.id AND pl.enabled=TRUE AND p.status='ACTIVE' AND p.deleted=FALSE)
         AND NOT EXISTS(SELECT 1 FROM res_exclusive_allocation ea WHERE ea.line_id=l.id AND ea.deleted=FALSE AND ea.status IN('LOCKED','ALLOCATED'))
+        AND NOT EXISTS(SELECT 1 FROM svc_egress_claim ec WHERE ec.egress_ipv4=l.current_public_ip AND ec.claim_status IN('RESERVED','ACTIVE','GRACE_HELD','RELEASE_PENDING'))
         AND NOT EXISTS(SELECT 1 FROM svc_resource_binding b JOIN svc_instance svc ON svc.id=b.service_id
           WHERE b.resource_type='LINE' AND b.resource_id=l.id AND b.status='ACTIVE'
             AND svc.deleted=FALSE AND svc.status IN('ACTIVE','SUSPENDED','PENDING'))
@@ -102,6 +110,7 @@ public class V12ServiceMapper {
       FROM res_line l WHERE l.deleted=FALSE AND l.online_status='ONLINE' AND l.current_public_ip IS NOT NULL
         AND NOT EXISTS(SELECT 1 FROM res_pool_line pl JOIN res_pool p ON p.id=pl.pool_id WHERE pl.line_id=l.id AND pl.enabled=TRUE AND p.status='ACTIVE' AND p.deleted=FALSE)
         AND NOT EXISTS(SELECT 1 FROM res_exclusive_allocation ea WHERE ea.line_id=l.id AND ea.deleted=FALSE AND ea.status IN('LOCKED','ALLOCATED'))
+        AND NOT EXISTS(SELECT 1 FROM svc_egress_claim ec WHERE ec.egress_ipv4=l.current_public_ip AND ec.claim_status IN('RESERVED','ACTIVE','GRACE_HELD','RELEASE_PENDING'))
         AND NOT EXISTS(SELECT 1 FROM svc_resource_binding b JOIN svc_instance svc ON svc.id=b.service_id
           WHERE b.resource_type='LINE' AND b.resource_id=l.id AND b.status='ACTIVE'
             AND svc.deleted=FALSE AND svc.status IN('ACTIVE','SUSPENDED','PENDING'))
