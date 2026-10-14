@@ -9,10 +9,10 @@
     {key:'resource',title:'资源管理',children:[
       {key:'resources.overview',title:'资源概览',module:'resources',tab:0,desc:'CentOS、ROS、家宽/线路、资源池及外部交付资源统一概览'},
       {key:'resources.centos',title:'CentOS列表',module:'resources',tab:1,desc:'对应现有主机列表，展示服务器承载与运行状态'},
-      {key:'resources.ros',title:'ROS列表',module:'resources',tab:2,desc:'对应现有ROS主机，展示线路、B/C段、BAS和负载信息'},
+      {key:'resources.ros',title:'ROS列表',module:'resources',tab:2,desc:'对应现有ROS主机，展示拨号线路、BAS与负载，不承担B/C统计'},
       {key:'resources.lines',title:'家宽/线路列表',module:'resources',tab:3,desc:'统一承载ROS逻辑线路、家宽账号和节点的业务信息'},
       {key:'resources.pools',title:'资源池',module:'resources',tab:4,desc:'按业务规则组织多个家宽/线路形成逻辑资源集合'},
-      {key:'resources.exclusive',title:'独享资源',module:'resources',tab:5,desc:'管理独享服务对家宽/线路及当前IP的占用关系'},
+      {key:'resources.exclusive',title:'独享资源',module:'resources',tab:5,desc:'以公网出口IPv4跨客户排他展示独享服务的占用与宽限保留'},
       {key:'resources.domains',title:'域名配置',module:'resources',tab:6,desc:'维护域名、线路、客户及DNSPOD同步关系'},
       {key:'resources.suppliers',title:'外部供应商',module:'resources',tab:7,desc:'维护外部供应商档案、账号及接口基础配置'},
       {key:'resources.purchases',title:'外部套餐/资源采购',module:'resources',tab:8,desc:'记录运营根据客户需求在外部供应商购买的套餐'},
