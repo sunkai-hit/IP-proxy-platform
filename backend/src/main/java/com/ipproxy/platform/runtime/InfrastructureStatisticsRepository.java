@@ -46,7 +46,23 @@ public class InfrastructureStatisticsRepository {
               (SELECT COUNT(*) FROM alarm_event WHERE status IN ('OPEN','ACKNOWLEDGED','PROCESSING')) active_alarms,
               (SELECT COUNT(*) FROM res_centos WHERE deleted=FALSE AND online_status='ONLINE') online_centos,
               (SELECT COUNT(*) FROM res_ros WHERE deleted=FALSE AND online_status='ONLINE') online_ros,
-              (SELECT COUNT(*) FROM res_line WHERE deleted=FALSE AND online_status='ONLINE') online_lines
+              (SELECT COUNT(*) FROM res_line WHERE deleted=FALSE AND online_status='ONLINE') online_lines,
+              (SELECT COUNT(*) FROM svc_instance WHERE deleted=FALSE AND status='ACTIVE'
+                 AND delivery_stage='VERIFIED') verified_service_count,
+              (SELECT COUNT(*) FROM svc_instance WHERE deleted=FALSE AND status='ACTIVE'
+                 AND delivery_stage<>'VERIFIED') management_unverified_services,
+              (SELECT COUNT(*) FROM svc_instance WHERE deleted=FALSE
+                 AND product_type IN ('LONG_IP','EXCLUSIVE_IP')
+                 AND status IN ('ACTIVE','SUSPENDED') AND expire_at<=now()) due_stop_services,
+              (SELECT COUNT(*) FROM svc_instance WHERE deleted=FALSE
+                 AND expiry_phase='GRACE_HELD') grace_held_services,
+              (SELECT COUNT(*) FROM svc_instance WHERE deleted=FALSE
+                 AND expiry_phase IN ('RELEASE_PENDING','RELEASE_BLOCKED')) release_pending_services,
+              (SELECT COUNT(*) FROM svc_action_task WHERE task_status IN
+                 ('PRECHECK_BLOCKED','FAILED','COMPENSATION_REQUIRED')) unresolved_action_tasks,
+              (SELECT COUNT(*) FROM res_supplier_purchase WHERE deleted=FALSE
+                 AND status='ACTIVE' AND expire_at BETWEEN now() AND now()+interval '3 days') expiring_supplier_purchases,
+              now() snapshot_at
             """);
         return rows.isEmpty()?Map.of():rows.getFirst();
     }
