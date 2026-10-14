@@ -26,12 +26,26 @@ public class LongMonitorMapper {
       AND (? IS NULL OR b.customer_id=?) AND (? IS NULL OR b.enabled=?)
       """,Long.class,k,k,k,k,customerId,customerId,enabled,enabled);}
     public List<Map<String,Object>> bots(String k,Long customerId,Boolean enabled,int size,int offset){return jdbc.queryForList("""
-      SELECT b.id,b.bot_no,b.customer_id,c.customer_name,b.bot_name,b.bot_type,b.webhook_url,(b.access_token_cipher IS NOT NULL) access_token_configured,(b.secret_cipher IS NOT NULL) secret_configured,b.enabled,b.last_test_at,b.last_test_status,b.last_test_message,b.remark,b.created_at,b.updated_at
+      SELECT b.id,b.bot_no,b.customer_id,c.customer_name,b.bot_name,b.bot_type,(b.webhook_url IS NOT NULL AND b.webhook_url<>'') webhook_configured,(b.access_token_cipher IS NOT NULL) access_token_configured,(b.secret_cipher IS NOT NULL) secret_configured,b.enabled,b.last_test_at,b.last_test_status,b.last_test_message,b.remark,b.created_at,b.updated_at
       FROM lm_bot b JOIN customer c ON c.id=b.customer_id WHERE b.deleted=FALSE
       AND (?='' OR b.bot_no ILIKE '%'||?||'%' OR b.bot_name ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%')
       AND (? IS NULL OR b.customer_id=?) AND (? IS NULL OR b.enabled=?) ORDER BY b.updated_at DESC,b.id DESC LIMIT ? OFFSET ?
       """,k,k,k,k,customerId,customerId,enabled,enabled,size,offset);}
     public Map<String,Object> bot(Long id){return one("SELECT b.*,c.customer_name FROM lm_bot b JOIN customer c ON c.id=b.customer_id WHERE b.id=? AND b.deleted=FALSE",id);}
+    public List<Map<String,Object>> botMonitorReferences(Long botId){
+        return jdbc.queryForList("""
+          SELECT m.id,m.monitor_no,m.customer_id,c.customer_name,
+                 m.service_id,s.service_no,m.target_host,m.target_port,
+                 m.proxy_protocol,m.interval_seconds,m.failure_threshold,
+                 m.recovery_threshold,m.enabled,m.current_status,m.last_checked_at
+          FROM lm_monitor m
+          JOIN customer c ON c.id=m.customer_id
+          JOIN svc_instance s ON s.id=m.service_id
+          JOIN lm_bot b ON b.id=m.bot_id AND b.deleted=FALSE
+          WHERE m.bot_id=? AND m.deleted=FALSE AND m.customer_id=b.customer_id
+          ORDER BY m.created_at DESC,m.id DESC LIMIT 201
+          """,botId);
+    }
     public Long insertBot(String no,Long customerId,String name,String type,String webhook,String tokenCipher,String secretCipher,String remark,Long actor){return jdbc.queryForObject("INSERT INTO lm_bot(bot_no,customer_id,bot_name,bot_type,webhook_url,access_token_cipher,secret_cipher,remark,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?) RETURNING id",Long.class,no,customerId,name,type,webhook,tokenCipher,secretCipher,remark,actor,actor);}
     public int updateBot(Long id,String name,String type,String webhook,String tokenCipher,String secretCipher,String remark,Long actor){return jdbc.update("UPDATE lm_bot SET bot_name=?,bot_type=?,webhook_url=?,access_token_cipher=COALESCE(?,access_token_cipher),secret_cipher=COALESCE(?,secret_cipher),remark=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",name,type,webhook,tokenCipher,secretCipher,remark,actor,id);}
     public int botEnabled(Long id,boolean enabled,Long actor){return jdbc.update("UPDATE lm_bot SET enabled=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",enabled,actor,id);}
