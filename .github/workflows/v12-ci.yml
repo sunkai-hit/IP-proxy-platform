@@ -142,6 +142,33 @@ jobs:
           CLAIM_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_egress_claim WHERE service_id IN ($EXP0,$EXP3) AND claim_status='RELEASED'")
           test "$CLAIM_COUNT" -eq 0
           echo 'R3 expiry planner idempotent, zero-day held, data-plane state unchanged (Mock-only)'
+          # Fixed-IP original grace: prevent collecting payment for an impossible
+          # RENEW order; within-grace still needs genuine adapter verification.
+          FIXED_RENEW_0=$(printf '{"customerId":%s,"orderType":"RENEW","renewalServiceId":%s,"items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$EXP0" "$PID2" "$PKGID")
+          OUTSIDE_CREATE_HTTP=$(curl -s -o /tmp/r3-outside-renew-create.json -w '%{http_code}' -H "$H" -H "$J" -d "$FIXED_RENEW_0" http://localhost:8080/api/admin/v1/orders)
+          test "$OUTSIDE_CREATE_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-outside-renew-create.json"))["code"]=="RENEW_OUTSIDE_GRACE"'
+          FIXED_RENEW_3=$(printf '{"customerId":%s,"orderType":"RENEW","renewalServiceId":%s,"items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$EXP3" "$PID2" "$PKGID")
+          FIXED_ORDER=$(curl -fsS -H "$H" -H "$J" -d "$FIXED_RENEW_3" http://localhost:8080/api/admin/v1/orders)
+          FIXED_ORDER_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$FIXED_ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI within-grace renewal approval"}' "http://localhost:8080/api/admin/v1/orders/$FIXED_ORDER_ID/confirm" >/dev/null
+          curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-WITHIN-GRACE","reason":"Synthetic customer receipt verified"}' "http://localhost:8080/api/admin/v1/orders/$FIXED_ORDER_ID/payment-confirmation" >/dev/null
+          FIXED_EXEC=$(printf '{"days":30,"renewalOrderId":%s,"reason":"CI verify original grace"}' "$FIXED_ORDER_ID")
+          MOCK_FIXED_HTTP=$(curl -s -o /tmp/r3-within-grace-mock.json -w '%{http_code}' -H "$H" -H "$J" -d "$FIXED_EXEC" "http://localhost:8080/api/admin/v1/services/$EXP3/renew")
+          test "$MOCK_FIXED_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-within-grace-mock.json"))["code"]=="DATA_PLANE_ADAPTER_UNAVAILABLE"'
+          # Simulate elapsed time between order payment and execution, without
+          # calling any real network or changing the original grace-day contract.
+          docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "UPDATE svc_instance SET expire_at=now()-interval '5 days',grace_until_at=now()-interval '2 days' WHERE id=$EXP3" >/dev/null
+          AFTER_GRACE_BEFORE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT expire_at::text||'/'||grace_days_snapshot::text FROM svc_instance WHERE id=$EXP3")
+          LATE_FIXED_HTTP=$(curl -s -o /tmp/r3-after-payment-grace.json -w '%{http_code}' -H "$H" -H "$J" -d "$FIXED_EXEC" "http://localhost:8080/api/admin/v1/services/$EXP3/renew")
+          test "$LATE_FIXED_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-after-payment-grace.json"))["code"]=="RENEW_OUTSIDE_GRACE"'
+          AFTER_GRACE_AFTER=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT expire_at::text||'/'||grace_days_snapshot::text FROM svc_instance WHERE id=$EXP3")
+          test "$AFTER_GRACE_BEFORE" = "$AFTER_GRACE_AFTER"
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM biz_order WHERE id=$FIXED_ORDER_ID")" = "PENDING_PROVISION"
+          echo 'Original fixed-IP grace guards RENEW order before payment and protects execution after deadline'
+
           # The legacy exclusive-release API must never mark an allocation recycled
           # merely because a management operator submitted a reason.
           LEGACY_EXCLUSIVE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_exclusive_allocation(allocation_no,resource_type,line_id,customer_id,service_id,status) VALUES('CI-R3-LEGACY-HOLD','LINE',$L1,$CID,$EXP0,'ALLOCATED') RETURNING id" | head -n1)
@@ -283,27 +310,6 @@ jobs:
           RENEW_STATUS=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM biz_order WHERE id=$REN_ID")
           test "$RENEW_STATUS" = "PENDING_PROVISION"
           echo 'Unpaid, mismatched term and Mock renewal fail closed with exact business errors; DB term/order unchanged'
-          # Fixed IP renewal: outside original grace is NEW provisioning, while
-          # within grace cannot claim success with only a Mock network adapter.
-          for CASE in 0 3; do
-            if [ "$CASE" = "0" ]; then TARGET_ID="$EXP0"; else TARGET_ID="$EXP3"; fi
-            FIXED_RENEW_BODY=$(printf '{"customerId":%s,"orderType":"RENEW","renewalServiceId":%s,"items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$TARGET_ID" "$PID2" "$PKGID")
-            FIXED_RENEW=$(curl -fsS -H "$H" -H "$J" -d "$FIXED_RENEW_BODY" http://localhost:8080/api/admin/v1/orders)
-            FIXED_ORDER_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$FIXED_RENEW")
-            curl -fsS -H "$H" -H "$J" -d '{"reason":"CI fixed-ip renewal approved"}' "http://localhost:8080/api/admin/v1/orders/$FIXED_ORDER_ID/confirm" >/dev/null
-            curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-FIXED-RENEW","reason":"CI simulated customer payment verification"}' "http://localhost:8080/api/admin/v1/orders/$FIXED_ORDER_ID/payment-confirmation" >/dev/null
-            BEFORE_FIXED=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT expire_at::text||'/'||grace_days_snapshot::text FROM svc_instance WHERE id=$TARGET_ID")
-            FIXED_EXEC=$(printf '{"days":30,"renewalOrderId":%s,"reason":"CI original grace integrity"}' "$FIXED_ORDER_ID")
-            FIXED_HTTP=$(curl -s -o /tmp/r3-fixed-renew.json -w '%{http_code}' -H "$H" -H "$J" -d "$FIXED_EXEC" "http://localhost:8080/api/admin/v1/services/$TARGET_ID/renew")
-            test "$FIXED_HTTP" -eq 400
-            if [ "$CASE" = "0" ]; then EXPECTED_CODE=RENEW_OUTSIDE_GRACE; else EXPECTED_CODE=DATA_PLANE_ADAPTER_UNAVAILABLE; fi
-            python3 -c 'import json,sys; assert json.load(open("/tmp/r3-fixed-renew.json"))["code"]==sys.argv[1]' "$EXPECTED_CODE"
-            AFTER_FIXED=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT expire_at::text||'/'||grace_days_snapshot::text FROM svc_instance WHERE id=$TARGET_ID")
-            test "$BEFORE_FIXED" = "$AFTER_FIXED"
-            STILL_PENDING=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM biz_order WHERE id=$FIXED_ORDER_ID")
-            test "$STILL_PENDING" = "PENDING_PROVISION"
-          done
-          echo 'Fixed-IP outside-grace rejects renewal, within-grace Mock rejects and original terms/orders remain intact'
 
 
 
