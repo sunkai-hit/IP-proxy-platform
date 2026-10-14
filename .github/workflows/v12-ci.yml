@@ -161,6 +161,16 @@ jobs:
             curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/runtime-logs/v12/$LOG_CATEGORY?page=1&size=10" >/tmp/v12-source-log.json
           done
           echo 'V1.2 pool membership statistics and eight additional scoped log endpoints queried'
+          # Cross-document business substables: ensure real master-child SQL works in PostgreSQL.
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/customers/$CID/orders" >/tmp/r3-customer-orders.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/lines/$L1/pools" >/tmp/r3-line-pools.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/lines/$L1/services" >/tmp/r3-line-services.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/pools/$POOLID/services" >/tmp/r3-pool-services.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/services/$SID/bindings" >/tmp/r3-service-bindings.json
+          python3 -c 'import json; d=json.load(open("/tmp/r3-customer-orders.json"))["data"]; assert any(x["id"]>0 for x in d["items"])'
+          python3 -c 'import json; d=json.load(open("/tmp/r3-line-pools.json"))["data"]; assert any(x["pool_code"]=="CI-V12-SHARED" for x in d["items"])'
+          python3 -c 'import json; d=json.load(open("/tmp/r3-service-bindings.json"))["data"]; assert len(d["items"])>0 and any(x["related_path"] for x in d["items"])'
+          echo 'V1.2 customer/line/pool/service master-child relationship smoke passed'
           echo 'V1.2 core smoke passed'
       - name: Backend log on failure
         if: failure()
