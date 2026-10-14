@@ -27,12 +27,15 @@ public class V12ServiceMapper {
     public int deliveryStage(Long id,String stage){return jdbc.update("UPDATE svc_instance SET delivery_stage=?,updated_at=now() WHERE id=? AND deleted=FALSE",stage,id);}
     public int serviceStatus(Long id,String status,String failure,Long actor){return jdbc.update("UPDATE svc_instance SET status=?,failure_reason=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",status,failure,actor,id);}
     public Long bind(Long serviceId,String type,Long resourceId,String role,String metadata,Long actor){return jdbc.queryForObject("INSERT INTO svc_resource_binding(service_id,resource_type,resource_id,binding_role,metadata,created_by) VALUES(?,?,?,?,CAST(? AS jsonb),?) RETURNING id",Long.class,serviceId,type,resourceId,role,metadata,actor);}
-    public Long allocateExclusiveLine(Long serviceId,Long lineId,Long customerId,OffsetDateTime expire,String currentIp,String snapshot,Long actor){Long allocationId=jdbc.queryForObject("""
+    public Long allocateExclusiveLine(Long serviceId,Long lineId,Long customerId,OffsetDateTime expire,OffsetDateTime holdUntil,String currentIp,String snapshot,Long actor){Long allocationId=jdbc.queryForObject("""
       INSERT INTO res_exclusive_allocation(allocation_no,resource_type,ip_id,line_id,customer_id,service_id,status,locked_at,effective_at,expire_at,current_ip_snapshot,service_snapshot,created_by,updated_by)
       VALUES('EA-'||replace(gen_random_uuid()::text,'-',''),'LINE',NULL,?,?,?,'ALLOCATED',now(),now(),?,CAST(NULLIF(?,'') AS inet),CAST(? AS jsonb),?,?) RETURNING id
       """,Long.class,lineId,customerId,serviceId,expire,currentIp,snapshot,actor,actor);
-      jdbc.update("INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status,hold_until_at) VALUES(?,?,?,CAST(? AS inet),'EXCLUSIVE','RESERVED',?)",serviceId,customerId,lineId,currentIp,expire);
+      jdbc.update("INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status,hold_until_at) VALUES(?,?,?,CAST(? AS inet),'EXCLUSIVE','RESERVED',?)",serviceId,customerId,lineId,currentIp,holdUntil);
       return allocationId;}
+    public int claimLongSharedEgress(Long serviceId,Long customerId,Long lineId,String ipv4,OffsetDateTime holdUntil){
+      return jdbc.update("INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status,hold_until_at) VALUES(?,?,?,CAST(? AS inet),'SHARED','RESERVED',?)",serviceId,customerId,lineId,ipv4,holdUntil);
+    }
     public int attachReverseProxy(Long proxyId,Long serviceId,Long actor){return jdbc.update("UPDATE res_reverse_proxy SET service_id=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",serviceId,actor,proxyId);}
     public Long insertCredential(Long serviceId,String type,String account,String hash,String mask,OffsetDateTime expire,String metadata,Long actor){return jdbc.queryForObject("INSERT INTO svc_credential(service_id,credential_type,account_name,secret_hash,secret_mask,expire_at,metadata,created_by,updated_by) VALUES(?,?,?,?,?,?,CAST(? AS jsonb),?,?) RETURNING id",Long.class,serviceId,type,account,hash,mask,expire,metadata,actor,actor);}
 
