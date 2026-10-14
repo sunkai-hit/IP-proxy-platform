@@ -118,6 +118,8 @@ public class OrderServiceService {
         if(!expiry.isAfter(now))
             throw err("RENEW_TERM_EXPIRED","从原到期时刻顺延后，新期限仍早于当前时间；请购买足够续费天数");
         OffsetDateTime newGrace=fixed?expiry.plusDays(graceDays):null;
+        if(fixed&&db.hasUnreconciledOtherLegacyEgress(id))
+            throw err("RENEW_LEGACY_EGRESS_UNRECONCILED","仍有缺少固定IPv4快照的存量独享占用，禁止先执行远端续费再发生数据库冲突");
         requireRealLifecycle(target,"续费");
         Map<String,Object> context=new LinkedHashMap<>();
         context.put("serviceNo",s(target.get("service_no")));
