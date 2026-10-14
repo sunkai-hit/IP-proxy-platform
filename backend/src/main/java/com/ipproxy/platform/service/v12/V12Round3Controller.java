@@ -68,7 +68,7 @@ public class V12Round3Controller {
                        @AuthenticationPrincipal UserPrincipal actor,HttpServletRequest request) {
         require(actor,"product:package:write");
         if(input==null||input.graceDays()==null||input.graceDays()<0)
-            throw error("PACKAGE_GRACE_INVALID","必须明确提供非负的宽限天数；是否允许0天销售尚待业务确认");
+            throw error("PACKAGE_GRACE_INVALID","必须明确提供非负的宽限天数；0天表示到期立即停服并进入受控回收");
         if(input.reason()==null||input.reason().isBlank())
             throw error("PACKAGE_REASON_REQUIRED","必须填写修改原因");
         Map<String,Object> p=first("""
