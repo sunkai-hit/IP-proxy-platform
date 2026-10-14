@@ -162,6 +162,12 @@ jobs:
           REN_CHILDREN=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$REN_ID/services")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["relation_type"]=="RENEWAL_TARGET"' <<< "$REN_CHILDREN"
           echo 'Order-created service subtables and original service renewal target verified in Mock/DB'
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI renewal order approval"}' "http://localhost:8080/api/admin/v1/orders/$REN_ID/confirm" >/dev/null
+          curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-RENEW-ORDER-PAID","reason":"CI synthetic payment evidence"}' "http://localhost:8080/api/admin/v1/orders/$REN_ID/payment-confirmation" >/dev/null
+          READY_RENEW=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/services/$SID/paid-renewal-orders")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["order_no"] and x[0]["payment_status"]=="PAID_CONFIRMED" and x[0]["status"]=="PENDING_PROVISION"' <<< "$READY_RENEW"
+          echo 'Exactly targeted paid renewal order selection verified with synthetic payment evidence'
+
 
           # Synthetic supplier -> purchase -> proxy -> service drill-down only.
           # No upstream payment, access credential or network adapter is invoked.
