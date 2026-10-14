@@ -7,6 +7,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.*;
 
 /**
@@ -42,8 +44,8 @@ public class V12ExpiryTaskPlanner {
             String phase=String.valueOf(s.get("expiry_phase"));
             boolean stop=Set.of("ACTIVE","SUSPENDED").contains(String.valueOf(s.get("status")));
             String action=stop?"STOP_FOR_GRACE":"RELEASE";
-            OffsetDateTime expire=(OffsetDateTime)s.get("expire_at");
-            String key="expiry:"+action+":"+id+":"+expire.toInstant().toEpochMilli();
+            Instant expire=asInstant(s.get("expire_at"));
+            String key="expiry:"+action+":"+id+":"+expire.toEpochMilli();
             Integer grace=s.get("grace_days_snapshot")==null?null:((Number)s.get("grace_days_snapshot")).intValue();
             String error;
             if(grace==null){error="GRACE_SNAPSHOT_MISSING";missingGrace++;}
@@ -76,6 +78,12 @@ public class V12ExpiryTaskPlanner {
         result.put("message","仅登记待处理任务；未下发真实停服/回收，不修改业务状态与公网IPv4占用");
         result.put("scannedAt",now);
         return result;
+    }
+
+    private static Instant asInstant(Object value){
+        if(value instanceof OffsetDateTime o)return o.toInstant();
+        if(value instanceof Timestamp t)return t.toInstant();
+        throw new IllegalStateException("到期日期字段不是可识别的绝对时间，请检查JDBC映射");
     }
 
     public List<Map<String,Object>> queue(int limit,String phase){
