@@ -140,7 +140,10 @@ public class V12InfrastructureRepository {
     public List<Map<String,Object>> listLines(String keyword,String status,Long rosId,String type,String province,String city,String carrier,int size,int offset){
         return jdbc.queryForList("""
             SELECT l.id,l.resource_code,l.resource_name,l.line_alias,l.ros_id,r.resource_code ros_code,r.resource_name ros_name,
-              c.id centos_id,c.resource_code centos_code,l.broadband_account,l.broadband_account_mask,l.account_prefix,
+              c.id centos_id,c.resource_code centos_code,CASE WHEN COALESCE(l.broadband_account,'')='' THEN '未配置'
+              WHEN length(l.broadband_account)>=7
+                THEN left(l.broadband_account,3)||'****'||right(l.broadband_account,3)
+              ELSE '已配置（已掩码）' END broadband_account_mask,l.account_prefix,
               host(l.current_public_ip) current_public_ip,l.http_port,l.socks5_port,l.domain_name,l.managed_flag,l.line_type,
               l.user_limit,l.active_users,l.restart_interval_minutes,l.available_time_range,l.vpn_supported,l.vpn_redial_monitor,
               l.bas_name,l.bas_address,l.province_code,l.city_code,l.region_code,l.carrier_code,l.online_status,l.dial_status,l.latency_ms,
@@ -163,7 +166,10 @@ public class V12InfrastructureRepository {
     public Map<String,Object> line(Long id){
         return one("""
             SELECT l.id,l.resource_code,l.resource_name,l.line_alias,l.ros_id,r.resource_code ros_code,r.resource_name ros_name,
-              c.id centos_id,c.resource_code centos_code,c.resource_name centos_name,l.broadband_account,l.broadband_account_mask,
+              c.id centos_id,c.resource_code centos_code,c.resource_name centos_name,CASE WHEN COALESCE(l.broadband_account,'')='' THEN '未配置'
+              WHEN length(l.broadband_account)>=7
+                THEN left(l.broadband_account,3)||'****'||right(l.broadband_account,3)
+              ELSE '已配置（已掩码）' END broadband_account_mask,
               l.account_prefix,host(l.current_public_ip) current_public_ip_text,l.http_port,l.socks5_port,l.domain_name,
               l.managed_flag,l.line_type,l.user_limit,l.active_users,l.restart_interval_minutes,l.available_time_range,
               l.vpn_supported,l.vpn_redial_monitor,l.bas_name,l.bas_address,l.province_code,l.city_code,l.region_code,l.carrier_code,
