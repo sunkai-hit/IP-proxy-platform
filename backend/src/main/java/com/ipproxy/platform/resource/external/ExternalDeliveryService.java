@@ -29,9 +29,43 @@ public class ExternalDeliveryService {
     public Map<String,Object> proxy(Long id){Map<String,Object>x=db.proxy(id);if(x==null)throw notFound("反向代理");Map<String,Object> out=new LinkedHashMap<>(x);out.remove("upstream_secret_cipher");out.remove("platform_secret_cipher");out.put("upstreamSecretConfigured",x.get("upstream_secret_cipher")!=null);out.put("platformSecretConfigured",x.get("platform_secret_cipher")!=null);out.put("operationLogs",db.proxyLogs(id,100));return out;}
     @Transactional public Long createProxy(ProxyInput in,UserPrincipal actor,String ip){validateProxy(in);Map<String,Object> purchase=purchase(in.purchaseId());Long customerId=in.customerId()!=null?in.customerId():number(purchase.get("customer_id"));if(customerId==null)throw new BusinessException("PROXY_CUSTOMER_REQUIRED","反向代理必须绑定客户");String no="RP-"+OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))+"-"+Integer.toHexString(new Random().nextInt(65536)).toUpperCase(Locale.ROOT);Long id=db.insertProxy(no,in.purchaseId(),customerId,in.serviceId(),in.protocolCode().trim().toUpperCase(Locale.ROOT),in.upstreamHost().trim(),in.upstreamPort(),n(in.upstreamAccount()),cipher.encrypt(in.upstreamSecret()),in.platformHost().trim(),in.platformPort(),n(in.platformAccount()),cipher.encrypt(in.platformSecret()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());db.proxyLog(id,"CREATE","SUCCESS","创建反向代理配置",actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"CREATE","创建反向代理交付",ip);return id;}
     @Transactional public void updateProxy(Long id,ProxyInput in,UserPrincipal actor,String ip){proxy(id);validateProxy(in);db.updateProxy(id,in.serviceId(),in.protocolCode().trim().toUpperCase(Locale.ROOT),in.upstreamHost().trim(),in.upstreamPort(),n(in.upstreamAccount()),n(in.upstreamSecret()).isBlank()?null:cipher.encrypt(in.upstreamSecret()),in.platformHost().trim(),in.platformPort(),n(in.platformAccount()),n(in.platformSecret()).isBlank()?null:cipher.encrypt(in.platformSecret()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());db.proxyLog(id,"UPDATE","SUCCESS","修改反向代理配置",actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"UPDATE","修改反向代理交付",ip);}
-    @Transactional public Map<String,Object> applyProxy(Long id,String reason,UserPrincipal actor,String ip){Map<String,Object>x=proxy(id);ReverseProxyAdapter.Result r=adapter.apply(id,x);String status=r.success()?"ACTIVE":"ABNORMAL";db.proxyStatus(id,status,r.success()?null:r.message(),actor.userId());db.proxyLog(id,"APPLY",r.success()?"SUCCESS":"FAILED",r.message(),actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"APPLY",required(reason,"操作原因不能为空"),ip);return Map.of("status",status,"message",r.message(),"detail",r.detail());}
-    @Transactional public Map<String,Object> testProxy(Long id,String reason,UserPrincipal actor,String ip){Map<String,Object>x=proxy(id);ReverseProxyAdapter.Result r=adapter.test(id,x);db.proxyStatus(id,r.success()?n(String.valueOf(x.get("status"))):"ABNORMAL",r.success()?null:r.message(),actor.userId());db.proxyLog(id,"TEST",r.success()?"SUCCESS":"FAILED",r.message(),actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"TEST",required(reason,"操作原因不能为空"),ip);return Map.of("success",r.success(),"message",r.message(),"detail",r.detail());}
-    @Transactional public Map<String,Object> disableProxy(Long id,String reason,UserPrincipal actor,String ip){Map<String,Object>x=proxy(id);ReverseProxyAdapter.Result r=adapter.disable(id,x);db.proxyStatus(id,"DISABLED",r.success()?null:r.message(),actor.userId());db.proxyLog(id,"DISABLE",r.success()?"SUCCESS":"FAILED",r.message(),actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"DISABLE",required(reason,"操作原因不能为空"),ip);return Map.of("status","DISABLED","message",r.message());}
+    // Noop/PENDING / transport ACK must not be interpreted as actual proxy data-plane verification.
+    private void realProxyResult(ReverseProxyAdapter.Result result,String action) {
+        if(result==null || !result.success() || result.detail()==null
+           || !Boolean.TRUE.equals(result.detail().get("verified"))) {
+            throw new BusinessException("EXTERNAL_PROXY_DATA_PLANE_UNVERIFIED",
+                action+"未取得真实反向代理数据面回执；保留原平台代理业务状态");
+        }
+    }
+    @Transactional public Map<String,Object> applyProxy(Long id,String reason,UserPrincipal actor,String ip){
+        String why=required(reason,"操作原因不能为空");
+        Map<String,Object> x=proxy(id);
+        ReverseProxyAdapter.Result r=adapter.apply(id,x);
+        realProxyResult(r,"反向代理启用");
+        db.proxyStatus(id,"ACTIVE",null,actor.userId());
+        db.proxyLog(id,"APPLY","SUCCESS",r.message(),actor.userId());
+        audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"APPLY",why,ip);
+        return Map.of("status","ACTIVE","message",r.message(),"detail",r.detail());
+    }
+    @Transactional public Map<String,Object> testProxy(Long id,String reason,UserPrincipal actor,String ip){
+        String why=required(reason,"操作原因不能为空");
+        Map<String,Object> x=proxy(id);
+        ReverseProxyAdapter.Result r=adapter.test(id,x);
+        realProxyResult(r,"反向代理检测");
+        db.proxyLog(id,"TEST","SUCCESS",r.message(),actor.userId());
+        audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"TEST",why,ip);
+        return Map.of("success",true,"message",r.message(),"detail",r.detail());
+    }
+    @Transactional public Map<String,Object> disableProxy(Long id,String reason,UserPrincipal actor,String ip){
+        String why=required(reason,"操作原因不能为空");
+        Map<String,Object> x=proxy(id);
+        ReverseProxyAdapter.Result r=adapter.disable(id,x);
+        realProxyResult(r,"反向代理停用");
+        db.proxyStatus(id,"DISABLED",null,actor.userId());
+        db.proxyLog(id,"DISABLE","SUCCESS",r.message(),actor.userId());
+        audit.success(actor,"EXTERNAL_DELIVERY","REVERSE_PROXY",id,"DISABLE",why,ip);
+        return Map.of("status","DISABLED","message",r.message(),"detail",r.detail());
+    }
 
     private void validatePurchase(PurchaseInput in){if(in==null||in.supplierId()==null)throw new BusinessException("PURCHASE_REQUIRED","供应商不能为空");required(in.supplierPackageName(),"供应商套餐名称不能为空");if(in.expireAt()!=null&&in.effectiveAt()!=null&&in.expireAt().isBefore(in.effectiveAt()))throw new BusinessException("PURCHASE_TIME_INVALID","到期时间不能早于生效时间");}
     private void validateProxy(ProxyInput in){if(in==null||in.purchaseId()==null)throw new BusinessException("PROXY_PURCHASE_REQUIRED","外部采购不能为空");required(in.protocolCode(),"代理协议不能为空");required(in.upstreamHost(),"上游地址不能为空");required(in.platformHost(),"平台代理地址不能为空");if(in.upstreamPort()==null||in.upstreamPort()<1||in.upstreamPort()>65535||in.platformPort()==null||in.platformPort()<1||in.platformPort()>65535)throw new BusinessException("PROXY_PORT_INVALID","端口必须在1-65535之间");}
