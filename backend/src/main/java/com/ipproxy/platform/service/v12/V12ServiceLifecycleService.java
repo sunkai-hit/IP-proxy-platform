@@ -149,10 +149,14 @@ public class V12ServiceLifecycleService {
             credential=Map.of("type","EXISTING_PLATFORM_AUTH","account",Objects.toString(externalProxy.get("platform_account"),""),
                 "mask","平台代理已有认证配置；不生成未下发的新密钥","secret","");
         }else credential=issueCredential(sid,serviceNo,productType,String.valueOf(product.get("auth_modes_json")),expire,actor.userId());
-        db.serviceStatus(sid,"ACTIVE",null,actor.userId());db.deliveryStage(sid,"MANAGEMENT_ONLY");audit.success(actor,"SERVICE","SERVICE",sid,"PROVISION_V12",n(in.remark()).isBlank()?"V1.2服务开通":in.remark(),ip);Map<String,Object> out=new LinkedHashMap<>();out.put("serviceId",sid);out.put("serviceNo",serviceNo);out.put("deliveryMode",delivery);out.put("builtinPolicyCode",policyCode);out.put("status","ACTIVE");out.put("oneTimeCredential",credential);
-        out.put("deliveryStage","EXTERNAL_PROXY".equals(delivery)?"MANAGEMENT_ONLY":
+        String deliveryStage="EXTERNAL_PROXY".equals(delivery)?"MANAGEMENT_ONLY":
             adapter instanceof com.ipproxy.platform.service.adapter.NoopServiceProvisionAdapter?"MANAGEMENT_ONLY":
-            adapter instanceof com.ipproxy.platform.service.adapter.MockServiceProvisionAdapter?"MOCK_ONLY":"ADAPTER_ACK_UNVERIFIED");
+            adapter instanceof com.ipproxy.platform.service.adapter.MockServiceProvisionAdapter?"MOCK_ONLY":"ADAPTER_ACK_UNVERIFIED";
+        db.serviceStatus(sid,"ACTIVE",null,actor.userId());db.deliveryStage(sid,deliveryStage);
+        audit.success(actor,"SERVICE","SERVICE",sid,"PROVISION_V12",n(in.remark()).isBlank()?"V1.2管理面开通":in.remark(),ip);
+        Map<String,Object> out=new LinkedHashMap<>();out.put("serviceId",sid);out.put("serviceNo",serviceNo);
+        out.put("deliveryMode",delivery);out.put("builtinPolicyCode",policyCode);out.put("status","ACTIVE");
+        out.put("oneTimeCredential",credential);out.put("deliveryStage",deliveryStage);
         return out;}
 
     private Map<String,Object> issueCredential(Long serviceId,String serviceNo,String productType,String authModesJson,OffsetDateTime expire,Long actor){
