@@ -15,7 +15,7 @@ public class ExternalDeliveryMapper {
     public long countPurchases(String k,String status,Long supplierId,Long customerId){return jdbc.queryForObject("""
       SELECT count(*) FROM res_supplier_purchase p JOIN res_supplier s ON s.id=p.supplier_id LEFT JOIN customer c ON c.id=p.customer_id
       WHERE p.deleted=FALSE AND (?='' OR p.purchase_no ILIKE '%'||?||'%' OR s.supplier_name ILIKE '%'||?||'%' OR p.supplier_package_name ILIKE '%'||?||'%' OR COALESCE(c.customer_name,'') ILIKE '%'||?||'%')
-      AND (?='' OR p.status=?) AND (? IS NULL OR p.supplier_id=?) AND (? IS NULL OR p.customer_id=?)
+      AND (?='' OR p.status=?) AND (CAST(? AS BIGINT) IS NULL OR p.supplier_id=?) AND (CAST(? AS BIGINT) IS NULL OR p.customer_id=?)
       """,Long.class,k,k,k,k,k,status,status,supplierId,supplierId,customerId,customerId);}
     public List<Map<String,Object>> purchases(String k,String status,Long supplierId,Long customerId,int size,int offset){return jdbc.queryForList("""
       SELECT p.id,p.purchase_no,p.supplier_id,s.supplier_code,s.supplier_name,p.customer_id,c.customer_name,p.supplier_package_name,p.supplier_package_no,
@@ -46,7 +46,7 @@ public class ExternalDeliveryMapper {
     public long countProxies(String k,String status,Long customerId){return jdbc.queryForObject("""
       SELECT count(*) FROM res_reverse_proxy rp JOIN res_supplier_purchase p ON p.id=rp.purchase_id JOIN res_supplier s ON s.id=p.supplier_id JOIN customer c ON c.id=rp.customer_id
       WHERE rp.deleted=FALSE AND (?='' OR rp.proxy_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%' OR rp.platform_host ILIKE '%'||?||'%' OR s.supplier_name ILIKE '%'||?||'%')
-      AND (?='' OR rp.status=?) AND (? IS NULL OR rp.customer_id=?)
+      AND (?='' OR rp.status=?) AND (CAST(? AS BIGINT) IS NULL OR rp.customer_id=?)
       """,Long.class,k,k,k,k,k,status,status,customerId,customerId);}
     public List<Map<String,Object>> proxies(String k,String status,Long customerId,int size,int offset){return jdbc.queryForList("""
       SELECT rp.id,rp.proxy_no,rp.purchase_id,p.purchase_no,s.supplier_name,rp.customer_id,c.customer_name,rp.service_id,si.service_no,rp.protocol_code,
@@ -108,6 +108,12 @@ public class ExternalDeliveryMapper {
           "SELECT EXISTS(SELECT 1 FROM res_reverse_proxy WHERE purchase_id=? AND customer_id<>? AND deleted=FALSE)",
           Boolean.class,purchaseId,customerId));
     }
+    public Map<String,Object> serviceOwnership(Long serviceId){
+        return one("""
+          SELECT id,customer_id,delivery_mode,status,deleted,expire_at
+          FROM svc_instance WHERE id=? AND deleted=FALSE
+          """,serviceId);
+    }
     public List<Map<String,Object>> purchaseOptions(){return jdbc.queryForList("SELECT p.id,p.purchase_no code,p.supplier_package_name name,p.customer_id,s.supplier_name,p.expire_at FROM res_supplier_purchase p JOIN res_supplier s ON s.id=p.supplier_id WHERE p.deleted=FALSE AND p.status='ACTIVE' ORDER BY p.expire_at NULLS LAST");}
-    public List<Map<String,Object>> serviceOptions(Long customerId){return jdbc.queryForList("SELECT id,service_no code,service_no||' / '||product_type name,product_type,status FROM svc_instance WHERE deleted=FALSE AND (? IS NULL OR customer_id=?) AND status IN ('PENDING','ACTIVE','SUSPENDED') ORDER BY created_at DESC",customerId,customerId);}
+    public List<Map<String,Object>> serviceOptions(Long customerId){return jdbc.queryForList("SELECT id,service_no code,service_no||' / '||product_type name,product_type,status FROM svc_instance WHERE deleted=FALSE AND (CAST(? AS BIGINT) IS NULL OR customer_id=?) AND status IN ('PENDING','ACTIVE','SUSPENDED') ORDER BY created_at DESC LIMIT 200",customerId,customerId);}
 }
