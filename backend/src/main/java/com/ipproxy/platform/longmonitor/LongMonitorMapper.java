@@ -94,7 +94,18 @@ public class LongMonitorMapper {
       FROM lm_alarm a JOIN lm_monitor m ON m.id=a.monitor_id JOIN customer c ON c.id=a.customer_id JOIN svc_instance s ON s.id=a.service_id
       WHERE (?='' OR a.status=?) AND (CAST(? AS BIGINT) IS NULL OR a.customer_id=?) ORDER BY a.opened_at DESC LIMIT ? OFFSET ?
       """,status,status,customerId,customerId,size,offset);}
-    public Map<String,Object> alarm(Long id){return one("SELECT a.*,m.monitor_no,c.customer_name,s.service_no,m.bot_id FROM lm_alarm a JOIN lm_monitor m ON m.id=a.monitor_id JOIN customer c ON c.id=a.customer_id JOIN svc_instance s ON s.id=a.service_id WHERE a.id=?",id);}
+    public Map<String,Object> alarm(Long id){return one("""
+      SELECT a.id,a.alarm_no,a.monitor_id,m.monitor_no,a.customer_id,c.customer_name,
+             a.service_id,s.service_no,a.alarm_type,a.status,a.opened_at,a.recovered_at,
+             a.closed_at,a.close_reason,m.bot_id,b.bot_no,b.bot_name,m.target_host,m.target_port,
+             m.current_status monitor_status,m.last_checked_at,m.failure_threshold,m.recovery_threshold
+      FROM lm_alarm a
+      JOIN lm_monitor m ON m.id=a.monitor_id
+      JOIN customer c ON c.id=a.customer_id
+      JOIN svc_instance s ON s.id=a.service_id
+      LEFT JOIN lm_bot b ON b.id=m.bot_id AND b.deleted=FALSE
+      WHERE a.id=?
+      """,id);}
 
     public Long insertNotification(Long alarmId,Long monitorId,Long botId,String type,String channel,String requestJson,String responseJson,String status,String error){return jdbc.queryForObject("INSERT INTO lm_notification(alarm_id,monitor_id,bot_id,notification_type,channel,request_snapshot,response_snapshot,send_status,sent_at,error_message) VALUES(?,?,?,?,?,CAST(? AS jsonb),CAST(? AS jsonb),?,CASE WHEN ?='SUCCESS' THEN now() ELSE NULL END,?) RETURNING id",Long.class,alarmId,monitorId,botId,type,channel,requestJson,responseJson,status,status,error);}
     public long countNotifications(String status,Long customerId){return jdbc.queryForObject("SELECT count(*) FROM lm_notification n JOIN lm_monitor m ON m.id=n.monitor_id WHERE (?='' OR n.send_status=?) AND (CAST(? AS BIGINT) IS NULL OR m.customer_id=?)",Long.class,status,status,customerId,customerId);}
