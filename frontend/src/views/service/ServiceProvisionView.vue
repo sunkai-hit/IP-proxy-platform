@@ -45,10 +45,10 @@ async function openOrder(id:number){loading.value=true;try{
 }catch{ElMessage.error('该订单当前无法进入开通流程')}finally{loading.value=false}}
 async function refreshPreview(){loading.value=true;try{snapshot.value=unwrap(await orderServiceApi.provisionPreview(Number(order.value.id)));ElMessage.success('资源状态已刷新，提交时仍会最终重验')}catch{ElMessage.error('预检刷新失败')}finally{loading.value=false}}
 function changeMode(p:any,mode:string,item:any){p.deliveryMode=mode;p.reverseProxyIds=mode==='EXTERNAL_PROXY'?Array(Number(item.service_count||1)).fill(null):[]}
-function next(){if(step.value===1&&errors.value.length){ElMessage.warning(errors.value[0]);return}step.value=Math.min(3,step.value+1)}
+function next(){if(!snapshot.value?.paymentReady){ElMessage.warning('客户付款尚未核实，不能执行订单开通');return}if(step.value===1&&errors.value.length){ElMessage.warning(errors.value[0]);return}step.value=Math.min(3,step.value+1)}
 function back(){step.value=Math.max(0,step.value-1)}
 function closeOrder(){snapshot.value=null;result.value=null;step.value=0;router.replace('/service-provision');loadOrders()}
-async function confirm(){if(errors.value.length){ElMessage.warning(errors.value[0]);step.value=1;return}
+async function confirm(){if(!snapshot.value?.paymentReady){ElMessage.error('请先核实客户付款');return}if(errors.value.length){ElMessage.warning(errors.value[0]);step.value=1;return}
  if(!reason.value.trim()){ElMessage.warning('请输入开通原因');return}
  if(!auth.hasPermission('order:provision')){ElMessage.error('没有订单开通权限');return}
  submitting.value=true
@@ -59,11 +59,11 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
 </script>
 <template>
 <div class="page-stack">
- <div class="page-head"><div><h1>服务开通</h1><p>以已确认订单为主线：确认订单 → 交付配置 → 资源检查 → 确认开通 → 结果交付</p></div><el-button v-if="snapshot" @click="closeOrder">返回待开通订单</el-button></div>
+ <div class="page-head"><div><h1>服务开通</h1><p>订单已确认且付款已核实 → 交付配置 → 资源检查 → 确认开通 → 结果交付</p></div><el-button v-if="snapshot" @click="closeOrder">返回待开通订单</el-button></div>
  <template v-if="!snapshot">
   <el-alert type="info" :closable="false" title="此处只处理待开通订单。管理员特殊手工开通不属于日常订单流程，需单独授权。"/>
   <el-card shadow="never"><div class="filters"><el-input v-model="q.keyword" placeholder="订单号/客户" clearable style="width:280px" @keyup.enter="q.page=1;loadOrders()"/><el-button type="primary" @click="q.page=1;loadOrders()">查询</el-button></div>
-   <el-table :data="orderRows" v-loading="listLoading" stripe><el-table-column prop="order_no" label="订单号" width="190"/><el-table-column prop="customer_name" label="客户" min-width="170"/><el-table-column prop="order_type" label="订单类型" width="100"/><el-table-column prop="item_total" label="订单项" width="80"/><el-table-column prop="service_total" label="服务实例数" width="105"/><el-table-column prop="expected_effective_at" label="预计生效" width="180"/><el-table-column prop="expected_expire_at" label="预计到期" width="180"/><el-table-column label="操作" width="120" fixed="right"><template #default="s"><el-button v-if="s.row.order_type==='NEW'" link type="primary" @click="openOrder(s.row.id)">进入开通</el-button><span v-else class="subtle">请走服务变更</span></template></el-table-column></el-table>
+   <el-table :data="orderRows" v-loading="listLoading" stripe><el-table-column label="付款状态" width="118"><template #default="s"><el-tag :type="s.row.payment_status==='PAID_CONFIRMED'?'success':'warning'">{{s.row.payment_status==='PAID_CONFIRMED'?'已核实':'待核实'}}</el-tag></template></el-table-column><el-table-column prop="order_no" label="订单号" width="190"/><el-table-column prop="customer_name" label="客户" min-width="170"/><el-table-column prop="order_type" label="订单类型" width="100"/><el-table-column prop="item_total" label="订单项" width="80"/><el-table-column prop="service_total" label="服务实例数" width="105"/><el-table-column prop="expected_effective_at" label="预计生效" width="180"/><el-table-column prop="expected_expire_at" label="预计到期" width="180"/><el-table-column label="操作" width="120" fixed="right"><template #default="s"><el-button v-if="s.row.order_type==='NEW'" link type="primary" @click="openOrder(s.row.id)">进入开通</el-button><span v-else class="subtle">请走服务变更</span></template></el-table-column></el-table>
    <div class="pager"><el-pagination v-model:current-page="q.page" v-model:page-size="q.size" :total="total" layout="total,prev,pager,next" @change="loadOrders"/></div>
   </el-card>
  </template>
@@ -74,7 +74,7 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
    <el-descriptions :column="3" border><el-descriptions-item label="订单状态">{{order.status}}</el-descriptions-item><el-descriptions-item label="预计生效">{{order.expected_effective_at||'按当前时间'}}</el-descriptions-item><el-descriptions-item label="预计到期">{{order.expected_expire_at||'按套餐周期'}}</el-descriptions-item></el-descriptions>
    <el-table :data="items" stripe style="margin-top:14px"><el-table-column prop="product_name" label="产品"/><el-table-column label="产品类型"><template #default="s">{{typeNames[s.row.product_type]||s.row.product_type}}</template></el-table-column><el-table-column prop="package_name" label="套餐"/><el-table-column prop="service_count" label="服务数" width="100"/></el-table>
   </el-card>
-  <el-card v-if="step===0" shadow="never"><h3>核对订单</h3><p>客户、产品、套餐和服务数均来自已确认订单，不在本步骤重新编辑。进入下一步配置每个订单项的交付方式。</p><el-alert v-if="snapshot.alreadyProvisioned" title="订单已存在服务记录，系统会禁止再次重复开通，请先核查" type="error" show-icon/></el-card>
+  <el-card v-if="step===0" shadow="never"><h3>核对订单和付款</h3><el-alert v-if="!snapshot.paymentReady" title="客户付款尚未核实，订单确认不等于付款成功；请到订单详情由授权人员核实付款后再回来刷新。" type="error" :closable="false" show-icon/><el-alert v-else title="订单付款凭证已由授权人员核实，实际开通仍须校验资源和真实数据面。" type="success" :closable="false"/><el-button style="margin-top:8px" @click="refreshPreview">刷新付款与资源状态</el-button><p>客户、产品、套餐和服务数均来自已确认订单，不在本步骤重新编辑。进入下一步配置每个订单项的交付方式。</p><el-alert v-if="snapshot.alreadyProvisioned" title="订单已存在服务记录，系统会禁止再次重复开通，请先核查" type="error" show-icon/></el-card>
   <el-card v-if="step===1" shadow="never"><h3>配置订单项交付方式</h3>
    <div v-for="(p,i) in plans" :key="p.orderItemId" class="plan">
     <b>{{items[i]?.product_name}} · {{typeNames[items[i]?.product_type]}} · {{items[i]?.service_count}}个服务</b>
@@ -95,7 +95,7 @@ onMounted(async()=>{await loadOrders();const id=Number(route.query.orderId);if(i
    <el-form label-width="90px" style="margin-top:18px;max-width:720px"><el-form-item label="开通原因" required><el-input v-model="reason" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="请填写本次开通原因或业务说明"/></el-form-item></el-form>
   </el-card>
   <el-card v-if="step===4" shadow="never"><el-result icon="success" title="订单开通完成" sub-title="以下新生成的凭证仅本次显示；标记“仅管理面开通”的服务仍需验证真实数据面"/><el-table :data="result?.services||[]" border><el-table-column prop="serviceNo" label="服务编号" min-width="180"/><el-table-column label="交付方式" width="125"><template #default="s">{{modeNames[s.row.deliveryMode]}}</template></el-table-column><el-table-column prop="status" label="状态" width="90"/><el-table-column label="交付确认" width="160"><template #default="s"><el-tag :type="s.row.deliveryStage==='MANAGEMENT_ONLY'?'warning':'success'">{{s.row.deliveryStage==='MANAGEMENT_ONLY'?'仅管理面开通':'适配器已确认'}}</el-tag></template></el-table-column><el-table-column label="一次性凭证" min-width="250"><template #default="s"><span>{{s.row.oneTimeCredential?.account||s.row.oneTimeCredential?.type}} · </span><el-button v-if="s.row.oneTimeCredential?.secret" link type="primary" @click="copyText(s.row.oneTimeCredential?.secret)">复制密钥（仅本次）</el-button><span v-else class="subtle">{{s.row.oneTimeCredential?.mask||'使用已有认证配置'}}</span></template></el-table-column><el-table-column label="操作" width="100"><template #default="s"><el-button link @click="router.push('/services/'+s.row.serviceId)">服务详情</el-button></template></el-table-column></el-table></el-card>
-  <div v-if="step<4" class="footer"><el-button :disabled="step===0" @click="back">上一步</el-button><el-button v-if="step<3" type="primary" :disabled="snapshot.alreadyProvisioned||(step===1&&errors.length>0)||(step===2&&errors.length>0)" @click="next">下一步</el-button><el-button v-else type="primary" :loading="submitting" :disabled="errors.length>0||!reason.trim()||!auth.hasPermission('order:provision')" @click="confirm">确认开通</el-button></div>
+  <div v-if="step<4" class="footer"><el-button :disabled="step===0" @click="back">上一步</el-button><el-button v-if="step<3" type="primary" :disabled="!snapshot.paymentReady||snapshot.alreadyProvisioned||(step===1&&errors.length>0)||(step===2&&errors.length>0)" @click="next">下一步</el-button><el-button v-else type="primary" :loading="submitting" :disabled="!snapshot.paymentReady||errors.length>0||!reason.trim()||!auth.hasPermission('order:provision')" @click="confirm">确认开通</el-button></div>
   <div v-else class="footer"><el-button type="primary" @click="closeOrder">返回待开通订单</el-button></div>
  </template>
 </div>
