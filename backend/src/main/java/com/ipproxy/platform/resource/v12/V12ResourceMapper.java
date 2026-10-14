@@ -215,6 +215,23 @@ public class V12ResourceMapper {
         WHERE id=? AND deleted=FALSE
         """,name,purpose,province,city,carrier,regionsJson,carriersJson,actor,id);}
     public int addPoolLines(Long poolId,List<Long> lineIds,String reason){int n=0;for(Long lineId:lineIds){n+=jdbc.update("INSERT INTO res_pool_line(pool_id,line_id,source_reason,enabled,joined_at,removed_at) VALUES(?,?,?,TRUE,now(),NULL) ON CONFLICT(pool_id,line_id) DO UPDATE SET source_reason=EXCLUDED.source_reason,enabled=TRUE,joined_at=now(),removed_at=NULL",poolId,lineId,reason);}return n;}
+    public boolean activeServiceUsesPool(Long poolId){
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+          SELECT EXISTS(SELECT 1 FROM svc_resource_binding b
+            JOIN svc_instance s ON s.id=b.service_id
+            WHERE b.resource_type='POOL' AND b.resource_id=? AND b.status='ACTIVE'
+              AND s.deleted=FALSE AND s.status NOT IN ('TERMINATED','PROVISION_FAILED'))
+          """,Boolean.class,poolId));
+    }
+    public boolean activePoolFixedExitUsesLine(Long poolId,Long lineId){
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+          SELECT EXISTS(SELECT 1 FROM svc_egress_claim e
+            JOIN svc_resource_binding b ON b.service_id=e.service_id
+            JOIN svc_instance s ON s.id=e.service_id AND s.deleted=FALSE
+            WHERE e.source_line_id=? AND e.claim_status<>'RELEASED'
+              AND b.resource_type='POOL' AND b.resource_id=? AND b.status='ACTIVE')
+          """,Boolean.class,lineId,poolId));
+    }
     public int removePoolLines(Long poolId,List<Long> lineIds,String reason){int n=0;for(Long lineId:lineIds){n+=jdbc.update("UPDATE res_pool_line SET enabled=FALSE,source_reason=?,removed_at=now() WHERE pool_id=? AND line_id=? AND enabled=TRUE",reason,poolId,lineId);}return n;}
     public int replacePoolLines(Long poolId,List<Long> lineIds,String reason){jdbc.update("UPDATE res_pool_line SET enabled=FALSE,source_reason=?,removed_at=now() WHERE pool_id=? AND enabled=TRUE",reason,poolId);return addPoolLines(poolId,lineIds,reason);}
     public Map<String,Object> poolUsage(Long poolId){return one("""
