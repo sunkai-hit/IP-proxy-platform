@@ -113,3 +113,7 @@ Authorization: Bearer <jwt>
 [openapi-v12-round3-contract.yaml](openapi-v12-round3-contract.yaml) 单独定义套餐宽限、真实交付摘要、出口IPv4授权、人工候选与切换预检/任务、到期队列和异步操作查询。
 
 状态仅为增量候选。与原Admin根规范的路径/统一ApiResponse封装、精确权限码和数据面幂等签约须经联调核对；不表示全量路径已实现。尤其 `failover-tasks` 在实际资源API/产品接口确认前必须拒绝执行而不是返回虚假成功。
+
+## 8. 付款优先的正式业务规则和实现边界
+
+[付款核实及外部采购增量契约](openapi-v12-r3-payment-first.yaml)说明独立的 `POST /orders/{orderId}/payment-confirmation`、客户专属采购 `sourceCustomerOrderId` 来源校验，以及采购成本、套餐额度和剩余额度为可选展示数据。**此接口仅记录运营核实过的外部到账凭证，并不实际收款、扣款、向供应商付款或自动采购。** 缺少核实凭证时，平台开通及客户采购登记后端拒绝，真三方联调仍另行验收。
