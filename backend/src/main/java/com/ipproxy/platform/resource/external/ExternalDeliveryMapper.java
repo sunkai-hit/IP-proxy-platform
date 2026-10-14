@@ -72,6 +72,14 @@ public class ExternalDeliveryMapper {
     public void proxyLog(Long id,String op,String status,String message,Long actor){jdbc.update("INSERT INTO res_reverse_proxy_operation_log(reverse_proxy_id,operation_type,status,message,operator_id) VALUES(?,?,?,?,?)",id,op,status,message,actor);}
     public List<Map<String,Object>> proxyLogs(Long id,int limit){return jdbc.queryForList("SELECT id,operation_type,status,message,operator_id,created_at FROM res_reverse_proxy_operation_log WHERE reverse_proxy_id=? ORDER BY created_at DESC LIMIT ?",id,limit);}
 
+    public List<Map<String,Object>> paidOrdersForCustomer(Long customerId) {
+        return jdbc.queryForList("""
+          SELECT id,order_no,total_amount,currency,payment_verified_at
+          FROM biz_order WHERE deleted=FALSE AND customer_id=? AND
+            payment_status='PAID_CONFIRMED' AND status<>'CANCELLED'
+          ORDER BY payment_verified_at DESC,id DESC LIMIT 100
+        """,customerId);
+    }
     public List<Map<String,Object>> supplierOptions(){return jdbc.queryForList("SELECT id,supplier_code code,supplier_name name FROM res_supplier WHERE deleted=FALSE AND status='ACTIVE' ORDER BY supplier_name");}
     public List<Map<String,Object>> customerOptions(){return jdbc.queryForList("SELECT id,customer_code code,customer_name name FROM customer WHERE deleted=FALSE AND status='ACTIVE' ORDER BY customer_name");}
     public Map<String,Object> paymentConfirmedOrder(Long id){
