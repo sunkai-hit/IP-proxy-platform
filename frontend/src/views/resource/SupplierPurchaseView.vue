@@ -36,9 +36,11 @@ async function save(){
  saving.value=true
  try{
   const payload={...form,customerId:form.customerId||null,sourceCustomerOrderId:form.customerId?form.sourceCustomerOrderId:null,purchaseCost:form.purchaseCost===''||form.purchaseCost==null?null:Number(form.purchaseCost),packageQuota:form.packageQuota||null,remainingQuota:form.remainingQuota||null}
-  await externalDeliveryApi.createPurchase(payload)
-  ElMessage.success('供应商采购记录已保存；不代表平台自动向供应商付款')
-  drawer.value=false;await load()
+  const created=data(await externalDeliveryApi.createPurchase(payload))
+  ElMessage.success('采购登记已保存；不代表已自动向供应商付款或交付')
+  drawer.value=false
+  if(created?.id)await router.push('/supplier-purchases/'+created.id)
+  else await load()
  }finally{saving.value=false}
 }
 watch(()=>form.customerId,loadPaidOrders)
