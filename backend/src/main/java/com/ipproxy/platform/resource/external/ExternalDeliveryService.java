@@ -19,6 +19,10 @@ public class ExternalDeliveryService {
 
     public Map<String,Object> options(Long customerId){return Map.of("suppliers",db.supplierOptions(),"customers",db.customerOptions(),"purchases",db.purchaseOptions(),"services",db.serviceOptions(customerId));}
 
+    public List<Map<String,Object>> paidOrdersForCustomer(Long customerId){
+        if(customerId==null)throw new BusinessException("CUSTOMER_REQUIRED","请先选择采购归属客户");
+        return db.paidOrdersForCustomer(customerId);
+    }
     public PageResult<Map<String,Object>> purchases(int page,int size,String keyword,String status,Long supplierId,Long customerId){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countPurchases(k,s,supplierId,customerId),db.purchases(k,s,supplierId,customerId,size,(page-1)*size));}
     public Map<String,Object> purchase(Long id){Map<String,Object>x=db.purchase(id);if(x==null)throw notFound("外部套餐采购");Map<String,Object> out=new LinkedHashMap<>(x);out.remove("purchase_secret_cipher");out.put("secretConfigured",x.get("purchase_secret_cipher")!=null);return out;}
     @Transactional public Long createPurchase(PurchaseInput in,UserPrincipal actor,String ip){validatePurchase(in);requirePaidCustomerOrder(in);String no="PUR-"+OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))+"-"+Integer.toHexString(new Random().nextInt(65536)).toUpperCase(Locale.ROOT);Long id=db.insertPurchase(no,in.supplierId(),in.customerId(),in.supplierPackageName().trim(),n(in.supplierPackageNo()),n(in.purchaseAccount()),cipher.encrypt(in.purchaseSecret()),n(in.interfaceEndpoint()),blankNull(in.packageQuota()),blankNull(in.remainingQuota()),in.purchaseCost(),currency(in.currency()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());if(in.customerId()!=null)db.linkPurchaseToPaidOrder(id,in.sourceCustomerOrderId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"CREATE","新增外部供应商套餐采购",ip);return id;}
