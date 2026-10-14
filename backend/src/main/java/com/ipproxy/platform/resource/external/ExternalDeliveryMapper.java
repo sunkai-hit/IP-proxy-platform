@@ -70,7 +70,7 @@ public class ExternalDeliveryMapper {
       """,serviceId,protocol,upstreamHost,upstreamPort,upstreamAccount,upstreamSecret,platformHost,platformPort,platformAccount,platformSecret,effective,expire,remark,actor,id);}
     public int proxyStatus(Long id,String status,String error,Long actor){return jdbc.update("UPDATE res_reverse_proxy SET status=?,last_error=?,last_checked_at=now(),updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",status,error,actor,id);}
     public void proxyLog(Long id,String op,String status,String message,Long actor){jdbc.update("INSERT INTO res_reverse_proxy_operation_log(reverse_proxy_id,operation_type,status,message,operator_id) VALUES(?,?,?,?,?)",id,op,status,message,actor);}
-    public List<Map<String,Object>> proxyLogs(Long id,int limit){return jdbc.queryForList("SELECT id,operation_type,status,message,operator_id,created_at FROM res_reverse_proxy_operation_log WHERE reverse_proxy_id=? ORDER BY created_at DESC LIMIT ?",id,limit);}
+    public List<Map<String,Object>> proxyLogs(Long id,int limit){return jdbc.queryForList("SELECT l.id,l.operation_type,l.status,l.message,u.display_name operator_name,l.created_at FROM res_reverse_proxy_operation_log l LEFT JOIN sys_user u ON u.id=l.operator_id WHERE l.reverse_proxy_id=? ORDER BY l.created_at DESC LIMIT ?",id,limit);}
 
     public List<Map<String,Object>> paidOrdersForCustomer(Long customerId) {
         return jdbc.queryForList("""
