@@ -6,11 +6,14 @@ import {orderServiceApi} from '@/api/orderService'
 import {useAuthStore} from '@/stores/auth'
 const route=useRoute(),router=useRouter(),auth=useAuthStore()
 const loading=ref(false),saving=ref(false),services=ref<any[]>([]),paidRenewalOrders=ref<any[]>([]),result=ref<any>(null)
-const form=reactive({serviceId:route.query.serviceId?Number(route.query.serviceId):null as number|null,action:'renew',days:30,renewalOrderId:null as number|null,reason:''})
+const initialAction=String(route.query.action||'renew')
+const form=reactive({serviceId:route.query.serviceId?Number(route.query.serviceId):null as number|null,
+ action:['renew','suspend','resume','terminate'].includes(initialAction)?initialAction:'renew',
+ days:30,renewalOrderId:null as number|null,reason:''})
 const data=(r:any)=>r.data.data
 const current=computed(()=>services.value.find(s=>s.id===form.serviceId)||null)
 const actionLabels:Record<string,string>={renew:'续费',suspend:'暂停',resume:'恢复',terminate:'终止'}
-const blocked=computed(()=>!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(form.days<1||!form.renewalOrderId)))
+const blocked=computed(()=>!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(form.days<1||!form.renewalOrderId||!auth.hasPermission('service:renew'))))
 const warning=computed(()=>current.value?.delivery_stage!=='VERIFIED'?'当前管理面可能尚未完成真实数据面验证；操作返回不等于客户真实可访问。':'请确认变更对客户使用与占用出口的影响。')
 async function load(){
   loading.value=true
@@ -32,6 +35,11 @@ async function loadRenewalOrders(){
   paidRenewalOrders.value=(d.items||[]).filter((o:any)=>
     o.order_type==='RENEW'&&o.payment_status==='PAID_CONFIRMED'&&
     Number(o.renewal_service_id)===Number(form.serviceId))
+  const requested=Number(route.query.renewalOrderId)
+  if(requested>0&&paidRenewalOrders.value.some(o=>Number(o.id)===requested)){
+    form.renewalOrderId=requested
+    await selectRenewalOrder()
+  }
  }catch{ElMessage.warning('无法读取已付款的续费订单，请检查订单查询权限')}
 }
 async function selectRenewalOrder(){
@@ -69,6 +77,7 @@ async function submit(){
   finally{saving.value=false}
 }
 watch(()=>route.query.serviceId,v=>{if(v)form.serviceId=Number(v)})
+watch(()=>route.query.action,v=>{const a=String(v||'');if(['renew','suspend','resume','terminate'].includes(a))form.action=a})
 watch(()=>form.serviceId,loadRenewalOrders)
 onMounted(async()=>{await load();await loadRenewalOrders()})
 </script>
@@ -87,6 +96,7 @@ onMounted(async()=>{await load();await loadRenewalOrders()})
           <el-descriptions-item label="所属客户">{{current.customer_name}}</el-descriptions-item>
           <el-descriptions-item label="产品/套餐">{{current.product_name}} / {{current.package_name||'未指定'}}</el-descriptions-item>
           <el-descriptions-item label="业务状态">{{current.status}}</el-descriptions-item>
+          <el-descriptions-item v-if="current.order_id" label="来源订单"><el-button v-if="auth.hasPermission('order:read')" link type="primary" @click="router.push('/orders/'+current.order_id)">{{current.order_no||'查看订单'}}</el-button><span v-else>订单权限不足</span></el-descriptions-item>
           <el-descriptions-item label="真实交付阶段">{{current.delivery_stage||'UNVERIFIED'}}</el-descriptions-item>
           <el-descriptions-item label="到期时间">{{current.expire_at||'—'}}</el-descriptions-item>
           <el-descriptions-item label="宽限截止">{{current.grace_until_at||'—'}}</el-descriptions-item>
@@ -99,7 +109,7 @@ onMounted(async()=>{await load();await loadRenewalOrders()})
         </el-form-item>
         <el-alert v-if="form.action==='renew'&&form.serviceId&&!paidRenewalOrders.length" type="warning" :closable="false" style="margin-bottom:16px">
          <template #title>没有此服务已核实付款的续费订单。请先新建续费订单、确认订单并由授权人员核实收款；不能直接改服务期限。</template>
-         <el-button style="margin-top:8px" @click="router.push('/orders')">前往订单管理</el-button>
+         <el-button style="margin-top:8px" @click="router.push({path:'/orders',query:{customerId:String(current.customer_id),newOrder:'1'}})">为此客户新建续费订单</el-button>
         </el-alert>
         <el-form-item v-if="form.action==='renew'" label="续费天数" required><el-input-number v-model="form.days" :min="1"/></el-form-item>
         <el-form-item label="操作原因" required><el-input v-model="form.reason" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="填写可审计的业务原因"/></el-form-item>
