@@ -138,6 +138,31 @@ jobs:
           CLAIM_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_egress_claim WHERE service_id IN ($EXP0,$EXP3) AND claim_status='RELEASED'")
           test "$CLAIM_COUNT" -eq 0
           echo 'R3 expiry planner idempotent, zero-day held, data-plane state unchanged (Mock-only)'
+          # The legacy exclusive-release API must never mark an allocation recycled
+          # merely because a management operator submitted a reason.
+          LEGACY_EXCLUSIVE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_exclusive_allocation(allocation_no,resource_type,line_id,customer_id,service_id,status) VALUES('CI-R3-LEGACY-HOLD','LINE',$L1,$CID,$EXP0,'ALLOCATED') RETURNING id" | head -n1)
+          DIRECT_RELEASE=$(curl -s -o /tmp/r3-direct-exclusive-release.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI require real IPv4 reclamation"}' "http://localhost:8080/api/admin/v1/exclusive-allocations/$LEGACY_EXCLUSIVE/release")
+          test "$DIRECT_RELEASE" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-direct-exclusive-release.json"))["code"]=="EXCLUSIVE_RELEASE_REQUIRES_VERIFIED_LIFECYCLE"'
+          LEGACY_STATE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM res_exclusive_allocation WHERE id=$LEGACY_EXCLUSIVE")
+          test "$LEGACY_STATE" = "ALLOCATED"
+          PACKAGE_SERVICES=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/packages/$PKGID/services")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert any(v["grace_days_snapshot"]==0 for v in x) and any(v["grace_days_snapshot"]==3 for v in x)' <<< "$PACKAGE_SERVICES"
+          # Human-only failover inspection never touches line/egress allocation state.
+          CANDIDATE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO svc_backup_candidate(service_id,line_id,expected_ipv4,health_status,created_by) SELECT $EXP0,id,current_public_ip,'UNKNOWN',1 FROM res_line WHERE id=$L2 RETURNING id" | head -n1)
+          CAND_BODY=$(printf '{"backupCandidateId":%s}' "$CANDIDATE")
+          IMPACT=$(curl -fsS -H "$H" -H "$J" -d "$CAND_BODY" "http://localhost:8080/api/admin/v1/v12/services/$EXP0/failover-preview")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["allowed"] is False and x["adapterReady"] is False and x["customerConsentVerified"] is False and len(x["blockers"])>0' <<< "$IMPACT"
+          echo 'Direct independent exclusive release blocked, package snapshots preserved and failover preview read-only'
+          LONG_PROD=$(curl -fsS -H "$H" -H "$J" -d '{"productCode":"CI-V12-LONG-MANUAL","productName":"CI Long Manual","productType":"LONG_IP","accessModeCode":"HTTP_PROXY","protocolCodes":["HTTP"],"authModeCodes":["USERNAME_PASSWORD"],"resourceMode":"SHARED","regionCodes":[],"carrierCodes":[],"typeConfig":{"holdPeriodSeconds":86400,"bindType":"LINE","autoReplace":false,"failureThreshold":3}}' "http://localhost:8080/api/admin/v1/products")
+          LPID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$LONG_PROD")
+          LONG_BAD=$(curl -s -o /tmp/r3-auto-failover.json -w '%{http_code}' -H "$H" -H "$J" -X PUT -d '{"holdPeriodSeconds":86400,"bindType":"LINE","autoReplace":true,"failureThreshold":3}' "http://localhost:8080/api/admin/v1/products/$LPID/config")
+          test "$LONG_BAD" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-auto-failover.json"))["code"]=="LONG_IP_AUTOMATIC_FAILOVER_DISABLED"'
+          AUTO_REPLACE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT auto_replace FROM prd_long_ip_config WHERE product_id=$LPID")
+          test "$AUTO_REPLACE" = "f"
+          echo 'LONG_IP manual-only product backend and database config guard verified'
+
  
           # New-order provisioning: preview -> explicit item plan -> fulfill -> prevent duplicate
           ORDER=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"orderType\":\"NEW\",\"currency\":\"CNY\",\"items\":[{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":2}]}" http://localhost:8080/api/admin/v1/orders)
