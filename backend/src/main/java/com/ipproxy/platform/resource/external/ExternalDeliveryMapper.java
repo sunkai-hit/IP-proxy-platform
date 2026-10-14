@@ -23,7 +23,7 @@ public class ExternalDeliveryMapper {
         (p.purchase_secret_cipher IS NOT NULL) secret_configured,p.created_at,p.updated_at
       FROM res_supplier_purchase p JOIN res_supplier s ON s.id=p.supplier_id LEFT JOIN customer c ON c.id=p.customer_id
       WHERE p.deleted=FALSE AND (?='' OR p.purchase_no ILIKE '%'||?||'%' OR s.supplier_name ILIKE '%'||?||'%' OR p.supplier_package_name ILIKE '%'||?||'%' OR COALESCE(c.customer_name,'') ILIKE '%'||?||'%')
-      AND (?='' OR p.status=?) AND (? IS NULL OR p.supplier_id=?) AND (? IS NULL OR p.customer_id=?)
+      AND (?='' OR p.status=?) AND (CAST(? AS BIGINT) IS NULL OR p.supplier_id=?) AND (CAST(? AS BIGINT) IS NULL OR p.customer_id=?)
       ORDER BY p.updated_at DESC,p.id DESC LIMIT ? OFFSET ?
       """,k,k,k,k,k,status,status,supplierId,supplierId,customerId,customerId,size,offset);}
     public Map<String,Object> purchase(Long id){return one("""
@@ -55,7 +55,7 @@ public class ExternalDeliveryMapper {
         rp.effective_at,rp.expire_at,rp.status,rp.last_checked_at,rp.last_error,rp.remark,rp.created_at,rp.updated_at
       FROM res_reverse_proxy rp JOIN res_supplier_purchase p ON p.id=rp.purchase_id JOIN res_supplier s ON s.id=p.supplier_id JOIN customer c ON c.id=rp.customer_id LEFT JOIN svc_instance si ON si.id=rp.service_id
       WHERE rp.deleted=FALSE AND (?='' OR rp.proxy_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%' OR rp.platform_host ILIKE '%'||?||'%' OR s.supplier_name ILIKE '%'||?||'%')
-      AND (?='' OR rp.status=?) AND (? IS NULL OR rp.customer_id=?) ORDER BY rp.updated_at DESC,rp.id DESC LIMIT ? OFFSET ?
+      AND (?='' OR rp.status=?) AND (CAST(? AS BIGINT) IS NULL OR rp.customer_id=?) ORDER BY rp.updated_at DESC,rp.id DESC LIMIT ? OFFSET ?
       """,k,k,k,k,k,status,status,customerId,customerId,size,offset);}
     public Map<String,Object> proxy(Long id){return one("""
       SELECT rp.*,p.purchase_no,p.supplier_id,s.supplier_name,c.customer_name,si.service_no FROM res_reverse_proxy rp
