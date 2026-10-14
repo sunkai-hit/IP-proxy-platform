@@ -47,7 +47,7 @@ public class V12ServiceMapper {
     public List<Map<String,Object>> services(String keyword,String status,Long customerId,String productType,String deliveryMode,int size,int offset){return jdbc.queryForList("""
       SELECT s.id,s.service_no,s.customer_id,c.customer_code,c.customer_name,s.order_id,o.order_no,s.product_id,p.product_name,s.package_id,k.package_name,
         s.product_type,s.delivery_mode,s.builtin_policy_code,s.supplier_purchase_id,sp.purchase_no,s.reverse_proxy_id,rp.proxy_no,rp.platform_host,rp.platform_port,
-        s.effective_at,s.expire_at,s.status,s.failure_reason,s.created_at,
+        s.effective_at,s.expire_at,s.grace_days_snapshot,s.grace_until_at,s.expiry_phase,s.delivery_stage,s.last_delivery_verified_at,s.status,s.failure_reason,s.created_at,
         (SELECT string_agg(b.resource_type||':'||b.resource_id::text,', ' ORDER BY b.id) FROM svc_resource_binding b WHERE b.service_id=s.id AND b.status='ACTIVE') resource_summary
       FROM svc_instance s JOIN customer c ON c.id=s.customer_id LEFT JOIN biz_order o ON o.id=s.order_id JOIN prd_product p ON p.id=s.product_id LEFT JOIN prd_package k ON k.id=s.package_id
       LEFT JOIN res_supplier_purchase sp ON sp.id=s.supplier_purchase_id LEFT JOIN res_reverse_proxy rp ON rp.id=s.reverse_proxy_id
