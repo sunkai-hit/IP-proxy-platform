@@ -1,0 +1,105 @@
+openapi: 3.0.3
+info:
+  title: V1.2 R3 付款优先与外部采购增量契约
+  version: 1.2.0-payment-first-draft
+  description: |
+    用户2026-10-14确认：客户付款核实后才能为客户进行新增外部采购。
+    这里的确认是授权人员对外部已到账凭证的审计记录，不是支付网关。
+    采购成本、套餐额度、剩余额度均为可选登记数据，不参与后续业务。
+servers:
+  - url: /api/admin/v1
+security:
+  - bearerAuth: []
+paths:
+  /orders/{orderId}/payment-confirmation:
+    post:
+      summary: 由有独立权限的人员核实外部收款凭证
+      operationId: recordExternalPaymentProof
+      description: |
+        须具备 order:payment:verify 权限；确认订单和核实付款是两个独立事件。
+        不执行支付、扣费、上游采购，重复同一凭证幂等返回。
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paymentReference, reason]
+              properties:
+                paymentReference:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  description: 经人工核实的外部付款凭证或引用，不应保存银行卡号
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+                  description: 核实渠道和依据
+      responses:
+        '200':
+          description: 核实记录完成，不代表已购上游资源
+        '400':
+          description: 未提供核实依据
+        '403':
+          description: 无独立付款核实权限
+        '409':
+          description: 订单已取消或存在不同凭证
+  /v12/external-delivery/purchases:
+    post:
+      summary: 登记运营已在供应商侧购买的套餐
+      description: |
+        新增指定 customerId 的采购记录必须传 sourceCustomerOrderId，且该订单
+        与customerId一致、未取消、paymentStatus=PAID_CONFIRMED。
+        不执行供应商扣费。无客户归属的预采购库存登记不受指定客户订单约束。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplierId, supplierPackageName]
+              properties:
+                supplierId:
+                  type: integer
+                  format: int64
+                customerId:
+                  type: integer
+                  format: int64
+                  nullable: true
+                sourceCustomerOrderId:
+                  type: integer
+                  format: int64
+                  nullable: true
+                supplierPackageName:
+                  type: string
+                purchaseCost:
+                  type: number
+                  nullable: true
+                  description: 可选登记值，不驱动后续业务
+                packageQuota:
+                  type: string
+                  nullable: true
+                  description: 可选登记值，不自动扣减
+                remainingQuota:
+                  type: string
+                  nullable: true
+                  description: 可选登记值，不自动扣减
+      responses:
+        '200':
+          description: 采购登记成功，不是实际供应商采购动作
+        '409':
+          description: 指定客户订单未核实付款或客户关系不匹配
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
