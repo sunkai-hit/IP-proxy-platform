@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
@@ -31,6 +32,12 @@ public class ExternalDeliveryService {
 
     public PageResult<Map<String,Object>> proxies(int page,int size,String keyword,String status,Long customerId){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countProxies(k,s,customerId),db.proxies(k,s,customerId,size,(page-1)*size));}
     public Map<String,Object> proxy(Long id){Map<String,Object>x=db.proxy(id);if(x==null)throw notFound("反向代理");Map<String,Object> out=new LinkedHashMap<>(x);out.remove("upstream_secret_cipher");out.remove("platform_secret_cipher");out.put("upstreamSecretConfigured",x.get("upstream_secret_cipher")!=null);out.put("platformSecretConfigured",x.get("platform_secret_cipher")!=null);out.put("operationLogs",db.proxyLogs(id,100));return out;}
+    private OffsetDateTime utcTimestamp(Object value){
+        if(value instanceof OffsetDateTime d)return d.withOffsetSameInstant(ZoneOffset.UTC);
+        if(value instanceof java.sql.Timestamp d)return d.toInstant().atOffset(ZoneOffset.UTC);
+        if(value instanceof java.util.Date d)return d.toInstant().atOffset(ZoneOffset.UTC);
+        return null;
+    }
     private void requirePaidDedicatedPurchase(Map<String,Object> purchase,Long customerId){
         if(customerId==null || purchase.get("customer_id")==null ||
            !Objects.equals(number(purchase.get("customer_id")),customerId))
@@ -45,8 +52,8 @@ public class ExternalDeliveryService {
             "CANCELLED".equals(String.valueOf(paid.get("status"))))
             throw new BusinessException("PROXY_CUSTOMER_PAYMENT_REQUIRED",
                 "该客户采购缺少同客户已核实付款的来源订单，禁止创建或变更平台代理交付");
-        if(purchase.get("expire_at")==null ||
-           !((OffsetDateTime)purchase.get("expire_at")).isAfter(OffsetDateTime.now()))
+        OffsetDateTime supplierUntil=utcTimestamp(purchase.get("expire_at"));
+        if(supplierUntil==null || !supplierUntil.isAfter(OffsetDateTime.now(ZoneOffset.UTC)))
             throw new BusinessException("PROXY_PURCHASE_EXPIRED",
                 "供应商套餐已过期或缺少有效期，不允许创建新的平台代理交付");
     }
@@ -57,9 +64,9 @@ public class ExternalDeliveryService {
             throw new BusinessException("PROXY_SERVICE_CUSTOMER_MISMATCH","关联服务不存在或不属于采购授权客户");
         if(Set.of("TERMINATED","PROVISION_FAILED").contains(String.valueOf(svc.get("status"))))
             throw new BusinessException("PROXY_SERVICE_INVALID","终止或开通失败的服务不得绑定新平台代理");
-        if(svc.get("expire_at") instanceof OffsetDateTime serviceUntil &&
-           purchase.get("expire_at") instanceof OffsetDateTime supplierUntil &&
-           supplierUntil.isBefore(serviceUntil))
+        OffsetDateTime serviceUntil=utcTimestamp(svc.get("expire_at"));
+        OffsetDateTime supplierUntil=utcTimestamp(purchase.get("expire_at"));
+        if(serviceUntil!=null && supplierUntil!=null && supplierUntil.isBefore(serviceUntil))
             throw new BusinessException("PROXY_UPSTREAM_TERM_SHORT",
                 "供应商采购到期早于关联客户服务到期，必须核实上游续购与覆盖期");
     }
