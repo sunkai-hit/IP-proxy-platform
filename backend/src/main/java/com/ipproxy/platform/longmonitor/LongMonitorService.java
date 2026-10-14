@@ -24,7 +24,22 @@ public class LongMonitorService {
     public Map<String,Object> options(Long customerId){return Map.of("customers",db.customerOptions(),"services",db.longServiceOptions(customerId),"lines",db.lineOptions(customerId),"reverseProxies",db.reverseProxyOptions(customerId),"bots",db.botOptions(customerId));}
 
     public PageResult<Map<String,Object>> bots(int page,int size,String keyword,Long customerId,Boolean enabled){page=page(page);size=size(size);String k=n(keyword);return new PageResult<>(page,size,db.countBots(k,customerId,enabled),db.bots(k,customerId,enabled,size,(page-1)*size));}
-    public Map<String,Object> bot(Long id){Map<String,Object>x=db.bot(id);if(x==null)throw notFound("客户机器人");Map<String,Object> out=new LinkedHashMap<>(x);out.remove("access_token_cipher");out.remove("secret_cipher");out.put("accessTokenConfigured",x.get("access_token_cipher")!=null);out.put("secretConfigured",x.get("secret_cipher")!=null);out.put("webhook_mask",maskUrl(String.valueOf(x.get("webhook_url"))));return out;}
+    public Map<String,Object> bot(Long id){
+        Map<String,Object>x=db.bot(id);
+        if(x==null)throw notFound("客户机器人");
+        Map<String,Object> out=new LinkedHashMap<>(x);
+        out.remove("webhook_url");
+        out.remove("access_token_cipher");
+        out.remove("secret_cipher");
+        out.remove("last_test_message");
+        out.put("webhook_mask",x.get("webhook_url")==null?"未设置":"已配置（不回显地址）");
+        out.put("accessTokenConfigured",x.get("access_token_cipher")!=null);
+        out.put("secretConfigured",x.get("secret_cipher")!=null);
+        List<Map<String,Object>> refs=db.botMonitorReferences(id);
+        out.put("monitorReferences",refs.size()>200?refs.subList(0,200):refs);
+        out.put("monitorReferencesTruncated",refs.size()>200);
+        return out;
+    }
     @Transactional public Long createBot(BotInput in,UserPrincipal actor,String ip){validateBot(in);String no=next("BOT");Long id=db.insertBot(no,in.customerId(),in.botName().trim(),in.botType().trim().toUpperCase(Locale.ROOT),in.webhookUrl().trim(),cipher.encrypt(in.accessToken()),cipher.encrypt(in.secret()),n(in.remark()),actor.userId());audit.success(actor,"LONG_MONITOR","BOT",id,"CREATE","新增客户机器人",ip);return id;}
     @Transactional public void updateBot(Long id,BotInput in,UserPrincipal actor,String ip){bot(id);validateBot(in);db.updateBot(id,in.botName().trim(),in.botType().trim().toUpperCase(Locale.ROOT),in.webhookUrl().trim(),n(in.accessToken()).isBlank()?null:cipher.encrypt(in.accessToken()),n(in.secret()).isBlank()?null:cipher.encrypt(in.secret()),n(in.remark()),actor.userId());audit.success(actor,"LONG_MONITOR","BOT",id,"UPDATE","修改客户机器人",ip);}
     @Transactional public void botEnabled(Long id,boolean enabled,String reason,UserPrincipal actor,String ip){bot(id);db.botEnabled(id,enabled,actor.userId());audit.success(actor,"LONG_MONITOR","BOT",id,enabled?"ENABLE":"DISABLE",required(reason,"操作原因不能为空"),ip);}
