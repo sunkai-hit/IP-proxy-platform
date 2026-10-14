@@ -21,7 +21,10 @@ import java.util.*;
 public class V12Round3Controller {
     private final JdbcTemplate jdbc;
     private final OperationAuditRepository audit;
-    public V12Round3Controller(JdbcTemplate jdbc,OperationAuditRepository audit) {this.jdbc=jdbc;this.audit=audit;}
+    private final V12ExpiryTaskPlanner expiryPlanner;
+    public V12Round3Controller(JdbcTemplate jdbc,OperationAuditRepository audit,V12ExpiryTaskPlanner expiryPlanner) {
+        this.jdbc=jdbc;this.audit=audit;this.expiryPlanner=expiryPlanner;
+    }
 
     private void require(UserPrincipal actor,String permission) {
         if(actor==null || (!actor.roles().contains("SUPER_ADMIN") && !actor.permissions().contains(permission)))
@@ -46,6 +49,7 @@ public class V12Round3Controller {
         return row;
     }
     public record GraceInput(Integer graceDays,String reason){}
+    public record ExpiryReconcileInput(Integer limit,String reason){}
     public record CandidateInput(Long backupCandidateId){}
     public record FailoverInput(Long backupCandidateId,Integer expectedServiceVersion,String reason){}
 
@@ -156,15 +160,22 @@ public class V12Round3Controller {
     }
 
     @GetMapping("/service-expiry/queue")
-    public ApiResponse<?> expiry(@RequestParam(defaultValue="")String phase,@AuthenticationPrincipal UserPrincipal actor) {
+    public ApiResponse<?> expiry(@RequestParam(defaultValue="") String phase,
+                                 @AuthenticationPrincipal UserPrincipal actor) {
         require(actor,"service:release");
-        return ApiResponse.success(jdbc.queryForList("""
-          SELECT id "serviceId",service_no "serviceNo",product_type "productType",status "businessStatus",
-                 delivery_stage "deliveryStage",expire_at "expireAt",grace_days_snapshot "graceDaysSnapshot",
-                 grace_until_at "graceUntilAt",expiry_phase "expiryPhase"
-          FROM svc_instance WHERE deleted=FALSE AND product_type IN ('LONG_IP','EXCLUSIVE_IP')
-            AND (?='' OR expiry_phase=?) ORDER BY expire_at NULLS LAST LIMIT 200
-          """,phase,phase));
+        return ApiResponse.success(expiryPlanner.queue(200,phase));
+    }
+
+    @PostMapping("/service-expiry/reconcile")
+    public ApiResponse<?> reconcileExpiry(@RequestBody ExpiryReconcileInput input,
+            @AuthenticationPrincipal UserPrincipal actor,HttpServletRequest request) {
+        require(actor,"service:release");
+        if(input==null||input.reason()==null||input.reason().isBlank())
+            throw error("RECONCILE_REASON_REQUIRED","扫描到期任务需填写审计原因");
+        Map<String,Object> result=expiryPlanner.planDue(input.limit()==null?200:input.limit());
+        audit.success(actor,"SERVICE","EXPIRY",null,"PLAN_EXPIRY_TASKS",
+                input.reason().trim()+"；本次仅登记未验证任务，不执行远端停服或释放",request.getRemoteAddr());
+        return ApiResponse.success(result);
     }
 
     @GetMapping("/delivery-actions/{operationKey}")
