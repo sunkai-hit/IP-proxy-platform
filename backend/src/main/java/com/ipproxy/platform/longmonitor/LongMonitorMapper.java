@@ -108,12 +108,14 @@ public class LongMonitorMapper {
       """,id);}
 
     public Long insertNotification(Long alarmId,Long monitorId,Long botId,String type,String channel,String requestJson,String responseJson,String status,String error){return jdbc.queryForObject("INSERT INTO lm_notification(alarm_id,monitor_id,bot_id,notification_type,channel,request_snapshot,response_snapshot,send_status,sent_at,error_message) VALUES(?,?,?,?,?,CAST(? AS jsonb),CAST(? AS jsonb),?,CASE WHEN ?='SUCCESS' THEN now() ELSE NULL END,?) RETURNING id",Long.class,alarmId,monitorId,botId,type,channel,requestJson,responseJson,status,status,error);}
-    public long countNotifications(String status,Long customerId){return jdbc.queryForObject("SELECT count(*) FROM lm_notification n JOIN lm_monitor m ON m.id=n.monitor_id WHERE (?='' OR n.send_status=?) AND (CAST(? AS BIGINT) IS NULL OR m.customer_id=?)",Long.class,status,status,customerId,customerId);}
-    public List<Map<String,Object>> notifications(String status,Long customerId,int size,int offset){return jdbc.queryForList("""
+    public long countNotifications(String status,Long customerId,Long monitorId){return jdbc.queryForObject("SELECT count(*) FROM lm_notification n JOIN lm_monitor m ON m.id=n.monitor_id WHERE (?='' OR n.send_status=?) AND (CAST(? AS BIGINT) IS NULL OR m.customer_id=?) AND (CAST(? AS BIGINT) IS NULL OR n.monitor_id=?)",Long.class,status,status,customerId,customerId,monitorId,monitorId);}
+    public List<Map<String,Object>> notifications(String status,Long customerId,Long monitorId,int size,int offset){return jdbc.queryForList("""
       SELECT n.id,n.alarm_id,n.monitor_id,m.monitor_no,m.customer_id,c.customer_name,n.bot_id,b.bot_name,b.bot_type,n.notification_type,n.channel,n.send_status,n.sent_at,n.error_message,n.created_at
       FROM lm_notification n JOIN lm_monitor m ON m.id=n.monitor_id JOIN customer c ON c.id=m.customer_id LEFT JOIN lm_bot b ON b.id=n.bot_id
-      WHERE (?='' OR n.send_status=?) AND (CAST(? AS BIGINT) IS NULL OR m.customer_id=?) ORDER BY n.created_at DESC LIMIT ? OFFSET ?
-      """,status,status,customerId,customerId,size,offset);}
+      WHERE (?='' OR n.send_status=?) AND (CAST(? AS BIGINT) IS NULL OR m.customer_id=?)
+        AND (CAST(? AS BIGINT) IS NULL OR n.monitor_id=?)
+      ORDER BY n.created_at DESC LIMIT ? OFFSET ?
+      """,status,status,customerId,customerId,monitorId,monitorId,size,offset);}
 
     public List<Map<String,Object>> customerOptions(){return jdbc.queryForList("SELECT id,customer_code code,customer_name name FROM customer WHERE deleted=FALSE AND status='ACTIVE' ORDER BY customer_name");}
     public List<Map<String,Object>> longServiceOptions(Long customerId){return jdbc.queryForList("SELECT id,service_no code,service_no||' / '||product_type name,customer_id,product_type,delivery_mode,status FROM svc_instance WHERE deleted=FALSE AND product_type='LONG_IP' AND status IN ('ACTIVE','SUSPENDED') AND (CAST(? AS BIGINT) IS NULL OR customer_id=?) ORDER BY created_at DESC",customerId,customerId);}
