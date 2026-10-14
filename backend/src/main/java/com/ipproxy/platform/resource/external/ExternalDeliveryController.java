@@ -19,6 +19,7 @@ public class ExternalDeliveryController {
 
     @GetMapping("/options") public ApiResponse<?> options(@RequestParam(required=false)Long customerId,@AuthenticationPrincipal UserPrincipal p){require(p,"resource:purchase:read");return ApiResponse.success(service.options(customerId));}
 
+    @GetMapping("/purchases/paid-order-options") public ApiResponse<?> paidOrdersForPurchase(@RequestParam Long customerId,@AuthenticationPrincipal UserPrincipal p){require(p,"resource:purchase:write");return ApiResponse.success(service.paidOrdersForCustomer(customerId));}
     @GetMapping("/purchases") public ApiResponse<?> purchases(@RequestParam(defaultValue="1")int page,@RequestParam(defaultValue="20")int size,@RequestParam(defaultValue="")String keyword,@RequestParam(defaultValue="")String status,@RequestParam(required=false)Long supplierId,@RequestParam(required=false)Long customerId,@AuthenticationPrincipal UserPrincipal p){require(p,"resource:purchase:read");return ApiResponse.success(service.purchases(page,size,keyword,status,supplierId,customerId));}
     @PostMapping("/purchases") public ApiResponse<?> createPurchase(@RequestBody ExternalDeliveryService.PurchaseInput b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"resource:purchase:write");return ApiResponse.success(Map.of("id",service.createPurchase(b,p,ip(r))));}
     @GetMapping("/purchases/{id}") public ApiResponse<?> purchase(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"resource:purchase:read");return ApiResponse.success(service.purchase(id));}
