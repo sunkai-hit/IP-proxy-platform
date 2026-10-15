@@ -46,7 +46,7 @@ jobs:
           java-version: '21'
           cache: maven
       - name: Verify short-IP allocation guard
-        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest test
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
@@ -87,6 +87,13 @@ jobs:
 
           H="Authorization: Bearer $TOKEN"
           J='Content-Type: application/json'
+          # No outbound product-group endpoint is configured in this synthetic
+          # environment. The management UI must show that fact and fail closed.
+          GATEWAY=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/product-integration/status)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["configured"] is False and d["readOnly"] is True and d["writesEnabled"] is False' <<< "$GATEWAY"
+          POOL_HTTP_CODE=$(curl -s -o /tmp/product-pool-unavailable.json -w '%{http_code}' -H "$H" http://localhost:8080/api/admin/v1/v12/product-integration/short-pool)
+          test "$POOL_HTTP_CODE" = "400"
+          python3 -c 'import json; d=json.load(open("/tmp/product-pool-unavailable.json")); assert d["code"]=="PRODUCT_INTEGRATION_NOT_CONFIGURED"'
 
           C=$(curl -fsS -H "$H" -H "$J" -d '{"customerName":"V12 CI Customer","customerTypeCode":"ENTERPRISE","contactName":"CI","contactPhone":"13800000000"}' http://localhost:8080/api/admin/v1/customers)
           CID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$C")
