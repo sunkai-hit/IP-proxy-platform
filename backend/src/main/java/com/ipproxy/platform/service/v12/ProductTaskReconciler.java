@@ -96,6 +96,8 @@ public class ProductTaskReconciler {
                         networkEvidence.put("verifiedAt",actual.get("verifiedAt"));
                         networkEvidence.put("sampledAt",actual.get("sampledAt"));
                         networkEvidence.put("source","PRODUCT_GROUP_HTTP");
+                        if("RELEASE".equals(str(task.get("action_type"))))
+                            networkEvidence.put("releaseVerification",remote.get("releaseVerification"));
                     }
                 }catch(BusinessException ignored){
                     // Remote SUCCEEDED without a matching real data-plane proof
