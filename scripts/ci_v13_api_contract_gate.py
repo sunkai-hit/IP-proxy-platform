@@ -60,14 +60,12 @@ def frontend():
         aliases={m.group(1):m.group(3) for m in ROOT_RE.finditer(src)}
         for match in FRONT_RE.finditer(src):
             path=match.group(2)[1:-1]
-            unknown=[]
-            def expand(m):
-                key=m.group(1)
-                if key in aliases:return aliases[key]
-                if not key.isidentifier():unknown.append(key)
-                return "{id}"
-            path=EXP_RE.sub(expand,path)
-            if unknown or "basePath[" in path:
+            # A frontend dynamic argument (including encodeURIComponent())
+            # maps to the Spring path placeholder; it is not a route miss.
+            # Truly dynamic resource categories need a separate category audit.
+            dynamic_category="basePath[" in path
+            path=EXP_RE.sub(lambda m: aliases.get(m.group(1),"{id}"),path)
+            if dynamic_category:
                 skips.append((file.name,match.group(1),path))
                 continue
             endpoints.add((match.group(1),norm(path)))
