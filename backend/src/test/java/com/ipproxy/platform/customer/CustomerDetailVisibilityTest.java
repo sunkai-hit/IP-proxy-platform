@@ -69,6 +69,17 @@ class CustomerDetailVisibilityTest {
         assertEquals("AUTH_FORBIDDEN",exception.getCode());
         verifyNoInteractions(service);
     }
+    @Test void directCustomerServiceChildEndpointNeedsBothRoles(){
+        CustomerService service=mock(CustomerService.class);
+        CustomerController controller=new CustomerController(service);
+        BusinessException error=assertThrows(BusinessException.class,
+            ()->controller.services(1L,viewer("customer:read")));
+        assertEquals("AUTH_FORBIDDEN",error.getCode());
+        verifyNoInteractions(service);
+        when(service.services(1L)).thenReturn(List.of(Map.of("service_no","S-1")));
+        assertEquals(1,((List<?>)controller.services(1L,
+            viewer("customer:read","service:read")).data()).size());
+    }
     @Test void superAdminPreservesAllOriginalRelatedSubtables(){
         CustomerService service=mock(CustomerService.class);
         when(service.detail(1L)).thenReturn(detail());
