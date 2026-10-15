@@ -47,7 +47,11 @@ public class OpenApiService {
                 grantId=db.insertGrant(accountId,customerId,serviceId,j(policySnapshot(svc))); version=1; changed=true;
             }else{
                 grantId=lv(grant.get("id")); version=((Number)grant.get("token_version")).longValue();
-                if(changeToken||!"ACTIVE".equals(s(grant.get("status")))){version=db.rotateGrant(grantId);changed=true;}
+                // A revoked or disabled grant is an explicit business-platform denial.
+                // Password login or token refresh must never silently reactivate it.
+                if(!"ACTIVE".equals(s(grant.get("status"))))
+                    throw err("OPEN_AUTH_REVOKED","当前服务授权已撤销或禁用，请联系业务平台管理员");
+                if(changeToken){version=db.rotateGrant(grantId);changed=true;}
             }
             String token=token(grantId,version);
             OffsetDateTime expire=offset(svc.get("expire_at"));
