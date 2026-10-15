@@ -77,6 +77,32 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('这里仅展示直接绑定此资源池的在用服务', { exact: false })).toBeVisible()
   })
 
+  test('eight primary business lists render through one authenticated session', async ({ page }) => {
+    // Unlike static route scanning, each step renders Vue, calls the actual
+    // Spring controller, and mounts an Element Plus data table.
+    const paths = [
+      '/customers', '/orders', '/services', '/resource-pools',
+      '/supplier-purchases', '/reverse-proxies', '/products', '/packages',
+    ]
+    for (const path of paths) {
+      await page.goto(base + path)
+      await expect(page).toHaveURL(new RegExp(path.replace('/', '\\/') + '
+    await page.goto(base + '/service-releases')
+    await expect(page.getByRole('heading', { name: '到期与资源释放' })).toBeVisible()
+    await expect(page.getByText('没有实际停服、恢复或回收的产品/资源接口回执', { exact: false })).toBeVisible()
+    await page.goto(base + '/supplier-purchases')
+    await expect(page.getByRole('heading', { name: '外部套餐 / 资源采购' })).toBeVisible()
+    await page.goto(base + '/reverse-proxies')
+    await expect(page.getByRole('heading', { name: '反向代理交付' })).toBeVisible()
+    await expect(page.getByText('仅配置登记不代表真实交付。', { exact: false })).toBeVisible()
+  })
+})
+))
+      await expect(page.locator('.console-main .el-table').first(),
+        'Expected actual table render at ' + path).toBeVisible({ timeout: 10000 })
+    }
+  })
+
   test('expiry and supplier management keep real-network warnings visible', async ({ page }) => {
     await page.goto(base + '/service-releases')
     await expect(page.getByRole('heading', { name: '到期与资源释放' })).toBeVisible()
