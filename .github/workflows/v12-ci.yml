@@ -243,6 +243,11 @@ jobs:
           test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM biz_order WHERE id=$FIXED_ORDER_ID")" = "PENDING_PROVISION"
           echo 'Original fixed-IP grace guards RENEW order before payment and protects execution after deadline'
 
+          # V22 real-PostgreSQL release lifecycle: one shared customer leaves
+          # without disturbing peers; final return needs verified network proof.
+          # The proof is SYNTHETIC for CI and does not enable actual product writes.
+          bash scripts/ci_r3_release_postgres_smoke.sh "$PGID" "$SID" "$H"
+
           # The legacy exclusive-release API must never mark an allocation recycled
           # merely because a management operator submitted a reason.
           LEGACY_EXCLUSIVE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_exclusive_allocation(allocation_no,resource_type,line_id,customer_id,service_id,status) VALUES('CI-R3-LEGACY-HOLD','LINE',$L1,$CID,$EXP0,'ALLOCATED') RETURNING id" | head -n1)
