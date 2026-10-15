@@ -63,8 +63,12 @@ public class ProductTaskReconciler {
             return result(operationKey,serviceId,local,str(task.get("stage")),"UNAVAILABLE",false,
                     "产品组查单失败，原任务及资源占用保持不变；不得重发操作");
         }
-        String remoteStatus=str(remote.get("status"));
+        // A task receipt that explicitly refuses or omits acceptance is never
+        // trustworthy as successful execution, even if its status says SUCCEEDED.
+        String remoteStatus=Boolean.TRUE.equals(remote.get("accepted"))
+                ?str(remote.get("status")):"UNKNOWN";
         boolean verified=false;
+        Map<String,Object> networkEvidence=new LinkedHashMap<>();
         String stage;
         String next;
         switch(remoteStatus){
@@ -84,7 +88,14 @@ public class ProductTaskReconciler {
                     verified=rightState
                           &&"VERIFIED".equals(str(actual.get("verificationStatus")))
                           &&!str(actual.get("verifiedAt")).isBlank();
-                    if(verified)stage="NEEDS_BUSINESS_COMMIT";
+                    if(verified){
+                        stage="NEEDS_BUSINESS_COMMIT";
+                        networkEvidence.put("actualStatus",actualStatus);
+                        networkEvidence.put("verificationStatus","VERIFIED");
+                        networkEvidence.put("verifiedAt",actual.get("verifiedAt"));
+                        networkEvidence.put("sampledAt",actual.get("sampledAt"));
+                        networkEvidence.put("source","PRODUCT_GROUP_HTTP");
+                    }
                 }catch(BusinessException ignored){
                     // Remote SUCCEEDED without a matching real data-plane proof
                     // MUST stay VERIFYING.
@@ -99,6 +110,7 @@ public class ProductTaskReconciler {
         summary.put("operationId",remoteId);
         summary.put("remoteStatus",remoteStatus);
         summary.put("networkVerified",verified);
+        if(verified)summary.put("networkEvidence",networkEvidence);
         summary.put("businessStateChanged",false);
         summary.put("receivedAt",OffsetDateTime.now().toString());
         String serialized;
