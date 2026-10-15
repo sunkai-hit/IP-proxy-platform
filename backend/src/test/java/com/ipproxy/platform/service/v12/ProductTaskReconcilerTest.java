@@ -56,7 +56,7 @@ class ProductTaskReconcilerTest {
     @Test void asynchronousAcceptanceIsOnlyPendingNotBusinessSuccess(){
         StubJdbc db=new StubJdbc();db.task=task("PENDING","op-52");
         ProductGroupReadClient product=mock(ProductGroupReadClient.class);
-        when(product.taskStatus("op-52")).thenReturn(Map.of("status","ACCEPTED"));
+        when(product.taskStatus("op-52")).thenReturn(Map.of("status","ACCEPTED","accepted",true));
         var result=reconciler(db,product).reconcile("expiry-52-1");
         assertEquals("PENDING",result.taskStatus());
         assertEquals("REMOTE_ACCEPTED",result.stage());
@@ -72,7 +72,7 @@ class ProductTaskReconcilerTest {
     @Test void remoteSuccessAndVerifiedStopRequireSeparateBusinessCommit(){
         StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");
         ProductGroupReadClient product=mock(ProductGroupReadClient.class);
-        when(product.taskStatus("op-52")).thenReturn(Map.of("status","SUCCEEDED"));
+        when(product.taskStatus("op-52")).thenReturn(Map.of("status","SUCCEEDED","accepted",true));
         when(product.actualService("52")).thenReturn(Map.of(
                 "actualStatus","STOPPED","verificationStatus","VERIFIED",
                 "verifiedAt","2026-10-15T02:00:00Z"));
@@ -82,13 +82,15 @@ class ProductTaskReconcilerTest {
         assertEquals("NEEDS_BUSINESS_COMMIT",result.stage());
         assertFalse(result.businessStateChanged());
         assertEquals("VERIFYING",db.updateArgs[0]);
+        assertTrue(String.valueOf(db.updateArgs[2]).contains("networkEvidence"));
+        assertTrue(String.valueOf(db.updateArgs[2]).contains("verifiedAt"));
         assertFalse(db.updateSql.contains("UPDATE svc_instance"));
         assertFalse(db.updateSql.contains("UPDATE svc_egress_claim"));
     }
     @Test void remoteSuccessWithoutProofKeepsPendingVerification(){
         StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");
         ProductGroupReadClient product=mock(ProductGroupReadClient.class);
-        when(product.taskStatus("op-52")).thenReturn(Map.of("status","SUCCEEDED"));
+        when(product.taskStatus("op-52")).thenReturn(Map.of("status","SUCCEEDED","accepted",true));
         when(product.actualService("52")).thenReturn(Map.of(
                 "actualStatus","RUNNING","verificationStatus","VERIFIED",
                 "verifiedAt","2026-10-15T02:00:00Z"));
@@ -100,7 +102,7 @@ class ProductTaskReconcilerTest {
     @Test void remoteUnknownStopsAutomaticRetries(){
         StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");
         ProductGroupReadClient product=mock(ProductGroupReadClient.class);
-        when(product.taskStatus("op-52")).thenReturn(Map.of("status","UNKNOWN"));
+        when(product.taskStatus("op-52")).thenReturn(Map.of("status","UNKNOWN","accepted",true));
         var result=reconciler(db,product).reconcile("expiry-52-1");
         assertEquals("COMPENSATION_REQUIRED",result.taskStatus());
         assertEquals("REMOTE_NEEDS_MANUAL_REVIEW",result.stage());
@@ -125,7 +127,7 @@ class ProductTaskReconcilerTest {
         verifyNoInteractions(product);
 
         db.task=task("RUNNING","op-52");db.updatedRows=0;
-        when(product.taskStatus("op-52")).thenReturn(Map.of("status","PENDING"));
+        when(product.taskStatus("op-52")).thenReturn(Map.of("status","PENDING","accepted",true));
         BusinessException error=assertThrows(BusinessException.class,
                 ()->reconciler(db,product).reconcile("expiry-52-1"));
         assertEquals("TASK_CONCURRENT_MODIFICATION",error.getCode());
