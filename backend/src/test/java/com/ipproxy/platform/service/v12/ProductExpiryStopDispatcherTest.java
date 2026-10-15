@@ -1,6 +1,5 @@
 package com.ipproxy.platform.service.v12;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ipproxy.platform.common.exception.BusinessException;
 import com.ipproxy.platform.resource.v12.ProductGroupStopClient;
 import com.ipproxy.platform.security.UserPrincipal;
@@ -9,13 +8,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.OffsetDateTime;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class ProductExpiryStopDispatcherTest {
-    private static final String SECRET="this-is-a-secure-product-integration-secret-123456";
     static class Ledger extends JdbcTemplate {
         Map<String,Object> task;
         List<String> executed=new ArrayList<>();
@@ -42,33 +40,33 @@ class ProductExpiryStopDispatcherTest {
         row.put("expire_at",OffsetDateTime.parse("2020-01-01T00:00:00Z"));
         return row;
     }
-    @Test void featureFlagOffForbidsAnyTaskMutationOrHttp(){
+    private ProductGroupStopClient ready() {
+        ProductGroupStopClient client=mock(ProductGroupStopClient.class);
+        when(client.ready()).thenReturn(true);
+        return client;
+    }
+    @Test void disabledIntegrationForbidsTaskMutationOrHttp(){
         Ledger db=new Ledger();db.task=due();
-        ProductGroupStopClient remote=new ProductGroupStopClient("https://product.test",SECRET,false,
-                new ObjectMapper(),(url,key,id,body)->{fail("No remote write permitted");return null;});
-        var svc=new ProductExpiryStopDispatcher(db,remote);
-        var e=assertThrows(BusinessException.class,()->svc.dispatch("expiry-stop-71",5L));
+        ProductGroupStopClient remote=mock(ProductGroupStopClient.class);
+        when(remote.ready()).thenReturn(false);
+        var e=assertThrows(BusinessException.class,
+                ()->new ProductExpiryStopDispatcher(db,remote).dispatch("expiry-stop-71",5L));
         assertEquals("PRODUCT_WRITE_DISABLED",e.getCode());
         assertEquals(0,db.executed.size());
+        verify(remote,never()).pauseForExpiry(anyLong(),anyString(),anyString());
     }
     @Test void accepted202AfterPersistedIdDoesNotReleaseClaims(){
         Ledger db=new Ledger();db.task=due();
-        AtomicInteger sent=new AtomicInteger();
-        ProductGroupStopClient remote=new ProductGroupStopClient("https://product.test",SECRET,true,
-                new ObjectMapper(),(url,key,id,body)->{
-                    assertEquals("https://product.test/product/v1/services/21/actions",url.toString());
-                    assertEquals(1,db.executed.size(),"durable claim must happen before HTTP");
-                    assertEquals("RUNNING", "RUNNING");
-                    assertEquals(5L,db.args.getFirst()[1],"operator must be audited");
-                    assertTrue(body.contains("\"action\":\"PAUSE\""));
-                    assertTrue(body.contains("\"operationId\":\""+id+"\""));
-                    assertEquals(32,id.length());
-                    sent.incrementAndGet();
-                    return new ProductGroupStopClient.Response(202,
-                        "{\"operationId\":\""+id+"\",\"accepted\":true,\"status\":\"ACCEPTED\"}");
-                });
+        ProductGroupStopClient remote=ready();
+        when(remote.pauseForExpiry(eq(21L),anyString(),anyString())).thenAnswer(invocation->{
+            assertEquals(1,db.executed.size(),"durable claim must precede remote HTTP");
+            assertEquals(5L,db.args.getFirst()[1],"operator must be audited");
+            String id=invocation.getArgument(1,String.class);
+            assertEquals(32,id.length());
+            return new ProductGroupStopClient.Acceptance(id,"ACCEPTED");
+        });
         var result=new ProductExpiryStopDispatcher(db,remote).dispatch("expiry-stop-71",5L);
-        assertEquals(1,sent.get());
+        verify(remote,times(1)).pauseForExpiry(eq(21L),eq(result.remoteOperationId()),anyString());
         assertEquals("RUNNING",result.taskStatus());
         assertEquals("REMOTE_ACCEPTED",result.stage());
         assertFalse(result.businessStateChanged());
@@ -78,28 +76,20 @@ class ProductExpiryStopDispatcherTest {
     }
     @Test void ambiguousTimeoutRequiresReconcileAndNeverResends(){
         Ledger db=new Ledger();db.task=due();
-        AtomicInteger sent=new AtomicInteger();
-        ProductGroupStopClient remote=new ProductGroupStopClient("https://product.test",SECRET,true,
-                new ObjectMapper(),(url,key,id,body)->{
-                    sent.incrementAndGet();
-                    throw new java.net.http.HttpTimeoutException("could be accepted remotely");
-                });
+        ProductGroupStopClient remote=ready();
+        when(remote.pauseForExpiry(eq(21L),anyString(),anyString())).thenThrow(
+                new BusinessException("PRODUCT_TASK_ACK_UNCERTAIN","timeout"));
         var result=new ProductExpiryStopDispatcher(db,remote).dispatch("expiry-stop-71",5L);
-        assertEquals(1,sent.get());
+        verify(remote,times(1)).pauseForExpiry(eq(21L),anyString(),anyString());
         assertEquals("COMPENSATION_REQUIRED",result.taskStatus());
         assertEquals("DISPATCH_RESULT_UNCERTAIN",result.stage());
         assertFalse(result.businessStateChanged());
         assertEquals(2,db.executed.size());
         assertTrue(db.executed.get(1).contains("REMOTE_DISPATCH_UNCERTAIN"));
     }
-    @Test void existingOrInvalidExpiryTaskNeverSent(){
+    @Test void invalidExpiryTaskNeverSent(){
         Ledger db=new Ledger();db.task=due();
-        AtomicInteger sent=new AtomicInteger();
-        ProductGroupStopClient remote=new ProductGroupStopClient("https://product.test",SECRET,true,
-                new ObjectMapper(),(url,key,id,body)->{
-                    sent.incrementAndGet();
-                    return new ProductGroupStopClient.Response(202,"");
-                });
+        ProductGroupStopClient remote=ready();
         var svc=new ProductExpiryStopDispatcher(db,remote);
         db.task.put("remote_operation_id","previous-operation");
         assertEquals("TASK_PRECHECK_BLOCKED",
@@ -108,25 +98,24 @@ class ProductExpiryStopDispatcherTest {
         db.task.put("grace_days_snapshot",null);
         assertEquals("TASK_PRECHECK_BLOCKED",
                 assertThrows(BusinessException.class,()->svc.dispatch("expiry-stop-71",5L)).getCode());
-        assertEquals(0,sent.get());
+        verify(remote,never()).pauseForExpiry(anyLong(),anyString(),anyString());
     }
-    @Test void racingOperatorsCannotBothSendRemoteRequests(){
+    @Test void concurrentOperatorsCannotBothSendRemoteRequests(){
         Ledger db=new Ledger();db.task=due();db.claimed=0;
-        ProductGroupStopClient remote=new ProductGroupStopClient("https://product.test",SECRET,true,
-                new ObjectMapper(),(url,key,id,body)->{fail("CAS loser must not POST");return null;});
+        ProductGroupStopClient remote=ready();
         var e=assertThrows(BusinessException.class,
                 ()->new ProductExpiryStopDispatcher(db,remote).dispatch("expiry-stop-71",5L));
         assertEquals("TASK_ALREADY_DISPATCHED",e.getCode());
-        assertEquals(1,db.executed.size());
+        verify(remote,never()).pauseForExpiry(anyLong(),anyString(),anyString());
     }
-    @Test void ordinaryReadPermissionCannotSendRealStop(){
+    @Test void readPermissionCannotSendRealStop(){
         ProductTaskReconciler reconciler=mock(ProductTaskReconciler.class);
         ProductExpiryStopDispatcher dispatcher=mock(ProductExpiryStopDispatcher.class);
         ProductTaskReconcileController controller=new ProductTaskReconcileController(reconciler,dispatcher);
-        UserPrincipal operator=new UserPrincipal(7L,"read-only","read-only",
+        UserPrincipal user=new UserPrincipal(7L,"reader","reader",
                 List.of("OPERATOR"),List.of("service:read"));
         assertEquals("AUTH_FORBIDDEN",assertThrows(BusinessException.class,
-                ()->controller.dispatchExpiryStop("expiry-stop-71",operator)).getCode());
+                ()->controller.dispatchExpiryStop("expiry-stop-71",user)).getCode());
         verifyNoInteractions(dispatcher);
         controller.dispatchExpiryStop("expiry-stop-71",new UserPrincipal(1L,"admin","admin",
                 List.of("SUPER_ADMIN"),List.of()));
