@@ -38,7 +38,7 @@ onMounted(load)
   <div class="head-actions">
    <el-tag>{{detail.customer.customer_type_code}}</el-tag>
    <el-tag type="success">{{detail.customer.status}}</el-tag>
-   <el-button v-if="auth.hasPermission('order:write')" type="primary" @click="openOrder(true)">为该客户创建订单</el-button>
+   <el-button v-if="auth.hasPermission('order:read')&&auth.hasPermission('order:write')" type="primary" @click="openOrder(true)">为该客户创建订单</el-button>
    <el-button @click="load">刷新</el-button>
   </div>
  </div>
@@ -80,7 +80,7 @@ onMounted(load)
      <el-table-column label="操作" width="105"><template #default="s"><el-button type="primary" link @click="router.push('/orders/'+s.row.id)">订单详情</el-button></template></el-table-column>
     </el-table>
    </el-tab-pane>
-   <el-tab-pane label="服务实例">
+   <el-tab-pane v-if="auth.hasPermission('service:read')" label="服务实例">
     <el-alert type="info" :closable="false" title="服务列表只显示管理面状态；具体公网IPv4授权、真实交付和到期任务请进入服务详情核对。" style="margin-bottom:12px"/>
     <el-table :data="detail.services||[]" stripe border>
      <el-table-column prop="service_no" label="服务编号" min-width="170"/>
@@ -93,11 +93,11 @@ onMounted(load)
      <el-table-column prop="whitelist_count" label="白名单" width="88"/>
      <el-table-column label="操作" min-width="205"><template #default="s">
       <el-button link type="primary" @click="openService(s.row.id)">查看详情</el-button>
-      <el-button v-if="auth.hasPermission('service:change')" link @click="router.push({path:'/service-changes',query:{serviceId:s.row.id}})">续费/变更</el-button>
+      <el-button v-if="auth.hasPermission('service:change')&&(auth.hasPermission('service:renew')||auth.hasPermission('service:status'))" link @click="router.push({path:'/service-changes',query:{serviceId:s.row.id,action:auth.hasPermission('service:renew')?'renew':'suspend'}})">续费/变更</el-button>
      </template></el-table-column>
     </el-table>
    </el-tab-pane>
-   <el-tab-pane label="认证记录">
+   <el-tab-pane v-if="auth.hasPermission('customer:auth:read')" label="认证记录">
     <el-table :data="detail.authRecords||[]" stripe>
      <el-table-column prop="auth_no" label="认证编号"/>
      <el-table-column prop="auth_type_code" label="认证类型"/>
@@ -107,7 +107,7 @@ onMounted(load)
      <el-table-column prop="review_opinion" label="审核意见"/>
     </el-table>
    </el-tab-pane>
-   <el-tab-pane label="客户账号">
+   <el-tab-pane v-if="auth.hasPermission('customer:account:read')" label="客户账号">
     <el-table :data="detail.accounts||[]" stripe>
      <el-table-column prop="username" label="用户名"/><el-table-column prop="account_type_code" label="账号类型"/>
      <el-table-column prop="status" label="状态"/><el-table-column prop="last_login_at" label="最后登录"/>
@@ -119,7 +119,7 @@ onMounted(load)
      <el-table-column prop="service_no" label="服务编号"/><el-table-column prop="product_name" label="产品"/>
      <el-table-column prop="credential_type" label="类型"/><el-table-column prop="account_name" label="账号"/>
      <el-table-column prop="secret_mask" label="掩码"/><el-table-column prop="status" label="状态"/>
-     <el-table-column label="查看服务" width="100"><template #default="s"><el-button link type="primary" @click="openService(s.row.service_id)">详情</el-button></template></el-table-column>
+     <el-table-column label="查看服务" width="100"><template #default="s"><el-button v-if="auth.hasPermission('service:read')" link type="primary" @click="openService(s.row.service_id)">详情</el-button></template></el-table-column>
     </el-table>
    </el-tab-pane>
   </el-tabs>
