@@ -70,12 +70,23 @@ test.describe('V1.3 actual browser management-console smoke', () => {
 
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
+    const operationRead = page.waitForResponse(response =>
+      response.url().includes('/v12/resource-pools/' + poolId + '/operations') &&
+      response.request().method() === 'GET')
     await page.goto(base + '/resource-pools/' + poolId)
+    const operationResponse = await operationRead
+    expect(operationResponse.status(), 'The pool audit query must not fail on real PostgreSQL').toBe(200)
+    const audit = (await operationResponse.json()).data
+    expect(Array.isArray(audit)).toBe(true)
+    expect(audit.length).toBeGreaterThan(0)
+    expect(audit[0]).toHaveProperty('created_at')
     await expect(page.getByRole('heading', { name: 'V12 Shared Pool' })).toBeVisible()
     await expect(page.getByRole('tab', { name: '全部线路' })).toBeVisible()
     await expect(page.locator('.el-table__body tr').first()).toBeVisible()
     await page.getByRole('tab', { name: '使用情况' }).click()
     await expect(page.getByText('这里仅展示直接绑定此资源池的在用服务', { exact: false })).toBeVisible()
+    await page.getByRole('tab', { name: '变更记录' }).click()
+    await expect(page.locator('.el-tab-pane:visible .el-table__body tr').first()).toBeVisible()
   })
 
   test('eight primary business lists render through one authenticated session', async ({ page }) => {
