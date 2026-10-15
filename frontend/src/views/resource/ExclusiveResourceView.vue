@@ -24,7 +24,7 @@ onMounted(load)
 <template>
 <div class="page">
  <div class="head"><div><h2>独享公网 IPv4 占用</h2>
-  <p>历史独享分配记录和V1.2出口授权是不同事实。独享同客户跨服务、跨客户均不得复用相同公网IPv4。</p>
+  <p>历史独享分配记录与当前V1.3出口授权是不同事实。独享同客户跨服务、跨客户均不得复用相同公网IPv4。</p>
  </div></div>
  <el-alert type="warning" :closable="false" show-icon
   title="这里禁止直接释放资源；必须先由关联服务完成真实停服、平台代理解绑、IPv4回收核验及占用审计。旧记录缺出口快照时只读核对。"/>
