@@ -71,7 +71,7 @@ public class ProductExpiryStopDispatcher {
         int claimed=jdbc.update("""
             UPDATE svc_action_task
             SET task_status='RUNNING',stage='DISPATCH_IN_FLIGHT',remote_operation_id=?,
-                attempt_count=attempt_count+1,updated_at=now()
+                attempt_count=attempt_count+1,actor_user_id=?,updated_at=now()
             WHERE id=? AND action_type='STOP_FOR_GRACE'
               AND task_status='PRECHECK_BLOCKED' AND remote_operation_id IS NULL
             """,remoteId,t.get("id"));
