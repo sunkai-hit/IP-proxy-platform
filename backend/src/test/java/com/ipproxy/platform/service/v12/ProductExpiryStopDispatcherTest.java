@@ -111,7 +111,7 @@ class ProductExpiryStopDispatcherTest {
     @Test void readPermissionCannotSendRealStop(){
         ProductTaskReconciler reconciler=mock(ProductTaskReconciler.class);
         ProductExpiryStopDispatcher dispatcher=mock(ProductExpiryStopDispatcher.class);
-        ProductTaskReconcileController controller=new ProductTaskReconcileController(reconciler,dispatcher);
+        ProductTaskReconcileController controller=new ProductTaskReconcileController(reconciler,dispatcher,mock(ProductExpiryStopCommitter.class));
         UserPrincipal user=new UserPrincipal(7L,"reader","reader",
                 List.of("OPERATOR"),List.of("service:read"));
         assertEquals("AUTH_FORBIDDEN",assertThrows(BusinessException.class,
