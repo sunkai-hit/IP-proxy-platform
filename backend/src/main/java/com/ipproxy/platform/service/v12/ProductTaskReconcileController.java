@@ -15,9 +15,11 @@ import org.springframework.web.bind.annotation.*;
 public class ProductTaskReconcileController {
     private final ProductTaskReconciler reconciler;
     private final ProductExpiryStopDispatcher dispatcher;
+    private final ProductExpiryStopCommitter committer;
     public ProductTaskReconcileController(ProductTaskReconciler reconciler,
-                                          ProductExpiryStopDispatcher dispatcher){
-        this.reconciler=reconciler;this.dispatcher=dispatcher;
+                                          ProductExpiryStopDispatcher dispatcher,
+                                          ProductExpiryStopCommitter committer){
+        this.reconciler=reconciler;this.dispatcher=dispatcher;this.committer=committer;
     }
     /**
      * Default-off privileged operation. Sends only a scoped PAUSE for an already
@@ -28,6 +30,18 @@ public class ProductTaskReconcileController {
             @PathVariable String operationKey,@AuthenticationPrincipal UserPrincipal actor){
         requireRelease(actor);
         return ApiResponse.success(dispatcher.dispatch(operationKey,actor.userId()));
+    }
+
+    /**
+     * The only allowed business commit for a verified expiry STOP_FOR_GRACE
+     * task. It freezes this service's authorization and holds its own IPv4
+     * claims in grace; shared peers and exclusive legacy allocations stay put.
+     */
+    @PostMapping("/{operationKey}/commit-expiry-stop")
+    public ApiResponse<ProductExpiryStopCommitter.CommitResult> commitExpiryStop(
+            @PathVariable String operationKey,@AuthenticationPrincipal UserPrincipal actor){
+        requireRelease(actor);
+        return ApiResponse.success(committer.commit(operationKey,actor.userId()));
     }
 
     private void requireRelease(UserPrincipal actor){
