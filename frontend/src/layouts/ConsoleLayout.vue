@@ -9,7 +9,7 @@ function logout(){auth.logout();router.replace('/login')}
 <template>
 <el-container class="console-shell">
   <el-aside width="236px" class="console-aside">
-    <div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console · V1.2</small></div></div>
+    <div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console · V1.3</small></div></div>
     <el-menu :default-active="active" router class="console-menu">
       <el-menu-item index="/dashboard">首页工作台</el-menu-item>
 
@@ -71,7 +71,7 @@ function logout(){auth.logout();router.replace('/login')}
     </el-menu>
   </el-aside>
   <el-container>
-    <el-header class="console-header"><div><span class="env-chip">V1.2</span><b>{{route.meta.title}}</b></div><div class="header-user"><span>{{auth.user?.displayName||auth.user?.username}}</span><el-button text @click="logout">退出登录</el-button></div></el-header>
+    <el-header class="console-header"><div><span class="env-chip">V1.3</span><b>{{route.meta.title}}</b></div><div class="header-user"><span>{{auth.user?.displayName||auth.user?.username}}</span><el-button text @click="logout">退出登录</el-button></div></el-header>
     <el-main class="console-main"><router-view/></el-main>
   </el-container>
 </el-container>
