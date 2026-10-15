@@ -35,7 +35,8 @@ public class ProductGroupReadClient {
     private static final Set<String> SERVICE_FIELDS=Set.of(
             "serviceId","actualStatus","verificationStatus","egressIpv4","verifiedAt","sampledAt");
     private static final Set<String> TASK_FIELDS=Set.of(
-            "operationId","taskId","accepted","status","stage","remoteId","verifiedAt","errorCode");
+            "operationId","taskId","accepted","status","stage","remoteId","verifiedAt","errorCode",
+            "releaseVerification");
     private final URI base;
     private final String bearer;
     private final ObjectMapper mapper;
