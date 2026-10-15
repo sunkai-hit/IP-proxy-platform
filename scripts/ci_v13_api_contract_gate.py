@@ -67,7 +67,15 @@ def frontend():
             dynamic_category="basePath[" in path
             path=EXP_RE.sub(lambda m: aliases.get(m.group(1),"{id}"),path)
             if dynamic_category:
-                skips.append((file.name,match.group(1),path))
+                # A single typed resource wrapper is parameterized by the
+                # category, not by an arbitrary URL. Expand all four declared
+                # categories and validate them against Spring endpoints.
+                categories=re.findall(r"\b(?:CENTOS|ROS|LINE|IP)\s*:\s*'([^']+)'",src)
+                if file.name=="resource.ts" and len(categories)==4:
+                    for cat in categories:
+                        endpoints.add((match.group(1),norm(path.replace("{id}",cat,1))))
+                else:
+                    skips.append((file.name,match.group(1),path))
                 continue
             endpoints.add((match.group(1),norm(path)))
     return endpoints,skips
