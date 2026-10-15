@@ -45,6 +45,15 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare Chromium for real browser E2E against management backend
+        working-directory: frontend
+        run: |
+          npm install --no-package-lock
+          npm install --no-save --no-package-lock @playwright/test@1.56.1
+          npx playwright install --with-deps chromium
       - name: Verify V1.3 uploaded baseline and cross-artifact file coverage
         run: python3 scripts/ci_v13_baseline_gate.py
       - name: Verify V1.3 frontend/backend API routes and lifecycle RBAC
@@ -500,7 +509,26 @@ jobs:
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/alarms?page=1&size=20" >/dev/null
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/notifications?page=1&size=20" >/dev/null
           echo 'Monitor, alarm and notification default-list HTTP checks passed'
-          echo 'V1.2 core smoke passed'
+          echo 'V1.3 backend business smoke passed'
+          # The same Spring Boot, PostgreSQL and Redis instances remain live
+          # for actual Chromium user-interface E2E. No product-group network
+          # writes are enabled; source records use synthetic CI adapter data.
+          npm --prefix frontend run dev -- --host 127.0.0.1 > /tmp/vite-e2e.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" "$PID" 2>/dev/null || true' EXIT
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:5173/ >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:5173/ >/dev/null
+          (
+            cd frontend
+            V13_E2E_USER=admin V13_E2E_PASSWORD=admin123 \
+            V13_E2E_CUSTOMER_ID="$CID" V13_E2E_ORDER_ID="$MULTI_ID" \
+            V13_E2E_SERVICE_ID="$SID" V13_E2E_POOL_ID="$POOLID" \
+            npx playwright test tests/e2e/v13-real-backend.spec.ts --reporter=line --workers=1 --timeout=40000
+          )
+          echo 'V1.3 Chromium actual browser + Spring Boot/PostgreSQL E2E smoke passed'
       - name: Backend log on failure
         if: failure()
         run: tail -n 400 /tmp/backend.log || true
