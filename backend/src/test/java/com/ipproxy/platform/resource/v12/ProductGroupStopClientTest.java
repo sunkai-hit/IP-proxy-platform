@@ -63,11 +63,11 @@ class ProductGroupStopClientTest {
             "https://proxy.example.test",TOKEN,true,new ObjectMapper(),
             (uri,key,id,body)->{
                 assertEquals("https://proxy.example.test/product/v1/services/21/actions",uri.toString());
-                assertTrue(body.contains("\\"action\\":\\"RELEASE\\""));
-                assertTrue(body.contains("\\"releaseMode\\":\\"UNBIND_SERVICE_ONLY\\""));
-                assertTrue(body.contains("\\"egressIpv4\\":\\"198.51.100.7\\""));
+                assertTrue(body.contains("\"action\":\"RELEASE\""));
+                assertTrue(body.contains("\"releaseMode\":\"UNBIND_SERVICE_ONLY\""));
+                assertTrue(body.contains("\"egressIpv4\":\"198.51.100.7\""));
                 return new ProductGroupStopClient.Response(202,
-                    "{\\"operationId\\":\\""+id+"\\",\\"accepted\\":true,\\"status\\":\\"ACCEPTED\\"}");
+                    "{\"operationId\":\""+id+"\",\"accepted\":true,\"status\":\"ACCEPTED\"}");
             });
         assertEquals("ACCEPTED",enabled.releaseAfterGrace(
                 21L,OP,"UNBIND_SERVICE_ONLY","198.51.100.7").status());
@@ -76,7 +76,7 @@ class ProductGroupStopClientTest {
         ProductGroupStopClient client=new ProductGroupStopClient(
             "https://proxy.example.test",TOKEN,true,new ObjectMapper(),
             (uri,key,id,body)->new ProductGroupStopClient.Response(202,
-                "{\\"operationId\\":\\"another-operation\\",\\"accepted\\":true,\\"status\\":\\"SUCCEEDED\\"}"));
+                "{\"operationId\":\"another-operation\",\"accepted\":true,\"status\":\"SUCCEEDED\"}"));
         assertEquals("PRODUCT_TASK_ACK_UNCERTAIN",assertThrows(BusinessException.class,
             ()->client.releaseAfterGrace(21L,OP,"RETURN_TO_SHORT_AFTER_VERIFICATION","198.51.100.7")).getCode());
     }
