@@ -40,6 +40,8 @@ class ProductGroupHttpWireTest {
                     assertEquals("PAUSE",body.path("action").asText());
                     String operation=body.path("operationId").asText();
                     assertEquals(operation,exchange.getRequestHeaders().getFirst("X-Operation-Id"));
+                    assertEquals(operation,exchange.getRequestHeaders().getFirst("X-Request-Id"));
+                    assertEquals(operation,exchange.getRequestHeaders().getFirst("Idempotency-Key"));
                     assertEquals("2026-10-14T00:00:00Z",body.path("effectiveAt").asText());
                     receivedId.set(operation);
                     postCount.incrementAndGet();
@@ -88,6 +90,8 @@ class ProductGroupHttpWireTest {
                     assertEquals("UNBIND_SERVICE_ONLY",body.path("releaseMode").asText());
                     assertEquals("198.51.100.7",body.path("egressIpv4").asText());
                     assertEquals("release-54",exchange.getRequestHeaders().getFirst("X-Operation-Id"));
+                    assertEquals("release-54",exchange.getRequestHeaders().getFirst("X-Request-Id"));
+                    assertEquals("release-54",exchange.getRequestHeaders().getFirst("Idempotency-Key"));
                     postCount.incrementAndGet();
                     respond(exchange,202,"{\"operationId\":\"release-54\",\"accepted\":true,\"status\":\"ACCEPTED\"}");
                 } else if("GET".equals(exchange.getRequestMethod())
