@@ -95,7 +95,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     expect(unpaidOrderId).toBeTruthy()
     const provisionPosts: string[] = []
     page.on('request', req => {
-      if (req.method() === 'POST' && /\/orders\/\d+\/provision$/.test(req.url()))
+      if (req.method() === 'POST' && req.url().includes('/provision'))
         provisionPosts.push(req.url())
     })
     await page.goto(base + '/service-provision?orderId=' + unpaidOrderId)
@@ -105,18 +105,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('配置订单项交付方式')).toHaveCount(0)
     expect(provisionPosts).toHaveLength(0)
     await page.getByRole('button', { name: '打开订单详情核实付款' }).click()
-    await expect(page).toHaveURL(new RegExp('/orders/' + unpaidOrderId + '
-    await page.goto(base + '/service-releases')
-    await expect(page.getByRole('heading', { name: '到期与资源释放' })).toBeVisible()
-    await expect(page.getByText('没有实际停服、恢复或回收的产品/资源接口回执', { exact: false })).toBeVisible()
-    await page.goto(base + '/supplier-purchases')
-    await expect(page.getByRole('heading', { name: '外部套餐 / 资源采购' })).toBeVisible()
-    await page.goto(base + '/reverse-proxies')
-    await expect(page.getByRole('heading', { name: '反向代理交付' })).toBeVisible()
-    await expect(page.getByText('仅配置登记不代表真实交付。', { exact: false })).toBeVisible()
-  })
-})
-))
+    await expect(page).toHaveURL(base + '/orders/' + unpaidOrderId)
     await expect(page.getByText('未核实', { exact: true })).toBeVisible()
   })
 
@@ -133,7 +122,6 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(dialog.locator('.line-item')).toHaveCount(2)
     await dialog.getByRole('button', { name: '删除该项' }).last().click()
     await expect(dialog.locator('.line-item')).toHaveCount(1)
-    // Do not create another order just to validate a local form.
     await dialog.getByRole('button', { name: '取消' }).click()
   })
 
