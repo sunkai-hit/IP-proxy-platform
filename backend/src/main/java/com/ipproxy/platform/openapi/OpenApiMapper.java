@@ -39,7 +39,22 @@ public class OpenApiMapper {
     }
 
     public List<Map<String,Object>> selectIps(Long poolId,Long serviceId,int amount,String region,String carrier,int dedupSeconds){
-        return jdbc.queryForList("SELECT i.id,host(i.ip_address) ip,i.region_code,i.carrier_code,i.latency_ms,i.quality_score,i.source_type FROM res_pool_ip pi JOIN res_ip i ON i.id=pi.ip_id WHERE pi.pool_id=? AND pi.enabled=TRUE AND i.deleted=FALSE AND i.available_status='AVAILABLE' AND i.duplicate_flag=FALSE AND (?='' OR i.region_code=?) AND (?='' OR i.carrier_code=?) AND (?<=0 OR NOT EXISTS (SELECT 1 FROM log_ip_extract l CROSS JOIN LATERAL jsonb_array_elements(l.returned_ips) e WHERE l.service_id=? AND l.occurred_at>=now()-make_interval(secs=>?) AND e->>'ip'=host(i.ip_address))) ORDER BY i.quality_score DESC NULLS LAST,i.latency_ms ASC NULLS LAST,i.id LIMIT ?",poolId,region,region,carrier,carrier,dedupSeconds,serviceId,dedupSeconds,amount);
+        return jdbc.queryForList("SELECT i.id,host(i.ip_address) ip,i.region_code,i.carrier_code,i.latency_ms,i.quality_score,i.source_type FROM res_pool_ip pi JOIN res_ip i ON i.id=pi.ip_id WHERE pi.pool_id=? AND pi.enabled=TRUE AND i.deleted=FALSE AND i.available_status='AVAILABLE' AND i.duplicate_flag=FALSE
+        -- 产品转换为长效/独享之后，不允许旧短效资源快照继续向客户分发该IPv4。
+        -- 这里仅是业务平台的防泄漏保护；实际会话迁移及出口隔离仍须产品组核验。
+        AND NOT EXISTS (
+          SELECT 1 FROM svc_egress_claim ec
+          WHERE ec.egress_ipv4=i.ip_address
+            AND ec.claim_status IN ('RESERVED','ACTIVE','GRACE_HELD','RELEASE_PENDING')
+        )
+        -- 兼容未迁移的旧独享占用台账，防止仅查询新占用表造成历史IPv4重售。
+        AND NOT EXISTS (
+          SELECT 1 FROM res_exclusive_allocation ea
+          JOIN res_line occupied ON occupied.id=ea.line_id
+          WHERE occupied.current_public_ip=i.ip_address
+            AND ea.deleted=FALSE AND ea.status IN ('LOCKED','ALLOCATED')
+        )
+        AND (?='' OR i.region_code=?) AND (?='' OR i.carrier_code=?) AND (?<=0 OR NOT EXISTS (SELECT 1 FROM log_ip_extract l CROSS JOIN LATERAL jsonb_array_elements(l.returned_ips) e WHERE l.service_id=? AND l.occurred_at>=now()-make_interval(secs=>?) AND e->>'ip'=host(i.ip_address))) ORDER BY i.quality_score DESC NULLS LAST,i.latency_ms ASC NULLS LAST,i.id LIMIT ?",poolId,region,region,carrier,carrier,dedupSeconds,serviceId,dedupSeconds,amount);
     }
 
     public long extractedCount(Long serviceId){return jdbc.queryForObject("SELECT COALESCE(sum(returned_count),0) FROM log_ip_extract WHERE service_id=? AND result IN ('SUCCESS','PARTIAL')",Long.class,serviceId);}
