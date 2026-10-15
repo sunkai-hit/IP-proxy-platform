@@ -7,6 +7,8 @@ import java.util.Map;
 @Component
 @Profile("m6-mock")
 public class MockServiceProvisionAdapter implements ServiceProvisionAdapter {
+    /** Synthetic CI capability only; not proof of network delivery. */
+    @Override public boolean canProvision(String productType){return true;}
     @Override public Result provision(String productType,Long serviceId,Map<String,Object> context){return new Result(true,"M6 mock数据面开通成功",Map.of("adapter","m6-mock","productType",productType));}
     @Override public Result release(String productType,Long serviceId,Map<String,Object> context){return new Result(true,"M6 mock数据面释放成功",Map.of("adapter","m6-mock","productType",productType));}
 }
