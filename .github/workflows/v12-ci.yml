@@ -525,6 +525,7 @@ jobs:
           # Spring authentication endpoint, not just return index.html.
           VITE_LOGIN_STATUS=$(curl -s -o /tmp/vite-login.json -w '%{http_code}' \
             -H 'Content-Type: application/json' \
+            -H 'Origin: http://127.0.0.1:5173' \
             -d '{"username":"admin","password":"admin123"}' \
             http://127.0.0.1:5173/api/admin/v1/auth/login)
           if [ "$VITE_LOGIN_STATUS" != "200" ]; then
