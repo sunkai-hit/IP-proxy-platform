@@ -1,4 +1,4 @@
-name: V1.2 CI
+name: V1.3 Consolidation CI
 
 on:
   push:
@@ -45,13 +45,15 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Verify V1.3 uploaded baseline and cross-artifact file coverage
+        run: python3 scripts/ci_v13_baseline_gate.py
       - name: Verify short-IP allocation guard
         run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
         working-directory: backend
-      - name: Boot and exercise V1.2 core flow
+      - name: Boot and exercise V1.3 baseline against existing business flows
         env:
           DB_HOST: localhost
           DB_PORT: 5432
