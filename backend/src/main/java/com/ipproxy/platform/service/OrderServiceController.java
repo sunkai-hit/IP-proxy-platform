@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 @RestController
@@ -30,7 +31,15 @@ public class OrderServiceController {
 
     @GetMapping("/services") public ApiResponse<?> services(@RequestParam(defaultValue="1")int page,@RequestParam(defaultValue="20")int size,@RequestParam(defaultValue="")String keyword,@RequestParam(defaultValue="")String status,@RequestParam(required=false)Long customerId,@RequestParam(defaultValue="")String productType,@RequestParam(defaultValue="")String deliveryMode,@AuthenticationPrincipal UserPrincipal p){require(p,"service:read");return ApiResponse.success(lifecycle.services(page,size,keyword,status,customerId,productType,deliveryMode));}
     @PostMapping("/services/provision") public ApiResponse<?> manual(@RequestBody V12ServiceLifecycleService.ProvisionInput b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"service:provision:manual");if("EXTERNAL_PROXY".equalsIgnoreCase(b.deliveryMode()))require(p,"service:provision:external");return ApiResponse.success(lifecycle.manualProvision(b,p,ip(r)));}
-    @GetMapping("/services/{id}") public ApiResponse<?> detail(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"service:read");return ApiResponse.success(lifecycle.service(id));}
+    @GetMapping("/services/{id}") public ApiResponse<?> detail(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){
+        require(p,"service:read");
+        Map<String,Object> result=new LinkedHashMap<>(lifecycle.service(id));
+        // Credentials are a separate permissioned business subtable.
+        // Hiding the Vue tab is not enough: strip them from the HTTP JSON.
+        if(!p.roles().contains("SUPER_ADMIN")&&!p.permissions().contains("service:credential:read"))
+            result.remove("credentials");
+        return ApiResponse.success(result);
+    }
     @GetMapping("/services/{id}/credentials") public ApiResponse<?> credentials(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"service:credential:read");return ApiResponse.success(lifecycle.service(id).get("credentials"));}
     @PostMapping("/services/{id}/credentials/reset") public ApiResponse<?> reset(@PathVariable Long id,@RequestBody ReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"service:credential:reset");return ApiResponse.success(service.resetCredential(id,b.reason(),p,ip(r)));}
     @PostMapping("/services/{id}/suspend") public ApiResponse<?> suspend(@PathVariable Long id,@RequestBody ReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"service:status");service.suspend(id,b.reason(),p,ip(r));return ApiResponse.success();}
