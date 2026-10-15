@@ -54,11 +54,15 @@ async function load(){
     }
   }finally{loading.value=false}
 }
+let renewalLookupVersion=0
 async function loadRenewalOrders(){
+ const version=++renewalLookupVersion
+ const serviceId=Number(form.serviceId)
  paidRenewalOrders.value=[];form.renewalOrderId=null;paidTermDays.value=null;renewOrderError.value=''
  if(form.action!=='renew'||!auth.hasPermission('order:read')||!current.value)return
  try{
-  const d=data(await businessRelationsApi.paidRenewalOrders(Number(form.serviceId)))
+  const d=data(await businessRelationsApi.paidRenewalOrders(serviceId))
+  if(version!==renewalLookupVersion||Number(form.serviceId)!==serviceId||form.action!=='renew')return
   paidRenewalOrders.value=d.items||[]
   if(d.truncated)ElMessage.warning('当前服务已付款续费订单超过200笔；较早订单请至订单管理核对')
   const requested=Number(route.query.renewalOrderId)
@@ -66,15 +70,19 @@ async function loadRenewalOrders(){
     form.renewalOrderId=requested
     await selectRenewalOrder()
   }
- }catch{ElMessage.warning('无法读取已付款的续费订单，请检查订单查询权限')}
+ }catch{
+  if(version===renewalLookupVersion)
+   ElMessage.warning('无法读取已付款的续费订单，请检查订单查询权限')
+ }
 }
 async function selectRenewalOrder(){
  const orderId=Number(form.renewalOrderId)
+ const serviceId=Number(form.serviceId)
  paidTermDays.value=null;renewOrderError.value=''
- if(!orderId)return
+ if(!orderId||form.action!=='renew')return
  try{
   const order=data(await orderServiceApi.order(orderId))
-  if(Number(form.renewalOrderId)!==orderId)return
+  if(Number(form.renewalOrderId)!==orderId||Number(form.serviceId)!==serviceId||form.action!=='renew')return
   if(order?.order_type!=='RENEW'||order?.payment_status!=='PAID_CONFIRMED'||
     order?.status!=='PENDING_PROVISION'||Number(order?.renewal_service_id)!==Number(form.serviceId)||
     Number(order?.customer_id)!==Number(current.value?.customer_id)){
@@ -91,7 +99,7 @@ async function selectRenewalOrder(){
   paidTermDays.value=days
   form.days=days
  }catch{
-  if(Number(form.renewalOrderId)===orderId)
+  if(Number(form.renewalOrderId)===orderId&&Number(form.serviceId)===serviceId&&form.action==='renew')
    renewOrderError.value='无法确认续费订单套餐期限快照，必须核对订单详情'
  }
 }
