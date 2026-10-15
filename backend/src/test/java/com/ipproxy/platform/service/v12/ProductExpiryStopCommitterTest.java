@@ -85,7 +85,8 @@ class ProductExpiryStopCommitterTest {
     @Test void sharedLongOtherCustomersAreNeverUpdated(){
         Ledger db=ledger();
         new ProductExpiryStopCommitter(db,new ObjectMapper()).commit("expiry-stop-91",3L);
-        assertEquals(52L,db.arguments.get(1)[0]);
+        assertEquals(EXPIRY.plusDays(2),db.arguments.get(1)[0]);
+        assertEquals(52L,db.arguments.get(1)[1]);
         assertTrue(db.updates.get(1).contains("WHERE service_id=?"));
         assertFalse(db.updates.get(1).contains("WHERE egress_ipv4="));
     }
