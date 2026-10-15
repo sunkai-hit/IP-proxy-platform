@@ -3,6 +3,7 @@ package com.ipproxy.platform.openapi;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Clock;
@@ -38,6 +39,7 @@ public class ProductAuthorizationService {
     private final ObjectMapper json;
     private final Clock clock;
 
+    @Autowired
     public ProductAuthorizationService(JdbcTemplate db,ObjectMapper json) {
         this(db,json,Clock.systemUTC());
     }
