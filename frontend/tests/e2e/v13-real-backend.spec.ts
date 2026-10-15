@@ -18,8 +18,13 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     const inputs = page.locator('.login-card input')
     await inputs.nth(0).fill(process.env.V13_E2E_USER || 'admin')
     await inputs.nth(1).fill(process.env.V13_E2E_PASSWORD || 'admin123')
+    const loginResponse = page.waitForResponse(
+      response => response.url().endsWith('/api/admin/v1/auth/login'), { timeout: 10000 }
+    )
     await page.getByRole('button', { name: '登录', exact: true }).click()
-    await expect(page).toHaveURL(/\/dashboard$/)
+    const result = await loginResponse
+    expect(result.status(), 'Vite-proxied login HTTP status: ' + await result.text()).toBe(200)
+    await expect(page).toHaveURL(/\/dashboard$/, { timeout: 10000 })
     await expect(page.locator('.console-header')).toContainText('V1.3')
   })
 
