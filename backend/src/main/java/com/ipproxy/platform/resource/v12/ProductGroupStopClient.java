@@ -125,6 +125,8 @@ public class ProductGroupStopClient {
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         HttpRequest req=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(5))
                 .header("Authorization","Bearer "+bearer)
+                .header("X-Request-Id",opId)
+                .header("Idempotency-Key",opId)
                 .header("X-Operation-Id",opId)
                 .header("Content-Type","application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body,StandardCharsets.UTF_8)).build();
