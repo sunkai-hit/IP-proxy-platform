@@ -137,6 +137,24 @@ public class ProductTaskReconciler {
                 "任务进展已记录，尚未满足真实交付和业务状态提交条件");
     }
 
+    /** A remote task SUCCESS alone never certifies an IPv4 has been unbound or
+     * restored to the short pool. Proof is checked again at business commit.
+     */
+    private boolean releaseVerified(Map<String,Object> remote){
+        Object raw=remote.get("releaseVerification");
+        if(!(raw instanceof Map<?,?> proof))return false;
+        String mode=String.valueOf(proof.get("releaseMode"));
+        if(!Boolean.TRUE.equals(proof.get("serviceAccessRevoked"))
+                ||proof.get("egressIpv4")==null||proof.get("verifiedAt")==null)
+            return false;
+        if("UNBIND_SERVICE_ONLY".equals(mode))return true;
+        return "RETURN_TO_SHORT_AFTER_VERIFICATION".equals(mode)
+                &&Boolean.TRUE.equals(proof.get("allOldAccessRevoked"))
+                &&Boolean.TRUE.equals(proof.get("switchedToShort"))
+                &&Boolean.TRUE.equals(proof.get("shortPoolHealthy"))
+                &&proof.get("resourceId")!=null;
+    }
+
     private ReconcileResult result(String key,Long serviceId,String status,String stage,
                                    String remote,boolean verified,String note){
         return new ReconcileResult(key,serviceId,status,stage,remote,verified,false,note);
