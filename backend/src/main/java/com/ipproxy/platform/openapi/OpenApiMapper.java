@@ -27,7 +27,16 @@ public class OpenApiMapper {
     public Long insertGrant(Long accountId,Long customerId,Long serviceId,String policyJson){
         return jdbc.queryForObject("INSERT INTO open_access_grant(account_id,customer_id,service_id,token_version,status,policy_snapshot) VALUES(?,?,?,1,'ACTIVE',CAST(? AS jsonb)) RETURNING id",Long.class,accountId,customerId,serviceId,policyJson);
     }
-    public long rotateGrant(Long id){return jdbc.queryForObject("UPDATE open_access_grant SET token_version=token_version+1,status='ACTIVE',rotated_at=now(),updated_at=now(),version=version+1 WHERE id=? RETURNING token_version",Long.class,id);}
+    public long rotateGrant(Long id){
+        // Re-check inside the UPDATE. A concurrent revocation must not be undone
+        // by a token refresh that began before the grant was disabled.
+        List<Long> versions=jdbc.query(
+            "UPDATE open_access_grant SET token_version=token_version+1,rotated_at=now(),updated_at=now(),version=version+1 WHERE id=? AND status='ACTIVE' RETURNING token_version",
+            (rs,row)->rs.getLong(1),id);
+        if(versions.isEmpty())throw new com.ipproxy.platform.common.exception.BusinessException(
+            "OPEN_AUTH_REVOKED","当前服务授权已撤销或禁用，请联系业务平台管理员");
+        return versions.getFirst();
+    }
     public void touchGrant(Long id){jdbc.update("UPDATE open_access_grant SET last_used_at=now(),updated_at=now() WHERE id=?",id);}
 
     public Map<String,Object> accessContext(Long grantId){
