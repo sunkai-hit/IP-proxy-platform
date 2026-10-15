@@ -26,6 +26,7 @@ class OpenApiMapperGuardTest {
         assertTrue(sql.contains("'RESERVED','ACTIVE','GRACE_HELD','RELEASE_PENDING'"),
                 "reserved, active, grace and release-pending IPv4 must stay blocked");
         assertTrue(sql.contains("res_exclusive_allocation"), "legacy exclusive claims must be checked");
-        assertTrue(sql.contains("'LOCKED','ALLOCATED'"), "legacy exclusive holds must stay blocked");
+        assertTrue(sql.contains("ea.current_ip_snapshot=i.ip_address"), "snapshot must remain protected after redial");
+        assertTrue(sql.contains("'LOCKED','ALLOCATED','PENDING_RECYCLE'"), "legacy holds and pending recycle must stay blocked");
     }
 }
