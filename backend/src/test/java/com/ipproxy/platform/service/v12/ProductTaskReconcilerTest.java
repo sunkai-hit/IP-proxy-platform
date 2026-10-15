@@ -132,6 +132,39 @@ class ProductTaskReconcilerTest {
                 ()->reconciler(db,product).reconcile("expiry-52-1"));
         assertEquals("TASK_CONCURRENT_MODIFICATION",error.getCode());
     }
+    @Test void remoteReleaseSucceededWithoutPhysicalReleaseProofRemainsUnverified(){
+        StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");
+        db.task.put("action_type","RELEASE");
+        ProductGroupReadClient product=mock(ProductGroupReadClient.class);
+        when(product.taskStatus("op-52")).thenReturn(Map.of("accepted",true,"status","SUCCEEDED"));
+        when(product.actualService("52")).thenReturn(Map.of(
+                "actualStatus","STOPPED","verificationStatus","VERIFIED",
+                "verifiedAt","2026-10-15T02:00:00Z","sampledAt","2026-10-15T02:00:02Z"));
+        var result=reconciler(db,product).reconcile("expiry-52-1");
+        assertFalse(result.networkVerified());
+        assertEquals("WAITING_NETWORK_VERIFICATION",result.stage());
+        assertFalse(String.valueOf(db.updateArgs[2]).contains("releaseVerification"));
+    }
+    @Test void verifiedServiceReleaseProofIsCarriedToCommitStage(){
+        StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");
+        db.task.put("action_type","RELEASE");
+        ProductGroupReadClient product=mock(ProductGroupReadClient.class);
+        when(product.taskStatus("op-52")).thenReturn(Map.of("accepted",true,"status","SUCCEEDED",
+                "releaseVerification",Map.of(
+                    "releaseMode","RETURN_TO_SHORT_AFTER_VERIFICATION",
+                    "egressIpv4","198.51.100.7",
+                    "serviceAccessRevoked",true,"allOldAccessRevoked",true,
+                    "switchedToShort",true,"shortPoolHealthy",true,
+                    "resourceId","r-52","verifiedAt","2026-10-15T02:00:00Z")));
+        when(product.actualService("52")).thenReturn(Map.of(
+                "actualStatus","STOPPED","verificationStatus","VERIFIED",
+                "verifiedAt","2026-10-15T02:00:00Z","sampledAt","2026-10-15T02:00:02Z"));
+        var result=reconciler(db,product).reconcile("expiry-52-1");
+        assertTrue(result.networkVerified());
+        assertEquals("NEEDS_BUSINESS_COMMIT",result.stage());
+        assertFalse(result.businessStateChanged());
+        assertTrue(String.valueOf(db.updateArgs[2]).contains("shortPoolHealthy"));
+    }
     @Test void operatorPermissionRequiredAndNotImplicitFromReadPermission(){
         ProductTaskReconciler product=mock(ProductTaskReconciler.class);
         ProductTaskReconcileController ctrl=new ProductTaskReconcileController(product,mock(ProductExpiryStopDispatcher.class),mock(ProductExpiryStopCommitter.class));
