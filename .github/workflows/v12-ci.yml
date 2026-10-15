@@ -521,6 +521,19 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:5173/ >/dev/null
+          # Verify the browser-facing Vite origin can reach the actual
+          # Spring authentication endpoint, not just return index.html.
+          VITE_LOGIN_STATUS=$(curl -s -o /tmp/vite-login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"admin123"}' \
+            http://127.0.0.1:5173/api/admin/v1/auth/login)
+          if [ "$VITE_LOGIN_STATUS" != "200" ]; then
+            echo "Browser-facing API login preflight failed HTTP $VITE_LOGIN_STATUS"
+            cat /tmp/vite-login.json || true
+            tail -n 100 /tmp/vite-e2e.log || true
+            exit 1
+          fi
+          echo 'Vite proxy -> real Spring login HTTP preflight OK'
           (
             cd frontend
             V13_E2E_USER=admin V13_E2E_PASSWORD=admin123 \
