@@ -12,7 +12,7 @@
     {id:'PKG-SHORT',name:'短效IP 10万次',type:'短效IP',cycle:'30天',grace:null,quota:'提取100000次',active:12}
   ];
   const pill=(value)=>'<span class="tag '+(/待|未|风险|宽限/.test(value)?'warning':'info')+'">'+esc(value)+'</span>';
-  const demoBanner=()=>note('第三轮交互原型｜全部为演示数据；不会写入真实数据库。到期停服、人工切换、续费恢复仍须真实产品/资源API回执才能判定成功。');
+  const demoBanner=()=>note('V1.3交互对照｜全部为模拟数据；不会写入真实数据库。到期停服、人工切换、续费恢复仍须真实产品/资源API回执才能判定成功。');
   resources=function(){
     const i=state.tabs.resources;
     if(i===2){
