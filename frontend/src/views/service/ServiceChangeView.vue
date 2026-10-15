@@ -36,7 +36,9 @@ const form=reactive({serviceId:route.query.serviceId?Number(route.query.serviceI
 const data=(r:any)=>r.data.data
 const current=computed(()=>services.value.find(s=>s.id===form.serviceId)||null)
 const actionLabels:Record<string,string>={renew:'续费',suspend:'暂停',resume:'恢复',terminate:'终止'}
-const blocked=computed(()=>!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(
+const canAct=computed(()=>auth.hasPermission('service:change')&&
+ (form.action==='renew'?auth.hasPermission('service:renew'):auth.hasPermission('service:status')))
+const blocked=computed(()=>!canAct.value||!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(
  form.days<1||!form.renewalOrderId||!auth.hasPermission('service:renew')||
  paidTermDays.value===null||form.days!==paidTermDays.value||!!renewalImpact.value.blocker
 )))
@@ -54,7 +56,7 @@ async function load(){
 }
 async function loadRenewalOrders(){
  paidRenewalOrders.value=[];form.renewalOrderId=null;paidTermDays.value=null;renewOrderError.value=''
- if(!current.value)return
+ if(form.action!=='renew'||!auth.hasPermission('order:read')||!current.value)return
  try{
   const d=data(await businessRelationsApi.paidRenewalOrders(Number(form.serviceId)))
   paidRenewalOrders.value=d.items||[]
@@ -121,6 +123,7 @@ async function submit(){
 watch(()=>route.query.serviceId,v=>{if(v)form.serviceId=Number(v)})
 watch(()=>route.query.action,v=>{const a=String(v||'');if(['renew','suspend','resume','terminate'].includes(a))form.action=a})
 watch(()=>form.serviceId,loadRenewalOrders)
+watch(()=>form.action,loadRenewalOrders)
 onMounted(async()=>{await load();await loadRenewalOrders()})
 </script>
 <template>
@@ -165,7 +168,7 @@ onMounted(async()=>{await load();await loadRenewalOrders()})
         <el-button v-if="form.action==='renew'&&form.renewalOrderId&&auth.hasPermission('order:read')" link type="primary"
           style="margin:0 0 12px" @click="router.push('/orders/'+form.renewalOrderId)">查看此已付款续费订单</el-button>
         <el-form-item label="操作原因" required><el-input v-model="form.reason" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="填写可审计的业务原因"/></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="blocked||!auth.hasPermission('service:change')" :loading="saving" @click="submit">预览并确认{{actionLabels[form.action]}}</el-button><el-button v-if="form.serviceId" @click="router.push(`/services/${form.serviceId}`)">查看服务详情与任务</el-button></el-form-item>
+        <el-form-item><el-button type="primary" :disabled="blocked" :loading="saving" @click="submit">预览并确认{{actionLabels[form.action]}}</el-button><el-button v-if="form.serviceId" @click="router.push(`/services/${form.serviceId}`)">查看服务详情与任务</el-button></el-form-item>
       </el-form>
     </el-card>
     <el-alert v-if="result" :type="result.failed?'error':'warning'" :closable="false">
