@@ -113,9 +113,13 @@ public class ProductGraceReleaseCommitter {
         Long legacy=jdbc.queryForObject("""
             SELECT count(*) FROM res_exclusive_allocation
             WHERE deleted=FALSE AND status IN ('LOCKED','ALLOCATED','PENDING_RECYCLE')
-              AND service_id IS DISTINCT FROM ?
-              AND (current_ip_snapshot=CAST(? AS inet) OR current_ip_snapshot IS NULL)
-            """,Long.class,serviceId,ip);
+              AND (
+                (service_id IS DISTINCT FROM ?
+                    AND (current_ip_snapshot=CAST(? AS inet) OR current_ip_snapshot IS NULL))
+                OR (service_id=? AND (current_ip_snapshot IS NULL
+                    OR current_ip_snapshot<>CAST(? AS inet)))
+              )
+            """,Long.class,serviceId,ip,serviceId,ip);
         if(legacy==null||legacy>0)
             throw fail("RELEASE_LEGACY_UNRECONCILED","遗留独享出口仍有冲突或未验证的快照");
 
