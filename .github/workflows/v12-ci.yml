@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, feature/v1.2-full-upgrade, feature/v1.2-round3-unified-baseline-20261014]
   pull_request:
-    branches: [main, feature/v1.2-full-upgrade]
+    branches: [main, feature/v1.2-full-upgrade, feature/v1.2-round3-unified-baseline-20261014]
 
 jobs:
   frontend-build:
@@ -45,6 +45,9 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Verify short-IP allocation guard
+        run: mvn -B -Dtest=OpenApiMapperGuardTest test
+        working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
         working-directory: backend
