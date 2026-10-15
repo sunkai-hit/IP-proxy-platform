@@ -21,7 +21,9 @@ async function load(){loading.value=true;try{
  const d=data(await externalDeliveryApi.reverseProxies(q))
  rows.value=d.items||[];total.value=d.total||0
 }finally{loading.value=false}}
+let purchaseLookupVersion=0
 async function openCreate(){
+ ++purchaseLookupVersion
  Object.assign(form,{purchaseId:null,customerId:null,serviceId:null,protocolCode:'HTTP',
   upstreamHost:'',upstreamPort:8080,upstreamAccount:'',upstreamSecret:'',
   platformHost:'',platformPort:8080,platformAccount:'',platformSecret:'',
@@ -35,19 +37,33 @@ async function openCreate(){
  drawer.value=true
 }
 async function purchaseChanged(){
+ const version=++purchaseLookupVersion
  form.serviceId=null;services.value=[]
  const p=selectedPurchase.value
- form.customerId=p?.customer_id||null
- if(!p?.customer_id)return
+ const purchaseId=Number(p?.id)
+ const customerId=Number(p?.customer_id)
+ form.customerId=customerId||null
+ if(!customerId)return
  try{
-  const o=data(await externalDeliveryApi.options(Number(p.customer_id)))
+  const o=data(await externalDeliveryApi.options(customerId))
+  // Do not show services from the previous customer if the selected
+  // supplier purchase changed before the response was received.
+  if(version!==purchaseLookupVersion||Number(form.purchaseId)!==purchaseId||
+     Number(form.customerId)!==customerId)return
   services.value=o.services||[]
- }catch{ElMessage.error('无法读取采购客户的服务清单，禁止猜测服务归属')}
+ }catch{
+  if(version===purchaseLookupVersion)
+   ElMessage.error('无法读取采购客户的服务清单，禁止猜测服务归属')
+ }
 }
 async function save(){
  if(saving.value)return
  if(!selectedPurchase.value){ElMessage.warning('请选择已经登记的供应商客户专属采购');return}
  if(!isPayEligible.value){ElMessage.warning('库存采购没有关联付款客户，不允许直接创建客户反向代理');return}
+ if(Number(form.customerId)!==Number(selectedPurchase.value.customer_id)||
+    (form.serviceId&&!services.value.some(x=>Number(x.id)===Number(form.serviceId)))){
+  ElMessage.warning('采购归属或目标服务已变化，请重新选择');return
+ }
  if(!form.upstreamHost.trim()||!form.platformHost.trim()||!form.upstreamPort||!form.platformPort){
   ElMessage.warning('请填写有效的上游与平台代理入口');return
  }
