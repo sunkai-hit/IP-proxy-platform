@@ -284,6 +284,14 @@ jobs:
           ZERO_PKG_JSON=$(printf '{"packageCode":"CI-ZERO-GRACE-R3","productId":%s,"packageName":"CI zero grace long","serviceDays":30,"price":25,"currency":"CNY","graceDays":0,"zeroGraceRiskAccepted":true}' "$LPID")
           ZERO_PKG=$(curl -fsS -H "$H" -H "$J" -d "$ZERO_PKG_JSON" http://localhost:8080/api/admin/v1/packages)
           ZPKGID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$ZERO_PKG")
+          # V1.3 multi-team rule: LONG preview must not instruct operators
+          # to pick a NEW line before checking reusable verified shared egress.
+          LONG_ORDER=$(curl -fsS -H "$H" -H "$J" -d "$(printf '{"customerId":%s,"orderType":"NEW","items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$LPID" "$ZPKGID")" http://localhost:8080/api/admin/v1/orders)
+          LONG_OID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$LONG_ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"V1.3 long shared egress review"}' "http://localhost:8080/api/admin/v1/orders/$LONG_OID/confirm" >/dev/null
+          LONG_PREVIEW=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/orders/$LONG_OID/provision-preview")
+          python3 -c 'import json,sys; p=json.load(sys.stdin)["data"]; assert len(p["items"])==1 and p["items"][0]["product_type"]=="LONG_IP"; advice=p["items"][0]["deliveryAdvice"]; assert "优先复用" in advice and "共享出口" in advice and "产品组" in advice; assert p["paymentReady"] is False' <<< "$LONG_PREVIEW"
+          echo 'V1.3 long-IP order preview prefers eligible shared egress and requires product-side conversion'
           curl -fsS -H "$H" -H "$J" -d '{"reason":"CI disable new zero day package"}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/disable" >/dev/null
           ZERO_ENABLE_UNACK=$(curl -s -o /tmp/r3-zero-enable-unack.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI no zero day acknowledgement"}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/enable")
           test "$ZERO_ENABLE_UNACK" -eq 400
