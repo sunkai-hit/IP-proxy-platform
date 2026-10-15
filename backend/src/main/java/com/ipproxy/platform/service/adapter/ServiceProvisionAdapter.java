@@ -7,6 +7,11 @@ public interface ServiceProvisionAdapter {
     Result provision(String productType,Long serviceId,Map<String,Object> context);
     Result release(String productType,Long serviceId,Map<String,Object> context);
     /**
+     * An unavailable or unreviewed product adapter is NOT a valid provisioning
+     * capability. The synthetic m6-mock adapter opts in for CI only.
+     */
+    default boolean canProvision(String productType){return false;}
+    /**
      * Actual data-plane commands are opt-in. Never infer a network pause, resume or term update
      * from a database status mutation or an old mock implementation.
      */
