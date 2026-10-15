@@ -78,7 +78,11 @@ jobs:
           PRODUCT_AUTH_CODE=$(curl -s -o /tmp/product-auth-denied.json -w '%{http_code}' \
             -H 'Content-Type: application/json' -d '{"subjectId":"1","serviceId":"1","action":"SHORT_EXTRACT","requestedUnits":1,"requestId":"ci-deny"}' \
             http://localhost:8080/business/v1/authorizations/check)
-          test "$PRODUCT_AUTH_CODE" = "403"
+          echo "Product authorization default-off HTTP status: $PRODUCT_AUTH_CODE"
+          if [ "$PRODUCT_AUTH_CODE" != "403" ]; then
+            cat /tmp/product-auth-denied.json || true
+            exit 1
+          fi
           echo 'Product authorization endpoint defaults closed (HTTP 403)'
 
           H="Authorization: Bearer $TOKEN"
