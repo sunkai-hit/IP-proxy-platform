@@ -16,6 +16,7 @@ FRONT_RE=re.compile(r"""http\.(get|post|put|patch|delete)\(\s*(\x60[^\x60]+\x60|
 ROOT_RE=re.compile(r"""(?:const|let)\s+([a-zA-Z]+)\s*=\s*(['"])(/[^'"]+)\2""")
 CLASS_RE=re.compile(r"""@RequestMapping\(\s*"([^"]+)""")
 MAP_RE=re.compile(r"""@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"([^"]+)""")
+ROOT_MAPPING_RE=re.compile(r"""@(Get|Post|Put|Patch|Delete)Mapping\b(?!\s*\()""")
 EXP_RE=re.compile(r"\$\{([^}]+)\}")
 VAR_RE=re.compile(r"\{[^}]+\}")
 MUST_HAVE={
@@ -78,6 +79,10 @@ def backend():
         base=(CLASS_RE.search(src).group(1) if CLASS_RE.search(src) else "")
         for match in MAP_RE.finditer(src):
             endpoints.add((match.group(1).lower(),norm(base+match.group(2))))
+        # Spring also accepts bare @GetMapping with no parentheses:
+        # the handler is mounted at the controller's base URL.
+        for match in ROOT_MAPPING_RE.finditer(src):
+            endpoints.add((match.group(1).lower(),norm(base)))
     return endpoints
 
 def main()->int:
