@@ -32,7 +32,7 @@ public class V12ServiceLifecycleService {
         for(Map<String,Object> item:db.orderItems(orderId)){
             Map<String,Object> row=new LinkedHashMap<>(item);
             String type=String.valueOf(item.get("product_type"));
-            row.put("deliveryAdvice",switch(type){case "SHORT_IP"->"共享资源池动态分配";case "LONG_IP"->"长效线路固定绑定";case "EXCLUSIVE_IP"->"独享线路占用";case "VPN"->"VPN专项数据面";case "TUNNEL"->"隧道专项数据面";default->"请核对产品";});
+            row.put("deliveryAdvice",switch(type){case "SHORT_IP"->"共享资源池动态分配";case "LONG_IP"->"优先复用已验证且有余量的长效共享出口；无可用出口时需产品组确认短效转长效后再交付固定IPv4";case "EXCLUSIVE_IP"->"独享线路占用";case "VPN"->"VPN专项数据面";case "TUNNEL"->"隧道专项数据面";default->"请核对产品";});
             if("EXCLUSIVE_IP".equals(type)){
                 int needed=db.exclusiveRequiredLines(((Number)item.get("product_id")).longValue(),
                     item.get("package_id")==null?null:((Number)item.get("package_id")).longValue());
