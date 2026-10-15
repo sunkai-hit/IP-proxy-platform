@@ -14,15 +14,31 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api/admin/v1/v12/delivery-actions")
 public class ProductTaskReconcileController {
     private final ProductTaskReconciler reconciler;
-    public ProductTaskReconcileController(ProductTaskReconciler reconciler){
-        this.reconciler=reconciler;
+    private final ProductExpiryStopDispatcher dispatcher;
+    public ProductTaskReconcileController(ProductTaskReconciler reconciler,
+                                          ProductExpiryStopDispatcher dispatcher){
+        this.reconciler=reconciler;this.dispatcher=dispatcher;
+    }
+    /**
+     * Default-off privileged operation. Sends only a scoped PAUSE for an already
+     * due service and keeps its business status and fixed IPv4 claims untouched.
+     */
+    @PostMapping("/{operationKey}/dispatch-expiry-stop")
+    public ApiResponse<ProductExpiryStopDispatcher.DispatchResult> dispatchExpiryStop(
+            @PathVariable String operationKey,@AuthenticationPrincipal UserPrincipal actor){
+        requireRelease(actor);
+        return ApiResponse.success(dispatcher.dispatch(operationKey,actor.userId()));
+    }
+
+    private void requireRelease(UserPrincipal actor){
+        if(actor==null||(!actor.roles().contains("SUPER_ADMIN")
+                &&!actor.permissions().contains("service:release")))
+            throw new BusinessException("AUTH_FORBIDDEN","当前账号无任务核对与真实停服权限");
     }
     @PostMapping("/{operationKey}/reconcile")
     public ApiResponse<ProductTaskReconciler.ReconcileResult> reconcile(
             @PathVariable String operationKey,@AuthenticationPrincipal UserPrincipal actor){
-        if(actor==null || (!actor.roles().contains("SUPER_ADMIN")
-                && !actor.permissions().contains("service:release")))
-            throw new BusinessException("AUTH_FORBIDDEN","当前账号无任务核对权限");
+        requireRelease(actor);
         return ApiResponse.success(reconciler.reconcile(operationKey));
     }
 }
