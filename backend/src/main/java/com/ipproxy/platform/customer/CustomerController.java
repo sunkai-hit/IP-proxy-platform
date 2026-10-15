@@ -34,7 +34,10 @@ public class CustomerController {
     @PostMapping("/customers/{id}/freeze") public ApiResponse<?> freezeCustomer(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:status");service.changeCustomerStatus(id,"FROZEN",b.reason,p,ip(r));return ApiResponse.success();}
     @PostMapping("/customers/{id}/resume") public ApiResponse<?> resumeCustomer(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:status");service.changeCustomerStatus(id,"ACTIVE",b.reason,p,ip(r));return ApiResponse.success();}
     @PostMapping("/customers/{id}/disable") public ApiResponse<?> disableCustomer(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:status");service.changeCustomerStatus(id,"DISABLED",b.reason,p,ip(r));return ApiResponse.success();}
-    @GetMapping("/customers/{id}/services") public ApiResponse<?> services(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"customer:read");return ApiResponse.success(service.services(id));}
+    @GetMapping("/customers/{id}/services") public ApiResponse<?> services(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){
+        require(p,"customer:read");require(p,"service:read");
+        return ApiResponse.success(service.services(id));
+    }
     @GetMapping("/customers/{id}/credentials") public ApiResponse<?> credentials(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"customer:credential:read");return ApiResponse.success(service.credentials(id));}
     @GetMapping("/customers/{id}/usage") public ApiResponse<?> usage(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"customer:read");return ApiResponse.success(service.usage(id));}
     @PostMapping("/customers/{id}/auth") public ApiResponse<?> createAuth(@PathVariable Long id,@RequestBody AuthCreateRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:write");return ApiResponse.success(Map.of("id",service.createAuth(id,b.authTypeCode,b.submittedData,b.attachmentRefs,p,ip(r))));}
