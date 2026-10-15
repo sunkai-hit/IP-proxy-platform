@@ -213,6 +213,9 @@ jobs:
           python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["created"]==0 and d["existing"]>=2 and not d["dataPlaneVerified"]' <<< "$SECOND"
           TASK_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_action_task WHERE service_id IN ($EXP0,$EXP3) AND action_type='STOP_FOR_GRACE'")
           test "$TASK_COUNT" -eq 2
+          V13_QUEUE=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/service-expiry/queue)
+          python3 -c 'import json,sys; a=json.load(sys.stdin)["data"]; ids=set(sys.argv[1:]); b=[r for r in a if str(r["serviceId"]) in ids]; assert len(b)==2; assert all(r.get("operationKey","").startswith("expiry:STOP_FOR_GRACE:") and r.get("actionType")=="STOP_FOR_GRACE" and r.get("taskStatus")=="PRECHECK_BLOCKED" for r in b)' "$EXP0" "$EXP3" <<< "$V13_QUEUE"
+          echo 'V1.3 expiry queue contains durable task operation IDs and statuses'
           STATUS_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_instance WHERE id IN ($EXP0,$EXP3) AND status='ACTIVE' AND expiry_phase='STOP_PENDING'")
           test "$STATUS_COUNT" -eq 2
           CLAIM_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_egress_claim WHERE service_id IN ($EXP0,$EXP3) AND claim_status='RELEASED'")
