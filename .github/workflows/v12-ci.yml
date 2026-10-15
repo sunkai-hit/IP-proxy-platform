@@ -73,6 +73,14 @@ jobs:
           for i in {1..60}; do curl -fsS http://localhost:8080/actuator/health >/dev/null && break || sleep 2; done
           LOGIN=$(curl -fsS -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' http://localhost:8080/api/admin/v1/auth/login)
           TOKEN=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])' <<< "$LOGIN")
+          # Product-group authorization endpoint stays closed when no integration
+          # key is configured, even if a caller knows customer/service IDs.
+          PRODUCT_AUTH_CODE=$(curl -s -o /tmp/product-auth-denied.json -w '%{http_code}' \
+            -H "$J" -d '{"subjectId":"1","serviceId":"1","action":"SHORT_EXTRACT","requestedUnits":1,"requestId":"ci-deny"}' \
+            http://localhost:8080/business/v1/authorizations/check)
+          test "$PRODUCT_AUTH_CODE" = "403"
+          echo 'Product authorization endpoint defaults closed (HTTP 403)'
+
           H="Authorization: Bearer $TOKEN"
           J='Content-Type: application/json'
 
