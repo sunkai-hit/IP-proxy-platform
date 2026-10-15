@@ -125,7 +125,7 @@ class ProductExpiryStopCommitterTest {
                 ()->new ProductExpiryStopCommitter(db,new ObjectMapper()).commit("expiry-stop-91",3L)).getCode());
         assertTrue(db.updates.isEmpty());
     }
-    @Test void claimUpdateRaceCausesTransactionRollback(){
+    @Test void claimUpdateRaceCausesTransactionRollback() throws NoSuchMethodException {
         Ledger db=ledger();db.held=0;
         assertEquals("EGRESS_CLAIM_CONCURRENT",assertThrows(BusinessException.class,
                 ()->new ProductExpiryStopCommitter(db,new ObjectMapper()).commit("expiry-stop-91",3L)).getCode());
