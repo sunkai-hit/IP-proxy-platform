@@ -3,11 +3,13 @@ import { onMounted,reactive,ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage,ElMessageBox } from 'element-plus'
 import { orderServiceApi } from '@/api/orderService'
+import { http } from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 
 const router=useRouter(),auth=useAuthStore(),tab=ref('queue')
 const loading=ref(false),scanning=ref(false),queue=ref<any[]>([]),rows=ref<any[]>([]),total=ref(0),lastScan=ref<any>(null)
 const q=reactive<any>({page:1,size:20,status:'',phase:''})
+const taskDrawer=ref(false),taskLoading=ref(false),taskDetail=ref<any>(null),releasePlan=ref<any>(null)
 const data=(r:any)=>r.data.data
 const states:Record<string,string>={
   NONE:'未进入到期阶段',STOP_PENDING:'待真实停服',GRACE_HELD:'宽限保留（已验证停服）',
@@ -41,6 +43,22 @@ async function reconcile(){
  }catch{ElMessage.error('扫描未完成，请核查权限及后端日志')}
  finally{scanning.value=false}
 }
+async function showTask(row:any){
+ if(!row.operationKey){ElMessage.warning('本服务尚未生成操作任务，请先执行受控扫描');return}
+ taskLoading.value=true;taskDetail.value=null;releasePlan.value=null;taskDrawer.value=true
+ try{
+  taskDetail.value=data(await http.get(`/v12/delivery-actions/${encodeURIComponent(row.operationKey)}`))
+ }catch{ElMessage.error('任务详情读取失败；真实代理状态不能推断为已完成')}
+ finally{taskLoading.value=false}
+}
+async function inspectRelease(){
+ if(!taskDetail.value?.operationKey||taskDetail.value?.action!=='RELEASE')return
+ taskLoading.value=true;releasePlan.value=null
+ try{
+  releasePlan.value=data(await http.get(`/v12/release-inspections/${encodeURIComponent(taskDetail.value.operationKey)}`))
+ }catch{ElMessage.warning('释放预检未通过：合同宽限、其他共享客户占用或产品端证明可能尚不满足条件')}
+ finally{taskLoading.value=false}
+}
 onMounted(load)
 </script>
 <template>
@@ -69,7 +87,14 @@ onMounted(load)
       <el-table-column prop="graceUntilAt" label="宽限截至" min-width="175"/>
       <el-table-column label="任务阶段" min-width="170"><template #default="s"><el-tag :type="s.row.expiryPhase==='RELEASED'?'success':'warning'">{{states[s.row.expiryPhase]||s.row.expiryPhase}}</el-tag></template></el-table-column>
       <el-table-column label="待办原因" min-width="220"><template #default="s">{{reasons[s.row.nextRequiredAction]||s.row.nextRequiredAction}}</template></el-table-column>
-      <el-table-column label="操作" width="100"><template #default="s"><el-button link type="primary" @click="router.push('/services/'+s.row.serviceId)">查看服务</el-button></template></el-table-column>
+      <el-table-column label="实际操作任务" min-width="230"><template #default="s">
+       <template v-if="s.row.operationKey"><div>{{s.row.actionType==='RELEASE'?'资源释放':'到期停服'}} · {{s.row.taskStatus||'未确认'}}</div><el-text type="info" size="small">{{s.row.taskStage||'—'}}</el-text></template>
+       <el-text v-else type="info">未登记</el-text>
+      </template></el-table-column>
+      <el-table-column label="操作" width="165"><template #default="s">
+       <el-button link type="primary" @click="router.push('/services/'+s.row.serviceId)">服务</el-button>
+       <el-button link :disabled="!s.row.operationKey" @click="showTask(s.row)">任务</el-button>
+      </template></el-table-column>
      </el-table>
     </el-tab-pane>
     <el-tab-pane name="release" label="释放结果记录">
@@ -79,6 +104,29 @@ onMounted(load)
     </el-tab-pane>
    </el-tabs>
   </el-card>
+  <el-drawer v-model="taskDrawer" title="实际操作任务与交付核对" size="540px">
+   <div v-loading="taskLoading">
+    <el-alert type="warning" :closable="false" show-icon title="本页只展示任务台账和释放预检，不会下发代理操作或直接释放公网IPv4。真实操作需产品组环境及授权。" />
+    <el-descriptions v-if="taskDetail" border :column="1" style="margin-top:16px">
+     <el-descriptions-item label="业务任务编号">{{taskDetail.operationKey}}</el-descriptions-item>
+     <el-descriptions-item label="服务编号">{{taskDetail.serviceId}}</el-descriptions-item>
+     <el-descriptions-item label="动作">{{taskDetail.action}}</el-descriptions-item>
+     <el-descriptions-item label="任务状态">{{taskDetail.taskStatus}}</el-descriptions-item>
+     <el-descriptions-item label="执行阶段">{{taskDetail.stage}}</el-descriptions-item>
+     <el-descriptions-item label="产品组操作编号">{{taskDetail.remoteOperationId||'尚未下发'}}</el-descriptions-item>
+     <el-descriptions-item label="最近异常">{{taskDetail.lastErrorMessage||taskDetail.lastErrorCode||'无'}}</el-descriptions-item>
+    </el-descriptions>
+    <div v-if="taskDetail?.action==='RELEASE'" style="margin-top:16px">
+     <el-button :loading="taskLoading" @click="inspectRelease">检查宽限及共享客户占用</el-button>
+     <el-alert v-if="releasePlan" style="margin-top:12px" type="info" :closable="false" show-icon
+      :title="releasePlan.ready?'仅满足业务释放预检，不代表代理已回池':'未满足释放条件'">
+      <div v-for="claim in releasePlan.claims||[]" :key="claim.claimId">
+       {{claim.ipv4}} · {{claim.releasePlan==='UNBIND_SERVICE_ONLY'?'仅解绑本服务':'最后占用，待产品组真实回短效核验'}} · 其他占用{{claim.otherProtectedClaims}}
+      </div>
+     </el-alert>
+    </div>
+   </div>
+  </el-drawer>
  </div>
 </template>
 <style scoped>
