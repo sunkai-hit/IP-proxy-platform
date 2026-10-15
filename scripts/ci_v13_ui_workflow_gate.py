@@ -34,12 +34,9 @@ REQUIRED_MARKERS={
  ],
  "service/OrderListView.vue":[
   "route.query.customerId","route.query.renewalServiceId",
-  "loadRenewTargets","renewLookupVersion","sourceCustomerOrderId" if False else "renewalServiceId",
+  "loadRenewTargets","renewLookupVersion","renewalServiceId",
  ],
  "service/OrderDetailView.vue":[
-  "businessRelationsApi.orderServices","RENEWAL_TARGET","CREATED_FROM_ORDER",
-  "paymentConfirm","goRenew","orderServiceApi.provision",
- ] if False else [
   "businessRelationsApi.orderServices","RENEWAL_TARGET","paymentConfirm",
   "goRenew","'/service-provision'","row.items",
  ],
