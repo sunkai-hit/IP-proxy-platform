@@ -531,15 +531,10 @@ jobs:
               'customer:access','customer:read','order-service:access',
               'order:read','service:read')
           ON CONFLICT DO NOTHING;
-          DO $
-          BEGIN
-            IF (SELECT count(*) FROM sys_role_permission rp
-                JOIN sys_role r ON rp.role_id=r.id
-                WHERE r.role_code='CI_V13_READONLY') <> 5 THEN
-              RAISE EXCEPTION 'CI least-privilege role must have exactly five read/menu permissions';
-            END IF;
-          END $;
           SQL
+          RBAC_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM sys_role_permission rp JOIN sys_role r ON rp.role_id=r.id WHERE r.role_code='CI_V13_READONLY'")
+          test "$RBAC_COUNT" = "5"
+          echo 'CI least-privilege actor seeded with exactly five read/menu permissions'
           # The same Spring Boot, PostgreSQL and Redis instances remain live
           # for actual Chromium user-interface E2E. No product-group network
           # writes are enabled; source records use synthetic CI adapter data.
