@@ -49,8 +49,8 @@ public class V12ServiceLifecycleService {
                     row.put("resourcePrecheck",Map.of("poolCode",d.poolCode(),"lineCode",d.lineCode()==null?"动态选择":d.lineCode()));
                 }catch(BusinessException ex){row.put("precheckError","当前可用资源不足，请核查资源池与线路状态");}
             }
-            if(Set.of("VPN","TUNNEL").contains(type)&&adapter instanceof com.ipproxy.platform.service.adapter.NoopServiceProvisionAdapter)
-                row.put("warning","实际数据面适配器尚未配置，无法真正开通");
+            if(!adapter.canProvision(type))
+                row.put("warning","产品组真实开通接口尚未配置；自有交付不可提交。可核对已付款的外部代理交付能力");
             items.add(row);
         }
         return Map.of("order",order,"items",items,"availableReverseProxies",db.availableReverseProxies(((Number)order.get("customer_id")).longValue()),"alreadyProvisioned",db.existingServicesForOrder(orderId)>0,"paymentReady","PAID_CONFIRMED".equals(String.valueOf(order.get("payment_status"))));
@@ -104,11 +104,23 @@ public class V12ServiceLifecycleService {
         return Map.of("orderId",orderId,"status","PROVISIONED","services",results);
     }
 
-    @Transactional public Map<String,Object> manualProvision(ProvisionInput in,UserPrincipal actor,String ip){required(in.remark(),"手工开通必须填写操作原因");return provision(in,null,null,actor,ip);}
+    @Transactional public Map<String,Object> manualProvision(ProvisionInput in,UserPrincipal actor,String ip){
+        required(in.remark(),"手工开通必须填写操作原因");
+        // The legacy endpoint has no paid order or item reference. New customer
+        // services must originate from a verified paid order; CI-only Mock
+        // fixtures retain the historic synthetic scenario.
+        if(!(adapter instanceof com.ipproxy.platform.service.adapter.MockServiceProvisionAdapter))
+            throw err("ORDER_PAYMENT_REQUIRED","手工直接开通无法关联已核实付款的订单；请从已付款订单执行开通");
+        return provision(in,null,null,actor,ip);
+    }
 
     private Map<String,Object> provision(ProvisionInput in,Long orderId,Long itemId,UserPrincipal actor,String ip){Map<String,Object> customer=db.customer(in.customerId());if(customer==null||!"ACTIVE".equals(String.valueOf(customer.get("status"))))throw err("CUSTOMER_NOT_ACTIVE","客户不存在或非正常状态");Map<String,Object> product=db.product(in.productId());if(product==null||!"ACTIVE".equals(String.valueOf(product.get("status"))))throw err("PRODUCT_NOT_ACTIVE","产品不存在或未启用");Map<String,Object> pkg=in.packageId()==null?null:db.pkg(in.packageId());if(pkg!=null&&!"ACTIVE".equals(String.valueOf(pkg.get("status"))))throw err("PACKAGE_NOT_ACTIVE","套餐已停用");if(pkg!=null&&!Objects.equals(((Number)pkg.get("product_id")).longValue(),in.productId()))throw err("PACKAGE_PRODUCT_MISMATCH","套餐不属于当前产品");String productType=String.valueOf(product.get("product_type"));String delivery=n(in.deliveryMode()).isBlank()?"SELF_OWNED":in.deliveryMode().trim().toUpperCase(Locale.ROOT);if(!Set.of("SELF_OWNED","EXTERNAL_PROXY").contains(delivery))throw err("DELIVERY_MODE_INVALID","未知服务交付方式");OffsetDateTime effective=in.effectiveAt()==null?OffsetDateTime.now(ZoneOffset.UTC):in.effectiveAt();OffsetDateTime expire=in.expireAt();if(expire==null&&pkg!=null)expire=effective.plusDays(((Number)pkg.get("service_days")).longValue());if(expire==null)throw err("SERVICE_EXPIRE_REQUIRED","必须选择服务到期时间或有效套餐");if(!expire.isAfter(effective))throw err("SERVICE_DATE_INVALID","到期时间必须晚于生效时间");if(Set.of("LONG_IP","EXCLUSIVE_IP").contains(productType)&&(pkg==null||pkg.get("grace_days")==null))throw err("PACKAGE_GRACE_REQUIRED","长效/独享必须选有明确宽限设置的套餐");String serviceNo=db.nextServiceNo();String quota=pkg==null?"{}":j(Map.of("packageId",pkg.get("id"),"packageCode",pkg.get("package_code"),"serviceDays",pkg.get("service_days")));
         BuiltinResourcePolicy.Decision decision=null;Long purchaseId=null,reverseProxyId=null;Map<String,Object> externalProxy=null;String policyCode;
-        if("SELF_OWNED".equals(delivery)){decision=policy.decide(productType,in.productId(),in.packageId(),in.customerId());policyCode=decision.policyCode();}
+        if("SELF_OWNED".equals(delivery)){
+            if(!adapter.canProvision(productType))
+                throw err("PRODUCT_ADAPTER_UNAVAILABLE","代理产品组真实开通接口未配置，不能创建可用服务或声称交付成功");
+            decision=policy.decide(productType,in.productId(),in.packageId(),in.customerId());policyCode=decision.policyCode();
+        }
         else {reverseProxyId=in.reverseProxyId();if(reverseProxyId==null)throw err("REVERSE_PROXY_REQUIRED","外部交付必须选择反向代理配置");Map<String,Object> rp=db.lockedReverseProxy(reverseProxyId);externalProxy=rp;
             if(rp==null)throw err("REVERSE_PROXY_NOT_FOUND","反向代理不存在");
             if(!Objects.equals(((Number)rp.get("customer_id")).longValue(),in.customerId()))throw err("REVERSE_PROXY_CUSTOMER_MISMATCH","反向代理与客户不匹配");
