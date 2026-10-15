@@ -77,6 +77,9 @@ class ProductExpiryStopCommitterTest {
         assertTrue(db.updates.get(1).contains("WHERE service_id=?"));
         assertTrue(db.updates.get(2).contains("status='FROZEN'"));
         assertTrue(db.updates.get(3).contains("stage='BUSINESS_COMMITTED'"));
+        assertTrue(db.updates.get(3).contains("businessCommittedBy"));
+        assertFalse(db.updates.get(3).contains("actor_user_id=?"),
+                "preserve original task dispatch actor in the durable audit trail");
         for(String sql:db.updates){
             assertFalse(sql.contains("res_exclusive_allocation"),"never release legacy exclusive allocation");
             assertFalse(sql.contains("claim_status='RELEASED'"),"never recycle fixed IPv4 during grace");
