@@ -100,9 +100,19 @@ public class V12ExpiryTaskPlanner {
                      THEN 'GRACE_HOLD_ACTIVE'
                    WHEN s.status='EXPIRED' THEN 'RELEASE_NOT_VERIFIED'
                    ELSE 'CHECK_SERVICE_STATE' END "nextRequiredAction",
-                 (SELECT max(t.updated_at) FROM svc_action_task t
-                    WHERE t.service_id=s.id) "lastTaskAt"
+                 task.operation_key "operationKey",
+                 task.action_type "actionType",
+                 task.task_status "taskStatus",
+                 task.stage "taskStage",
+                 task.remote_operation_id "remoteOperationId",
+                 task.updated_at "lastTaskAt"
           FROM svc_instance s
+          LEFT JOIN LATERAL (
+            SELECT t.operation_key,t.action_type,t.task_status,t.stage,
+                   t.remote_operation_id,t.updated_at
+            FROM svc_action_task t WHERE t.service_id=s.id
+            ORDER BY t.created_at DESC,t.id DESC LIMIT 1
+          ) task ON TRUE
           WHERE s.deleted=FALSE AND s.product_type IN ('LONG_IP','EXCLUSIVE_IP')
             AND (?='' OR s.expiry_phase=?)
           ORDER BY s.expire_at NULLS LAST,s.id LIMIT ?
