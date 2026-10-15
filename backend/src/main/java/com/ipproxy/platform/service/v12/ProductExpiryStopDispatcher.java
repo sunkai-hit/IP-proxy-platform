@@ -28,6 +28,8 @@ public class ProductExpiryStopDispatcher {
              String taskStatus,String stage,boolean businessStateChanged,String note){}
 
     public DispatchResult dispatch(String key,Long actorUserId){
+        if(actorUserId==null||actorUserId<=0)
+            throw new BusinessException("AUTH_FORBIDDEN","必须由经业务平台认证的操作人员触发远程停服");
         if(key==null||key.isBlank()||key.length()>128)
             throw new BusinessException("TASK_OPERATION_INVALID","无效操作编号");
         if(!remote.ready())
