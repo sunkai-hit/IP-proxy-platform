@@ -32,10 +32,17 @@ MUST_HAVE={
     ("post","/v12/service-expiry/reconcile"),
     ("get","/v12/delivery-actions/{id}"),
     ("get","/v12/release-inspections/{id}"),
-    ("post","/v12/release-actions/{id}/dispatch"),
-    ("post","/v12/release-actions/{id}/commit"),
     ("get","/v12/resources/lines"),("get","/v12/resources/lines/{id}"),
     ("get","/v12/external-delivery/purchases"),
+}
+
+# These privileged product-group writes are deliberately NOT exposed to
+# the management UI until real product infrastructure is signed off.
+SERVER_ONLY={
+    ("post","/v12/release-actions/{id}/dispatch"),
+    ("post","/v12/release-actions/{id}/commit"),
+    ("post","/v12/delivery-actions/{id}/dispatch-expiry-stop"),
+    ("post","/v12/delivery-actions/{id}/commit-expiry-stop"),
 }
 
 def norm(path:str)->str:
@@ -46,7 +53,9 @@ def norm(path:str)->str:
 def frontend():
     endpoints=set()
     skips=[]
-    for file in FRONT.glob("*.ts"):
+    # Some existing operational read panels issue GET directly from Vue views
+    # instead of routing through the thin API module.
+    for file in list(FRONT.glob("*.ts"))+list((ROOT/"frontend/src/views").rglob("*.vue")):
         src=file.read_text(encoding="utf-8")
         aliases={m.group(1):m.group(3) for m in ROOT_RE.finditer(src)}
         for match in FRONT_RE.finditer(src):
@@ -77,13 +86,14 @@ def main()->int:
     front,skips=frontend()
     back=backend()
     critical=[x for x in sorted(MUST_HAVE) if x not in front or x not in back]
+    critical += [x for x in sorted(SERVER_ONLY) if x not in back]
     if critical:
         for route in critical:
             print("FAIL route:",route,"frontend",route in front,"backend",route in back)
         return 1
     overlap=front & back
     unmatched=sorted(front-back)
-    print(f"V1.3 API contract: {len(MUST_HAVE)} critical routes match methods and paths")
+    print(f"V1.3 API contract: {len(MUST_HAVE)} frontend routes match and {len(SERVER_ONLY)} privileged backend-only write routes exist")
     print(f"Static coverage: {len(overlap)} of {len(front)} literal frontend endpoints matched; {len(back)} backend mappings discovered")
     for method,path in unmatched:
         print("REVIEW unmatched frontend route:",method.upper(),path)
