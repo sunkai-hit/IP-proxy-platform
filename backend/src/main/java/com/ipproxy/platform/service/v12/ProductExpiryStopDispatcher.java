@@ -27,7 +27,7 @@ public class ProductExpiryStopDispatcher {
     public record DispatchResult(String operationKey,String remoteOperationId,
              String taskStatus,String stage,boolean businessStateChanged,String note){}
 
-    public DispatchResult dispatch(String key){
+    public DispatchResult dispatch(String key,Long actorUserId){
         if(key==null||key.isBlank()||key.length()>128)
             throw new BusinessException("TASK_OPERATION_INVALID","无效操作编号");
         if(!remote.ready())
