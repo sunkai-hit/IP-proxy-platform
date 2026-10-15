@@ -18,7 +18,18 @@ public class CustomerController {
     @GetMapping("/customers") public ApiResponse<?> customers(@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int size,@RequestParam(defaultValue="") String keyword,@RequestParam(defaultValue="") String status,@RequestParam(defaultValue="") String authStatus,@RequestParam(defaultValue="") String customerTypeCode,@AuthenticationPrincipal UserPrincipal p){require(p,"customer:read");return ApiResponse.success(service.customers(page,size,keyword,status,authStatus,customerTypeCode));}
     @GetMapping("/customers/options") public ApiResponse<?> options(@AuthenticationPrincipal UserPrincipal p){require(p,"customer:read");return ApiResponse.success(service.options());}
     @PostMapping("/customers") public ApiResponse<?> createCustomer(@RequestBody CustomerRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:write");return ApiResponse.success(Map.of("id",service.createCustomer(b.customerName,b.customerTypeCode,b.contactName,b.contactPhone,b.contactEmail,b.ownerUserId,b.remark,p,ip(r))));}
-    @GetMapping("/customers/{id}") public ApiResponse<?> customer(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"customer:read");return ApiResponse.success(service.detail(id));}
+    @GetMapping("/customers/{id}") public ApiResponse<?> customer(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){
+        require(p,"customer:read");
+        Map<String,Object> detail=new LinkedHashMap<>(service.detail(id));
+        // Subtables are independently protected on their dedicated routes.
+        // Filtering only the Vue tabs is not sufficient to guard their data.
+        if(!p.roles().contains("SUPER_ADMIN")){
+            if(!p.permissions().contains("customer:auth:read"))detail.remove("authRecords");
+            if(!p.permissions().contains("customer:account:read"))detail.remove("accounts");
+            if(!p.permissions().contains("service:read"))detail.remove("services");
+        }
+        return ApiResponse.success(detail);
+    }
     @PutMapping("/customers/{id}") public ApiResponse<?> updateCustomer(@PathVariable Long id,@RequestBody CustomerRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:write");service.updateCustomer(id,b.customerName,b.customerTypeCode,b.contactName,b.contactPhone,b.contactEmail,b.ownerUserId,b.remark,p,ip(r));return ApiResponse.success();}
     @PostMapping("/customers/{id}/freeze") public ApiResponse<?> freezeCustomer(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:status");service.changeCustomerStatus(id,"FROZEN",b.reason,p,ip(r));return ApiResponse.success();}
     @PostMapping("/customers/{id}/resume") public ApiResponse<?> resumeCustomer(@PathVariable Long id,@RequestBody ActionReasonRequest b,@AuthenticationPrincipal UserPrincipal p,HttpServletRequest r){require(p,"customer:status");service.changeCustomerStatus(id,"ACTIVE",b.reason,p,ip(r));return ApiResponse.success();}
