@@ -59,7 +59,7 @@
   }
   function shell(){
     const r=current();
-    $('#app').innerHTML=`<div class="console-shell-static"><aside class="console-aside-static"><div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console</small></div></div><div class="console-menu-static">${navHtml()}</div></aside><section class="console-body-static"><header class="console-header-static"><div><span class="env-chip">V1.2</span><b>${r.title}</b></div><div class="header-user-static"><span>系统管理员</span><button class="header-link" data-action="demo">退出登录</button></div></header><main class="console-main-static"><div id="content"></div></main></section></div>`;
+    $('#app').innerHTML=`<div class="console-shell-static"><aside class="console-aside-static"><div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console</small></div></div><div class="console-menu-static">${navHtml()}</div></aside><section class="console-body-static"><header class="console-header-static"><div><span class="env-chip">V1.3</span><b>${r.title}</b></div><div class="header-user-static"><span>系统管理员</span><button class="header-link" data-action="demo">退出登录</button></div></header><main class="console-main-static"><div id="content"></div></main></section></div>`;
     $$('[data-route]').forEach(el=>el.onclick=()=>{state.route=el.dataset.route;const x=current();if(x.parent)state.openNav[x.parent]=true;if(x.module)state.page=x.module;if(x.tab!==undefined&&x.module)state.tabs[x.module]=x.tab;shell();renderConsolePage()});
     $$('[data-toggle]').forEach(el=>el.onclick=()=>{const k=el.dataset.toggle;state.openNav[k]=!isOpen({key:k});shell();renderConsolePage()});
     $$('[data-action]').forEach(el=>el.onclick=()=>showAction(el.dataset.action,el.textContent));
