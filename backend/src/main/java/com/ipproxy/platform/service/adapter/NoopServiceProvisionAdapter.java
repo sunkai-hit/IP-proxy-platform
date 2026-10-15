@@ -7,12 +7,14 @@ import java.util.Map;
 @Component
 @Profile("!m6-mock")
 public class NoopServiceProvisionAdapter implements ServiceProvisionAdapter {
+    /**
+     * Noop deliberately fails closed for ALL five products. Returning true
+     * here would create an ACTIVE business service without a real proxy.
+     */
     @Override public Result provision(String productType,Long serviceId,Map<String,Object> context){
-        if("VPN".equals(productType)||"TUNNEL".equals(productType)) return new Result(false,"VPN/隧道数据面适配器尚未配置",Map.of());
-        return new Result(true,"管理面逻辑开通完成",Map.of("mode","MANAGEMENT_PLANE"));
+        return new Result(false,"代理产品服务未接入，禁止将管理面记录视为真实开通",Map.of("verified",false,"mode","UNAVAILABLE"));
     }
     @Override public Result release(String productType,Long serviceId,Map<String,Object> context){
-        if("VPN".equals(productType)||"TUNNEL".equals(productType)) return new Result(false,"VPN/隧道数据面释放适配器尚未配置",Map.of());
-        return new Result(true,"管理面逻辑释放完成",Map.of("mode","MANAGEMENT_PLANE"));
+        return new Result(false,"代理产品服务未接入，无法确认已真实释放资源",Map.of("verified",false,"mode","UNAVAILABLE"));
     }
 }
