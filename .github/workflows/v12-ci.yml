@@ -279,6 +279,9 @@ jobs:
           AUTO_REPLACE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT auto_replace FROM prd_long_ip_config WHERE product_id=$LPID")
           test "$AUTO_REPLACE" = "f"
           echo 'LONG_IP manual-only product backend and database config guard verified'
+          # The preview below is a valid NEW order, so enable this synthetic
+          # LONG product before creating its order. Leave real provisioning off.
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI long product preview must use active catalog item"}' "http://localhost:8080/api/admin/v1/v12/products/$LPID/enable" >/dev/null
           ZERO_PKG_BASE=$(printf '{"packageCode":"CI-ZERO-GRACE-R3","productId":%s,"packageName":"CI zero grace long","serviceDays":30,"price":25,"currency":"CNY","graceDays":0}' "$LPID")
           ZERO_UNACK=$(curl -s -o /tmp/r3-zero-create-unack.json -w '%{http_code}' -H "$H" -H "$J" -d "$ZERO_PKG_BASE" http://localhost:8080/api/admin/v1/packages)
           test "$ZERO_UNACK" -eq 400
