@@ -66,7 +66,8 @@ class ProductGraceReleaseInspectorTest {
         assertFalse(answer.claims().getFirst().requiresModeConversion());
         assertTrue(l.sqls.stream().anyMatch(s->s.contains("pg_advisory_xact_lock")));
         assertTrue(l.sqls.stream().anyMatch(s->s.contains("res_exclusive_allocation")));
-        assertTrue(l.sqls.stream().noneMatch(s->s.contains("UPDATE")));
+        assertTrue(l.sqls.stream().noneMatch(s->s.stripLeading().toUpperCase().startsWith("UPDATE")),
+                "FOR UPDATE row locks are allowed, but preflight must not modify a business row");
     }
     @Test void lastSharedClaimBecomesCandidateForVerifiedShortConversion(){
         Ledger l=ledger("SHARED");
