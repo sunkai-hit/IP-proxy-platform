@@ -21,6 +21,9 @@ class OrderServiceCredentialVisibilityTest {
             "id",6L,"account_name","masked-user","secret_mask","***1234",
             "status","ACTIVE")));
         svc.put("resourceBindings",List.of());
+        svc.put("changes",List.of(Map.of("change_no","C-1","before_snapshot","sensitive audit details")));
+        svc.put("releaseRecords",List.of(Map.of("release_no","R-1")));
+        svc.put("longMonitors",List.of(Map.of("monitor_no","M-1")));
         return svc;
     }
     @Test void serviceReadAloneCannotSeeCredentialsSubtable(){
@@ -35,6 +38,9 @@ class OrderServiceCredentialVisibilityTest {
         Map<String,Object> body=(Map<String,Object>)response;
         assertEquals("CI-MASKED",body.get("service_no"));
         assertFalse(body.containsKey("credentials"),"service:read cannot bypass credential:read");
+        assertFalse(body.containsKey("changes"),"change history has independent read permission");
+        assertFalse(body.containsKey("releaseRecords"),"release records require service:release");
+        assertFalse(body.containsKey("longMonitors"),"monitor history requires long-monitor:read");
         assertTrue(original.containsKey("credentials"),"the filtered response must not mutate source data");
         verify(lifecycle).service(17L);
     }
@@ -47,6 +53,24 @@ class OrderServiceCredentialVisibilityTest {
         Map<String,Object> body=(Map<String,Object>)controller(lifecycle).detail(17L,credentialReader).data();
         assertTrue(body.containsKey("credentials"));
         assertEquals("***1234",((Map<?,?>)((List<?>)body.get("credentials")).getFirst()).get("secret_mask"));
+    }
+    @Test void detailedSubtablePermissionsAreIndependent(){
+        V12ServiceLifecycleService lifecycle=mock(V12ServiceLifecycleService.class);
+        when(lifecycle.service(17L)).thenReturn(sample());
+        UserPrincipal changeReader=new UserPrincipal(9L,"change","Change",List.of("OPERATOR"),
+                List.of("service:read","service:change:read"));
+        @SuppressWarnings("unchecked")
+        Map<String,Object> changeResult=(Map<String,Object>)controller(lifecycle).detail(17L,changeReader).data();
+        assertTrue(changeResult.containsKey("changes"));
+        assertFalse(changeResult.containsKey("releaseRecords"));
+        assertFalse(changeResult.containsKey("longMonitors"));
+        UserPrincipal releaseMonitorReader=new UserPrincipal(10L,"audit","Audit",List.of("OPERATOR"),
+                List.of("service:read","service:release","long-monitor:read"));
+        @SuppressWarnings("unchecked")
+        Map<String,Object> releaseResult=(Map<String,Object>)controller(lifecycle).detail(17L,releaseMonitorReader).data();
+        assertFalse(releaseResult.containsKey("changes"));
+        assertTrue(releaseResult.containsKey("releaseRecords"));
+        assertTrue(releaseResult.containsKey("longMonitors"));
     }
     @Test void credentialRoleCannotBypassServiceAccessToDetail(){
         V12ServiceLifecycleService lifecycle=mock(V12ServiceLifecycleService.class);
