@@ -49,8 +49,10 @@ jobs:
         run: python3 scripts/ci_v13_baseline_gate.py
       - name: Verify V1.3 frontend/backend API routes and lifecycle RBAC
         run: python3 scripts/ci_v13_api_contract_gate.py
+      - name: Verify V1.3 cross-page router, payment-selection and RBAC guards
+        run: python3 scripts/ci_v13_ui_workflow_gate.py
       - name: Verify short-IP allocation guard
-        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest test
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
