@@ -252,8 +252,8 @@ public class V12ResourceMapper {
         WHERE b.resource_type='POOL' AND b.resource_id=? AND b.status='ACTIVE' AND s.deleted=FALSE
         """,poolId);}
     public List<Map<String,Object>> poolOperations(Long poolId,int limit){return jdbc.queryForList("""
-        SELECT operator_name,operation,reason,result,error_message,created_at
-        FROM sys_operation_log WHERE object_type='RESOURCE_POOL' AND object_id=? ORDER BY created_at DESC LIMIT ?
+        SELECT operator_name,operation,reason,result,error_message,occurred_at AS created_at
+        FROM sys_operation_log WHERE object_type='RESOURCE_POOL' AND object_id=? ORDER BY occurred_at DESC LIMIT ?
         """,String.valueOf(poolId),limit);}
 
     public List<Map<String,Object>> optionsRos(){return jdbc.queryForList("SELECT id,resource_code code,COALESCE(resource_name,resource_code) name FROM res_ros WHERE deleted=FALSE ORDER BY resource_code");}
