@@ -134,7 +134,7 @@ class ProductTaskReconcilerTest {
     }
     @Test void operatorPermissionRequiredAndNotImplicitFromReadPermission(){
         ProductTaskReconciler product=mock(ProductTaskReconciler.class);
-        ProductTaskReconcileController ctrl=new ProductTaskReconcileController(product,mock(ProductExpiryStopDispatcher.class));
+        ProductTaskReconcileController ctrl=new ProductTaskReconcileController(product,mock(ProductExpiryStopDispatcher.class),mock(ProductExpiryStopCommitter.class));
         UserPrincipal user=new UserPrincipal(8L,"operator","operator",
                 List.of("OPERATOR"),List.of("service:read"));
         BusinessException error=assertThrows(BusinessException.class,
