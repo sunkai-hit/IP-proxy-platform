@@ -131,7 +131,10 @@ public class ProductExpiryStopCommitter {
         int finished=jdbc.update("""
             UPDATE svc_action_task
             SET task_status='SUCCEEDED',stage='BUSINESS_COMMITTED',
-                actor_user_id=?,finished_at=now(),updated_at=now(),
+                result_summary=result_summary || jsonb_build_object(
+                  'businessStateChanged',true,'businessCommittedAt',now(),
+                  'businessCommittedBy',CAST(? AS bigint)),
+                finished_at=now(),updated_at=now(),
                 last_error_code=NULL,last_error_message=NULL
             WHERE id=? AND action_type='STOP_FOR_GRACE'
               AND task_status='VERIFYING' AND stage='NEEDS_BUSINESS_COMMIT'
