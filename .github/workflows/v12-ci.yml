@@ -510,6 +510,36 @@ jobs:
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/notifications?page=1&size=20" >/dev/null
           echo 'Monitor, alarm and notification default-list HTTP checks passed'
           echo 'V1.3 backend business smoke passed'
+          # CI-only least-privilege actor. Copy the test admin's bcrypt digest
+          # ONLY inside the ephemeral PostgreSQL runner; never expose it.
+          docker exec -i "$PGID" psql -v ON_ERROR_STOP=1 -U ipproxy -d ip_proxy <<'SQL'
+          INSERT INTO sys_role(role_code,role_name,data_scope)
+          VALUES ('CI_V13_READONLY','CI V1.3 read-only acceptance actor','ALL')
+          ON CONFLICT DO NOTHING;
+          INSERT INTO sys_user(username,password_hash,display_name,status)
+          SELECT 'ci_v13_readonly', password_hash, 'CI Read Only', 'ACTIVE'
+          FROM sys_user WHERE username='admin' AND deleted=FALSE
+          ON CONFLICT DO NOTHING;
+          INSERT INTO sys_user_role(user_id,role_id)
+          SELECT u.id,r.id FROM sys_user u CROSS JOIN sys_role r
+          WHERE u.username='ci_v13_readonly' AND r.role_code='CI_V13_READONLY'
+          ON CONFLICT DO NOTHING;
+          INSERT INTO sys_role_permission(role_id,permission_id)
+          SELECT r.id,p.id FROM sys_role r CROSS JOIN sys_permission p
+          WHERE r.role_code='CI_V13_READONLY'
+            AND p.permission_code IN (
+              'customer:access','customer:read','order-service:access',
+              'order:read','service:read')
+          ON CONFLICT DO NOTHING;
+          DO $
+          BEGIN
+            IF (SELECT count(*) FROM sys_role_permission rp
+                JOIN sys_role r ON rp.role_id=r.id
+                WHERE r.role_code='CI_V13_READONLY') <> 5 THEN
+              RAISE EXCEPTION 'CI least-privilege role must have exactly five read/menu permissions';
+            END IF;
+          END $;
+          SQL
           # The same Spring Boot, PostgreSQL and Redis instances remain live
           # for actual Chromium user-interface E2E. No product-group network
           # writes are enabled; source records use synthetic CI adapter data.
@@ -540,7 +570,9 @@ jobs:
             V13_E2E_USER=admin V13_E2E_PASSWORD=admin123 \
             V13_E2E_CUSTOMER_ID="$CID" V13_E2E_ORDER_ID="$MULTI_ID" \
             V13_E2E_SERVICE_ID="$SID" V13_E2E_POOL_ID="$POOLID" \
-            npx playwright test tests/e2e/v13-real-backend.spec.ts --reporter=line --workers=1 --timeout=40000
+            V13_E2E_UNPAID_ORDER_ID="$LONG_OID" \
+            V13_E2E_VIEWER_USER=ci_v13_readonly V13_E2E_VIEWER_PASSWORD=admin123 \
+            npx playwright test tests/e2e/v13-real-backend.spec.ts tests/e2e/v13-least-privilege.spec.ts --reporter=line --workers=1 --timeout=40000
           )
           echo 'V1.3 Chromium actual browser + Spring Boot/PostgreSQL E2E smoke passed'
       - name: Backend log on failure
