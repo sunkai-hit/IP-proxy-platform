@@ -57,6 +57,10 @@ app:
   integration:
     # Disabled unless explicitly configured with a 32+ character secret.
     product-bearer-token: ${PRODUCT_INTEGRATION_BEARER_TOKEN:}
+    # Outbound read-only product gateway. Both are required for real requests;
+    # empty values keep this integration disabled. Writes are not enabled here.
+    product-base-url: ${PRODUCT_GROUP_BASE_URL:}
+    product-api-token: ${PRODUCT_GROUP_API_TOKEN:}
   statistics:
     scheduled-enabled: ${STATISTICS_SCHEDULED_ENABLED:true}
     cron: ${STATISTICS_CRON:0 5 * * * *}
