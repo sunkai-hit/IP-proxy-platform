@@ -46,7 +46,7 @@ jobs:
           java-version: '21'
           cache: maven
       - name: Verify short-IP allocation guard
-        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest test
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
