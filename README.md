@@ -1,6 +1,8 @@
-## V1.2正式需求基线（2026年10月）
+## 当前统一需求基线：V1.3（2026年10月15日）
 
-请先查阅 [docs/requirements/README.md](docs/requirements/README.md) 中的最新需求版本索引和原件同步状态。下列 M1–M8 说明包含历史阶段的实现口径，可能与最终V1.2需求存在差异；正式业务设计以确认后的V1.2需求为准。
+最新需求已上传：[V1.3详细版](docs/requirements/IP代理管理平台需求说明书%20V1.3.docx)、[V1.3概要版](docs/requirements/IP代理管理平台需求说明书%20V1.3%20概要版.docx)；两组接口以[《IP代理管理平台接口说明书 V1.0》](docs/requirements/《IP代理管理平台接口说明书%20V1.0》.docx)为依据。详见[当前基线索引](docs/requirements/README.md)。
+
+下列M1–M8及V1.2-R3内容为历史工程说明，代码、数据库、API和原型尚需按V1.3整体核对。没有真实产品组环境，不能把CI/模拟联调当成网络侧验收。
 
 ---
 
@@ -17,7 +19,7 @@
 ├── prototype/              # 已确认的静态原型，作为产品/视觉基准
 ├── frontend/               # Vue 3 + TypeScript + Vite + Element Plus + ECharts
 ├── backend/                # Java 21 + Spring Boot 4.1.1
-├── database/migration/     # PostgreSQL Flyway V1-V12
+├── database/migration/     # PostgreSQL Flyway V1-V27
 ├── docs/                   # ER、OpenAPI、架构设计
 ├── docker-compose.yml      # PostgreSQL + Redis + Backend + Frontend
 └── .github/workflows/      # CI 构建与 M3-M8 真实业务生命周期验证
