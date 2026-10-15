@@ -74,7 +74,7 @@ public class ProductExpiryStopDispatcher {
                 attempt_count=attempt_count+1,actor_user_id=?,updated_at=now()
             WHERE id=? AND action_type='STOP_FOR_GRACE'
               AND task_status='PRECHECK_BLOCKED' AND remote_operation_id IS NULL
-            """,remoteId,t.get("id"));
+            """,remoteId,actorUserId,t.get("id"));
         if(claimed!=1)
             throw new BusinessException("TASK_ALREADY_DISPATCHED",
                     "任务已被其他调用方占用，禁止重复发送远程停服");
