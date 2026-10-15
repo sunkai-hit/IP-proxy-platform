@@ -10,6 +10,7 @@ const customerId = process.env.V13_E2E_CUSTOMER_ID
 const multiOrderId = process.env.V13_E2E_ORDER_ID
 const serviceId = process.env.V13_E2E_SERVICE_ID
 const poolId = process.env.V13_E2E_POOL_ID
+const unpaidOrderId = process.env.V13_E2E_UNPAID_ORDER_ID
 
 test.describe('V1.3 actual browser management-console smoke', () => {
   test.beforeEach(async ({ page }) => {
@@ -88,6 +89,52 @@ test.describe('V1.3 actual browser management-console smoke', () => {
       await expect(page.locator('.console-main .el-table').first(),
         'Actual Element Plus table should render on ' + path).toBeVisible({ timeout: 10000 })
     }
+  })
+
+  test('unpaid order cannot enter provisioning wizard or submit product actions', async ({ page }) => {
+    expect(unpaidOrderId).toBeTruthy()
+    const provisionPosts: string[] = []
+    page.on('request', req => {
+      if (req.method() === 'POST' && /\/orders\/\d+\/provision$/.test(req.url()))
+        provisionPosts.push(req.url())
+    })
+    await page.goto(base + '/service-provision?orderId=' + unpaidOrderId)
+    await expect(page.getByRole('heading', { name: '核对订单和付款' })).toBeVisible()
+    await expect(page.getByText('客户付款尚未核实，订单确认不等于付款成功', { exact: false })).toBeVisible()
+    await expect(page.getByRole('button', { name: '下一步' })).toBeDisabled()
+    await expect(page.getByText('配置订单项交付方式')).toHaveCount(0)
+    expect(provisionPosts).toHaveLength(0)
+    await page.getByRole('button', { name: '打开订单详情核实付款' }).click()
+    await expect(page).toHaveURL(new RegExp('/orders/' + unpaidOrderId + '
+    await page.goto(base + '/service-releases')
+    await expect(page.getByRole('heading', { name: '到期与资源释放' })).toBeVisible()
+    await expect(page.getByText('没有实际停服、恢复或回收的产品/资源接口回执', { exact: false })).toBeVisible()
+    await page.goto(base + '/supplier-purchases')
+    await expect(page.getByRole('heading', { name: '外部套餐 / 资源采购' })).toBeVisible()
+    await page.goto(base + '/reverse-proxies')
+    await expect(page.getByRole('heading', { name: '反向代理交付' })).toBeVisible()
+    await expect(page.getByText('仅配置登记不代表真实交付。', { exact: false })).toBeVisible()
+  })
+})
+))
+    await expect(page.getByText('未核实', { exact: true })).toBeVisible()
+  })
+
+  test('customer-to-new-order deep link preselects customer and supports master-child editing', async ({ page }) => {
+    expect(customerId).toBeTruthy()
+    await page.goto(base + '/customers/' + customerId)
+    await page.getByRole('button', { name: '为该客户创建订单' }).click()
+    await expect(page).toHaveURL(/\/orders\?/)
+    await expect(page.getByRole('dialog', { name: '新增订单' })).toBeVisible()
+    const dialog = page.getByRole('dialog', { name: '新增订单' })
+    await expect(dialog.getByText('V12 CI Customer', { exact: false }).first()).toBeVisible()
+    await expect(dialog.locator('.line-item')).toHaveCount(1)
+    await dialog.getByRole('button', { name: '增加订单项' }).click()
+    await expect(dialog.locator('.line-item')).toHaveCount(2)
+    await dialog.getByRole('button', { name: '删除该项' }).last().click()
+    await expect(dialog.locator('.line-item')).toHaveCount(1)
+    // Do not create another order just to validate a local form.
+    await dialog.getByRole('button', { name: '取消' }).click()
   })
 
   test('expiry and supplier management keep real-network warnings visible', async ({ page }) => {
