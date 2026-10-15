@@ -52,8 +52,8 @@ public class OpenApiMapper {
         AND NOT EXISTS (
           SELECT 1 FROM res_exclusive_allocation ea
           JOIN res_line occupied ON occupied.id=ea.line_id
-          WHERE occupied.current_public_ip=i.ip_address
-            AND ea.deleted=FALSE AND ea.status IN ('LOCKED','ALLOCATED')
+          WHERE (ea.current_ip_snapshot=i.ip_address OR occupied.current_public_ip=i.ip_address)
+            AND ea.deleted=FALSE AND ea.status IN ('LOCKED','ALLOCATED','PENDING_RECYCLE')
         )
         AND (?='' OR i.region_code=?) AND (?='' OR i.carrier_code=?) AND (?<=0 OR NOT EXISTS (SELECT 1 FROM log_ip_extract l CROSS JOIN LATERAL jsonb_array_elements(l.returned_ips) e WHERE l.service_id=? AND l.occurred_at>=now()-make_interval(secs=>?) AND e->>'ip'=host(i.ip_address))) ORDER BY i.quality_score DESC NULLS LAST,i.latency_ms ASC NULLS LAST,i.id LIMIT ?
         """,poolId,region,region,carrier,carrier,dedupSeconds,serviceId,dedupSeconds,amount);
