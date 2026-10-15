@@ -60,7 +60,7 @@ public class V12ServiceMapper {
       LEFT JOIN res_supplier_purchase sp ON sp.id=s.supplier_purchase_id LEFT JOIN res_reverse_proxy rp ON rp.id=s.reverse_proxy_id WHERE s.id=? AND s.deleted=FALSE
       """,id);}
     public List<Map<String,Object>> bindings(Long id){return jdbc.queryForList("SELECT id,resource_type,resource_id,binding_role,effective_at,released_at,status,metadata,created_at FROM svc_resource_binding WHERE service_id=? ORDER BY created_at,id",id);}
-    public List<Map<String,Object>> credentials(Long id){return jdbc.queryForList("SELECT id,credential_type,account_name,secret_mask,status,issued_at,expire_at,last_used_at,rotated_at,metadata FROM svc_credential WHERE service_id=? AND deleted=FALSE ORDER BY issued_at DESC",id);}
+    public List<Map<String,Object>> credentials(Long id){return jdbc.queryForList("SELECT id,credential_type,account_name,secret_mask,status,issued_at,expire_at,last_used_at,rotated_at FROM svc_credential WHERE service_id=? AND deleted=FALSE ORDER BY issued_at DESC",id);}
     public List<Map<String,Object>> whitelist(Long id){return jdbc.queryForList("SELECT id,host(ip_address) ip_address,status,remark,created_at FROM svc_whitelist WHERE service_id=? AND deleted=FALSE ORDER BY created_at DESC",id);}
     public List<Map<String,Object>> changes(Long id){return jdbc.queryForList("SELECT id,change_no,change_type,before_snapshot,after_snapshot,reason,status,operator_id,started_at,finished_at,error_message,created_at FROM svc_change WHERE service_id=? AND deleted=FALSE ORDER BY created_at DESC",id);}
     public List<Map<String,Object>> releaseRecords(Long id){return jdbc.queryForList("SELECT * FROM svc_release_record WHERE service_id=? ORDER BY created_at DESC",id);}
