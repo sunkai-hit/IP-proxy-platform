@@ -21,18 +21,36 @@ async function loadOptions(){
  suppliers.value=o.suppliers||[]
  customers.value=o.customers||[]
 }
+let paidOrderRequestVersion=0
 async function loadPaidOrders(){
+ const version=++paidOrderRequestVersion
+ const customerId=Number(form.customerId)
  form.sourceCustomerOrderId=null;paidOrders.value=[]
- if(!form.customerId)return
+ if(!customerId)return
  try{
-  paidOrders.value=data(await externalDeliveryApi.paidOrdersForPurchase(form.customerId))||[]
- }catch{ElMessage.warning('无法读取该客户已核实付款的订单，请检查权限或付款状态')}
+  const candidates=data(await externalDeliveryApi.paidOrdersForPurchase(customerId))||[]
+  // A previously requested customer's paid orders must not appear for the new customer.
+  if(version!==paidOrderRequestVersion||Number(form.customerId)!==customerId)return
+  paidOrders.value=candidates
+ }catch{
+  if(version===paidOrderRequestVersion)
+   ElMessage.warning('无法读取该客户已核实付款的订单，请检查权限或付款状态')
+ }
 }
-function add(){Object.assign(form,{supplierId:null,customerId:null,sourceCustomerOrderId:null,supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',remainingQuota:'',purchaseCost:'',currency:'CNY',remark:''});paidOrders.value=[];drawer.value=true}
+function add(){
+ ++paidOrderRequestVersion
+ Object.assign(form,{supplierId:null,customerId:null,sourceCustomerOrderId:null,
+  supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',
+  remainingQuota:'',purchaseCost:null,currency:'CNY',effectiveAt:'',expireAt:'',remark:''})
+ paidOrders.value=[];drawer.value=true
+}
 async function save(){
  if(!form.supplierId||!String(form.supplierPackageName).trim()){ElMessage.warning('请填写供应商和供应商套餐');return}
  if(!form.expireAt){ElMessage.warning('请填写供应商采购到期时间，以验证能否覆盖客户服务期限');return}
  if(form.customerId&&!form.sourceCustomerOrderId){ElMessage.warning('指定客户的采购记录必须关联已核实付款的客户订单');return}
+ if(form.customerId&&!paidOrders.value.some(x=>Number(x.id)===Number(form.sourceCustomerOrderId))){
+  ElMessage.warning('选中的付款订单不在当前客户的有效列表中，请重新核对');return
+ }
  saving.value=true
  try{
   const payload={...form,customerId:form.customerId||null,sourceCustomerOrderId:form.customerId?form.sourceCustomerOrderId:null,purchaseCost:form.purchaseCost===''||form.purchaseCost==null?null:Number(form.purchaseCost),packageQuota:form.packageQuota||null,remainingQuota:form.remainingQuota||null}
