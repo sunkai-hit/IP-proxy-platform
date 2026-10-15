@@ -52,8 +52,8 @@ public class ProductExpiryStopCommitter {
         long taskId=((Number)row.get("task_id")).longValue();
         if("SUCCEEDED".equals(str(row.get("task_status")))
                 &&"BUSINESS_COMMITTED".equals(str(row.get("stage"))))
-            return new CommitResult(key,serviceId,"EXPIRED","GRACE_HELD","SUCCEEDED",
-                0,false,false,"该操作已经提交；没有再次变更出口或其他共享客户服务");
+            return new CommitResult(key,serviceId,str(row.get("service_status")),str(row.get("expiry_phase")),"SUCCEEDED",
+                0,false,false,"该操作已经提交；不会重放停服或影响当前服务的新生命周期");
         if(!"STOP_FOR_GRACE".equals(str(row.get("action_type")))
                 ||!"VERIFYING".equals(str(row.get("task_status")))
                 ||!"NEEDS_BUSINESS_COMMIT".equals(str(row.get("stage")))
@@ -117,9 +117,9 @@ public class ProductExpiryStopCommitter {
         if(changed!=1)throw error("SERVICE_STOP_CONCURRENT","服务已由其他操作改变，任务提交取消");
         int held=jdbc.update("""
             UPDATE svc_egress_claim
-            SET claim_status='GRACE_HELD',updated_at=now()
+            SET claim_status='GRACE_HELD',hold_until_at=?,updated_at=now()
             WHERE service_id=? AND claim_status IN ('RESERVED','ACTIVE')
-            """,serviceId);
+            """,OffsetDateTime.ofInstant(holdUntil,java.time.ZoneOffset.UTC),serviceId);
         if(held!=claims.size())
             throw error("EGRESS_CLAIM_CONCURRENT","出口占用在处理过程中已发生变化，回滚服务状态");
         // Disable this service's platform credentials, but keep line/exclusive
