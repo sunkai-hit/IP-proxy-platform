@@ -86,7 +86,10 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.getByRole('tab', { name: '使用情况' }).click()
     await expect(page.getByText('这里仅展示直接绑定此资源池的在用服务', { exact: false })).toBeVisible()
     await page.getByRole('tab', { name: '变更记录' }).click()
-    await expect(page.locator('.el-tab-pane:visible .el-table__body tr').first()).toBeVisible()
+    // ResourcePoolDetailView renders content below its self-closing tab
+    // headers, unlike the order/customer pages that use el-tab-pane bodies.
+    await expect(page.getByRole('columnheader', { name: '操作人' })).toBeVisible()
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
   })
 
   test('eight primary business lists render through one authenticated session', async ({ page }) => {
