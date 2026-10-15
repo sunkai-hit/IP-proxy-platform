@@ -54,18 +54,29 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
   await expect(page).toHaveURL(/\/dashboard$/)
   await page.goto(base + '/customer-auth')
   await expect(page).toHaveURL(/\/dashboard$/)
-  const directCodes = await page.evaluate(async ({ customerId, serviceId }) => {
+  const denied = await page.evaluate(async ({ customerId, serviceId }) => {
     const bearer = localStorage.getItem('ipproxy_access_token')
     const headers = { Authorization: 'Bearer ' + bearer }
+    const check = async (path: string, init: RequestInit = {}) => {
+      const response = await fetch(path, { ...init, headers: {
+        ...headers, ...(init.headers || {})
+      } })
+      const payload = await response.json()
+      return { status: response.status, code: payload.code }
+    }
     return await Promise.all([
-      fetch('/api/admin/v1/customers/' + customerId + '/credentials', { headers }).then(r => r.status),
-      fetch('/api/admin/v1/services/' + serviceId + '/credentials', { headers }).then(r => r.status),
-      fetch('/api/admin/v1/v12/release-actions/invalid-op/dispatch', {
-        method: 'POST', headers
-      }).then(r => r.status),
+      check('/api/admin/v1/customers/' + customerId + '/credentials'),
+      check('/api/admin/v1/services/' + serviceId + '/credentials'),
+      check('/api/admin/v1/services/' + serviceId + '/suspend', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'CI read-only forbidden' })
+      })
     ])
   }, { customerId, serviceId })
-  expect(directCodes[0]).toBe(403)
-  expect(directCodes[1]).toBe(403)
-  expect(directCodes[2]).toBeGreaterThanOrEqual(400)
+  for (const result of denied) {
+    // The project's existing BusinessException contract uses HTTP 400 and
+    // AUTH_FORBIDDEN; asserting HTTP 403 here would misread a legitimate denial.
+    expect(result.status).toBe(400)
+    expect(result.code).toBe('AUTH_FORBIDDEN')
+  }
 })
