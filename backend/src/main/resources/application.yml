@@ -54,6 +54,9 @@ app:
     stale-seconds: ${MONITOR_STALE_SECONDS:300}
   alarm:
     dingtalk-webhook: ${DINGTALK_WEBHOOK_URL:}
+  integration:
+    # Disabled unless explicitly configured with a 32+ character secret.
+    product-bearer-token: ${PRODUCT_INTEGRATION_BEARER_TOKEN:}
   statistics:
     scheduled-enabled: ${STATISTICS_SCHEDULED_ENABLED:true}
     cron: ${STATISTICS_CRON:0 5 * * * *}
