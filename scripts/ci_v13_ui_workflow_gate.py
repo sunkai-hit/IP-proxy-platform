@@ -46,6 +46,7 @@ REQUIRED_MARKERS={
  ],
  "service/ServiceDetailView.vue":[
   "resourceBindings","actionTasks","egressClaims","service:credential:read",
+  "service:change:read","service:release","long-monitor:read",
   "/service-changes",
  ],
  "service/ServiceChangeView.vue":[
@@ -89,7 +90,9 @@ BACKEND_GUARDS={
   'require(p,"customer:read");require(p,"service:read")',
  ],
  "backend/src/main/java/com/ipproxy/platform/service/OrderServiceController.java":[
-  'result.remove("credentials")','service:credential:read',
+  'result.remove("credentials")','result.remove("changes")',
+  'result.remove("releaseRecords")','result.remove("longMonitors")',
+  'service:credential:read',
  ],
 }
 TESTS=[
@@ -115,6 +118,9 @@ def main():
         for marker in markers:
             if marker not in source:
                 failures.append(f"{file}: missing server-side access restriction {marker}")
+    mapper=(ROOT/"backend/src/main/java/com/ipproxy/platform/service/v12/V12ServiceMapper.java").read_text(encoding="utf-8")
+    if "status,metadata,created_at FROM svc_resource_binding" in mapper:
+        failures.append("service resource binding read still includes arbitrary raw metadata")
     for file in TESTS:
         if not (ROOT/file).is_file():
             failures.append(f"RBAC regression not present: {file}")
