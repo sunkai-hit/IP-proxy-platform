@@ -36,8 +36,12 @@ public class OrderServiceController {
         Map<String,Object> result=new LinkedHashMap<>(lifecycle.service(id));
         // Credentials are a separate permissioned business subtable.
         // Hiding the Vue tab is not enough: strip them from the HTTP JSON.
-        if(!p.roles().contains("SUPER_ADMIN")&&!p.permissions().contains("service:credential:read"))
-            result.remove("credentials");
+        if(!p.roles().contains("SUPER_ADMIN")){
+            if(!p.permissions().contains("service:credential:read"))result.remove("credentials");
+            if(!p.permissions().contains("service:change:read"))result.remove("changes");
+            if(!p.permissions().contains("service:release"))result.remove("releaseRecords");
+            if(!p.permissions().contains("long-monitor:read"))result.remove("longMonitors");
+        }
         return ApiResponse.success(result);
     }
     @GetMapping("/services/{id}/credentials") public ApiResponse<?> credentials(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p){require(p,"service:credential:read");return ApiResponse.success(lifecycle.service(id).get("credentials"));}
