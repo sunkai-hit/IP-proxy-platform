@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ipproxy.platform.common.exception.BusinessException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -44,6 +45,7 @@ public class ProductGroupReadClient {
     @FunctionalInterface interface Transport {
         Received get(URI url,String token,String requestId) throws Exception;
     }
+    @Autowired
     public ProductGroupReadClient(
             @Value("${app.integration.product-base-url:}") String configuredBase,
             @Value("${app.integration.product-api-token:}") String token,
