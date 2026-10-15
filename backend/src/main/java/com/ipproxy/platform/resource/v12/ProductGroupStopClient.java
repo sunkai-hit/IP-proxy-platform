@@ -82,6 +82,44 @@ public class ProductGroupStopClient {
         catch(Exception e){throw new BusinessException("PRODUCT_TASK_ACK_UNCERTAIN",
                     "产品组停服调用超时或响应异常，可能已执行；必须按原操作编号查单");}
     }
+    /**
+     * Candidate contract: service-granular RELEASE. Product team must atomically
+     * check peer allocations and return real verification after task execution.
+     * Noop/default integration never sends this call.
+     */
+    public Acceptance releaseAfterGrace(Long serviceId,String operationId,
+                                        String releasePlan,String ipv4) {
+        if(!ready())throw new BusinessException("PRODUCT_WRITE_DISABLED",
+                "尚未联合签收真实释放写接口，不允许发送释放指令");
+        if(serviceId==null||serviceId<=0||operationId==null
+                ||!operationId.matches("[A-Za-z0-9_-]{1,128}")
+                ||ipv4==null||!ipv4.matches("[0-9.]{7,15}")
+                ||!Set.of("UNBIND_SERVICE_ONLY","RETURN_TO_SHORT_AFTER_VERIFICATION").contains(releasePlan))
+            throw new BusinessException("PRODUCT_RELEASE_INVALID","资源释放参数不合法");
+        try {
+            Map<String,Object> payload=new LinkedHashMap<>();
+            payload.put("action","RELEASE");
+            payload.put("operationId",operationId);
+            payload.put("releaseMode",releasePlan);
+            payload.put("egressIpv4",ipv4);
+            Response ack=transport.post(base.resolve("product/v1/services/"+serviceId+"/actions"),
+                    token,operationId,json.writeValueAsString(payload));
+            if(ack.status()!=202||ack.body()==null||ack.body().length()>65536)
+                throw new BusinessException("PRODUCT_TASK_ACK_UNCERTAIN",
+                    "产品组释放受理结果不确定，请按原操作编号查单");
+            JsonNode receipt=json.readTree(ack.body());
+            if(receipt==null||!receipt.path("accepted").asBoolean(false)
+                    ||!operationId.equals(receipt.path("operationId").asText())
+                    ||!Set.of("ACCEPTED","PENDING","RUNNING","VERIFYING","SUCCEEDED")
+                        .contains(receipt.path("status").asText()))
+                throw new BusinessException("PRODUCT_TASK_ACK_UNCERTAIN",
+                    "产品组释放回执编号或状态不符，禁止标记资源释放");
+            return new Acceptance(operationId,receipt.path("status").asText());
+        }catch(BusinessException e){throw e;}
+        catch(Exception e){throw new BusinessException("PRODUCT_TASK_ACK_UNCERTAIN",
+                "远端释放调用超时或结果不确定，禁止重发，请按操作编号查单");}
+    }
+
     private static Response httpPost(URI uri,String bearer,String opId,String body) throws Exception {
         HttpClient http=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
                 .followRedirects(HttpClient.Redirect.NEVER).build();
