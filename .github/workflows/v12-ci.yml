@@ -46,7 +46,7 @@ jobs:
           java-version: '21'
           cache: maven
       - name: Verify short-IP allocation guard
-        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest test
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
@@ -87,6 +87,13 @@ jobs:
 
           H="Authorization: Bearer $TOKEN"
           J='Content-Type: application/json'
+          # The product write path MUST be unavailable in the default CI profile.
+          # No service may be paused or released by accident without a
+          # deliberately enabled, independently signed-off product integration.
+          STOP_HTTP=$(curl -s -o /tmp/r3-write-disabled.json -w '%{http_code}' -X POST \
+            -H "$H" -H "$J" http://localhost:8080/api/admin/v1/v12/delivery-actions/unknown-op/dispatch-expiry-stop)
+          test "$STOP_HTTP" = "400"
+          python3 -c 'import json; d=json.load(open("/tmp/r3-write-disabled.json")); assert d["code"]=="PRODUCT_WRITE_DISABLED"'
           # No outbound product-group endpoint is configured in this synthetic
           # environment. The management UI must show that fact and fail closed.
           GATEWAY=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/product-integration/status)
