@@ -8,6 +8,8 @@ import {useAuthStore} from '@/stores/auth'
 const auth=useAuthStore(),router=useRouter(),route=useRoute()
 const rows=ref<any[]>([]),total=ref(0),loading=ref(false),saving=ref(false),drawer=ref(false)
 const purchases=ref<any[]>([]),services=ref<any[]>([])
+const loadError=ref(false),optionsError=ref(false),actionBusy=ref(false)
+let listRequestVersion=0
 const q=reactive<any>({page:1,size:20,keyword:'',status:''})
 const form=reactive<any>({purchaseId:null,customerId:null,serviceId:null,protocolCode:'HTTP',
  upstreamHost:'',upstreamPort:8080,upstreamAccount:'',upstreamSecret:'',
@@ -17,10 +19,16 @@ const data=(r:any)=>r.data.data
 const selectedPurchase=computed(()=>purchases.value.find(x=>Number(x.id)===Number(form.purchaseId)))
 const isPayEligible=computed(()=>Boolean(selectedPurchase.value?.customer_id))
 function maskHost(x:any){return x?'••••'+String(x).slice(-4):'—'}
-async function load(){loading.value=true;try{
- const d=data(await externalDeliveryApi.reverseProxies(q))
- rows.value=d.items||[];total.value=d.total||0
-}finally{loading.value=false}}
+async function load(){
+ const version=++listRequestVersion
+ loading.value=true;loadError.value=false;rows.value=[];total.value=0
+ try{
+  const d=data(await externalDeliveryApi.reverseProxies({...q}))
+  if(version===listRequestVersion){rows.value=d.items||[];total.value=d.total||0}
+ }catch{
+  if(version===listRequestVersion){loadError.value=true;rows.value=[];total.value=0}
+ }finally{if(version===listRequestVersion)loading.value=false}
+}
 let purchaseLookupVersion=0
 async function openCreate(){
  ++purchaseLookupVersion
@@ -28,13 +36,18 @@ async function openCreate(){
   upstreamHost:'',upstreamPort:8080,upstreamAccount:'',upstreamSecret:'',
   platformHost:'',platformPort:8080,platformAccount:'',platformSecret:'',
   expireAt:'',remark:''})
- const options=data(await externalDeliveryApi.options())
- purchases.value=options.purchases||[]
- services.value=[]
- const purchaseId=Number(route.query.purchaseId||0)
- if(purchaseId>0&&purchases.value.some(x=>Number(x.id)===purchaseId))form.purchaseId=purchaseId
- if(form.purchaseId)await purchaseChanged()
- drawer.value=true
+ optionsError.value=false;purchases.value=[];services.value=[]
+ try{
+  const options=data(await externalDeliveryApi.options())
+  purchases.value=options.purchases||[]
+  const purchaseId=Number(route.query.purchaseId||0)
+  if(purchaseId>0&&purchases.value.some(x=>Number(x.id)===purchaseId))form.purchaseId=purchaseId
+  if(form.purchaseId)await purchaseChanged()
+  drawer.value=true
+ }catch{
+  optionsError.value=true;purchases.value=[];services.value=[]
+  ElMessage.error('采购候选资料读取失败，不能登记平台代理，请重试')
+ }
 }
 async function purchaseChanged(){
  const version=++purchaseLookupVersion
@@ -75,18 +88,33 @@ async function save(){
   ElMessage.success('平台代理配置已登记，尚未通过真实网关交付验证')
   if(result?.id)await router.push('/reverse-proxies/'+result.id)
   else await load()
- }finally{saving.value=false}
+ }catch{ElMessage.error('平台代理配置未确认保存，请刷新核对后重试')}
+ finally{saving.value=false}
 }
 async function action(r:any,type:'apply'|'test'|'disable'){
+ if(actionBusy.value||loading.value||loadError.value)return
+ const proxyId=Number(r.id),listVersion=listRequestVersion
+ const permitted=type==='test'?'resource:reverse-proxy:test':'resource:reverse-proxy:status'
+ if(!auth.hasPermission(permitted)||!rows.value.some(x=>Number(x.id)===proxyId))return
  const title={apply:'应用平台代理配置',test:'真实网关连通性验证',disable:'受控停用平台代理'}[type]
- const {value}=await ElMessageBox.prompt('请输入原因；只有网关真实回执验证通过后操作才可能成功。',title,{
+ try{
+  const {value}=await ElMessageBox.prompt('请输入原因；只有网关真实回执验证通过后操作才可能成功。',title,{
    inputValidator:v=>!!String(v||'').trim()||'必须填写原因'
- })
- if(type==='apply')await externalDeliveryApi.applyReverseProxy(r.id,String(value))
- if(type==='test')await externalDeliveryApi.testReverseProxy(r.id,String(value))
- if(type==='disable')await externalDeliveryApi.disableReverseProxy(r.id,String(value))
- ElMessage.success('真实网关验证通过')
- await load()
+  })
+  if(listVersion!==listRequestVersion||loadError.value||
+     !rows.value.some(x=>Number(x.id)===proxyId)){
+   ElMessage.warning('代理列表已变化，请重新核对记录后执行');return
+  }
+  actionBusy.value=true
+  if(type==='apply')await externalDeliveryApi.applyReverseProxy(proxyId,String(value).trim())
+  if(type==='test')await externalDeliveryApi.testReverseProxy(proxyId,String(value).trim())
+  if(type==='disable')await externalDeliveryApi.disableReverseProxy(proxyId,String(value).trim())
+  ElMessage.success('管理请求已返回，实际网关状态请核对独立验证记录')
+  await load()
+ }catch(e:any){
+  if(e==='cancel'||e==='close')return
+  ElMessage.error('平台代理操作未确认成功，不能据此认定已应用、已停用或连通')
+ }finally{actionBusy.value=false}
 }
 onMounted(async()=>{await load();if(route.query.newProxy==='1'&&auth.hasPermission('resource:reverse-proxy:write'))await openCreate()})
 </script>
@@ -96,6 +124,8 @@ onMounted(async()=>{await load();if(route.query.newProxy==='1'&&auth.hasPermissi
   <p>客户已付款的专属供应商采购 → 平台反向代理配置 → 客户服务。仅配置登记不代表真实交付。</p>
  </div><el-button v-if="auth.hasPermission('resource:reverse-proxy:write')" type="primary" @click="openCreate">登记反向代理</el-button></div>
  <el-alert type="warning" :closable="false" title="仅能使用同客户、已核实付款来源的有效采购；无网关真实验证回执时无法将平台代理标记为已交付。"/>
+ <el-alert v-if="loadError" type="error" :closable="false" title="平台代理列表查询失败，不能据此判断没有代理或客户服务。" />
+ <el-button v-if="loadError" @click="load">重新加载平台代理列表</el-button>
  <el-card shadow="never">
   <div class="filters">
    <el-input v-model="q.keyword" placeholder="代理编号/客户/平台入口" clearable/>
@@ -116,9 +146,9 @@ onMounted(async()=>{await load();if(route.query.newProxy==='1'&&auth.hasPermissi
    <el-table-column prop="status" label="登记状态" width="110"/>
    <el-table-column label="操作" width="225"><template #default="s">
     <el-button link type="primary" @click="router.push('/reverse-proxies/'+s.row.id)">详情</el-button>
-    <el-button v-if="auth.hasPermission('resource:reverse-proxy:test')" link @click="action(s.row,'test')">真实测试</el-button>
-    <el-button v-if="auth.hasPermission('resource:reverse-proxy:status')&&s.row.status!=='ACTIVE'" link type="success" @click="action(s.row,'apply')">应用</el-button>
-    <el-button v-if="auth.hasPermission('resource:reverse-proxy:status')&&s.row.status!=='DISABLED'" link type="danger" @click="action(s.row,'disable')">停用</el-button>
+    <el-button v-if="auth.hasPermission('resource:reverse-proxy:test')" :disabled="loading||loadError||actionBusy" link @click="action(s.row,'test')">真实测试</el-button>
+    <el-button v-if="auth.hasPermission('resource:reverse-proxy:status')&&s.row.status!=='ACTIVE'" :disabled="loading||loadError||actionBusy" link type="success" @click="action(s.row,'apply')">应用</el-button>
+    <el-button v-if="auth.hasPermission('resource:reverse-proxy:status')&&s.row.status!=='DISABLED'" :disabled="loading||loadError||actionBusy" link type="danger" @click="action(s.row,'disable')">停用</el-button>
    </template></el-table-column>
   </el-table>
   <div class="pager"><el-pagination v-model:current-page="q.page" v-model:page-size="q.size" :total="total" layout="total,sizes,prev,pager,next" @change="load"/></div>
