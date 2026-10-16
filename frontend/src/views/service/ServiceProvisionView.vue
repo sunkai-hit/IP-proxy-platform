@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed,onMounted,reactive,ref } from 'vue'
+import { computed,onMounted,reactive,ref,watch } from 'vue'
 import { useRoute,useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { orderServiceApi } from '@/api/orderService'
+import { businessRelationsApi } from '@/api/businessRelations'
 import { useAuthStore } from '@/stores/auth'
 
 const route=useRoute(),router=useRouter(),auth=useAuthStore()
@@ -12,6 +13,21 @@ const listLoading=ref(false),loading=ref(false),submitting=ref(false),step=ref(0
 const orderRows=ref<any[]>([]),total=ref(0),snapshot=ref<any>(null),plans=ref<any[]>([]),result=ref<any>(null)
 const q=reactive({page:1,size:20,keyword:'',status:'PENDING_PROVISION'})
 const reason=ref('')
+const persistedServices=ref<any[]>([]),persistedError=ref(false),persistedMismatch=ref(false),persistedLoading=ref(false)
+let persistedVersion=0
+function routeOrderId(){const raw=Array.isArray(route.query.orderId)?route.query.orderId[0]:route.query.orderId
+ const n=Number(raw);return Number.isSafeInteger(n)&&n>0?n:0
+}
+function clearOrder(){
+ ++previewVersion.value;++persistedVersion
+ snapshot.value=null;plans.value=[];result.value=null;step.value=0
+ reason.value='';loading.value=false;previewError.value=false
+ persistedServices.value=[];persistedError.value=false;persistedMismatch.value=false;persistedLoading.value=false
+}
+function selectOrder(orderId:number){
+ if(!Number.isSafeInteger(orderId)||orderId<=0)return
+ void router.push({path:'/service-provision',query:{orderId:String(orderId)}})
+}
 const unwrap=(r:any)=>r.data.data
 const typeNames:Record<string,string>={SHORT_IP:'短效IP',LONG_IP:'长效IP',EXCLUSIVE_IP:'独享IP',VPN:'VPN',TUNNEL:'隧道'}
 const modeNames:Record<string,string>={SELF_OWNED:'自有资源',EXTERNAL_PROXY:'外部反向代理'}
@@ -48,28 +64,27 @@ async function loadOrders(){
  finally{if(version===listVersion.value)listLoading.value=false}
 }
 async function openOrder(id:number){
- if(submitting.value)return
  const version=++previewVersion.value
  loading.value=true;previewError.value=false;snapshot.value=null;plans.value=[];result.value=null;step.value=0
  try{
   const v=unwrap(await orderServiceApi.provisionPreview(id))
   if(version!==previewVersion.value)return
-  if(!v?.order?.id||Number(v.order.id)!==id)throw new Error('PREVIEW_ORDER_MISMATCH')
+  if(!v?.order?.id||Number(v.order.id)!==id||routeOrderId()!==id)throw new Error('PREVIEW_ORDER_MISMATCH')
   snapshot.value=v;step.value=0;reason.value=''
   plans.value=(v.items||[]).map((it:any)=>({orderItemId:Number(it.id),deliveryMode:'SELF_OWNED',reverseProxyIds:[] as (number|null)[]}))
-  await router.replace({path:'/service-provision',query:{orderId:String(id)}})
  }catch{if(version===previewVersion.value){previewError.value=true;ElMessage.error('开通预检失败，不能继续使用上一次付款或资源校验结果')}}
  finally{if(version===previewVersion.value)loading.value=false}
 }
 async function refreshPreview(){
  const id=Number(order.value.id),version=++previewVersion.value
- if(!id)return
+ if(!id||routeOrderId()!==id)return
  loading.value=true;previewError.value=false
  try{
   const updated=unwrap(await orderServiceApi.provisionPreview(id))
   if(version!==previewVersion.value)return
-  if(!updated?.order?.id||Number(updated.order.id)!==id)throw new Error('PREVIEW_ORDER_MISMATCH')
+  if(!updated?.order?.id||Number(updated.order.id)!==id||routeOrderId()!==id)throw new Error('PREVIEW_ORDER_MISMATCH')
   snapshot.value=updated;result.value=null;step.value=0
+  ++persistedVersion;persistedServices.value=[];persistedError.value=false;persistedMismatch.value=false
   plans.value=(updated.items||[]).map((it:any)=>({orderItemId:Number(it.id),deliveryMode:'SELF_OWNED',reverseProxyIds:[] as (number|null)[]}))
   ElMessage.info('付款与资源预检已刷新，请重新核对交付配置；提交仍由后端最终重验')
  }catch{
@@ -80,22 +95,69 @@ async function refreshPreview(){
  }finally{if(version===previewVersion.value)loading.value=false}
 }
 function changeMode(p:any,mode:string,item:any){p.deliveryMode=mode;p.reverseProxyIds=mode==='EXTERNAL_PROXY'?Array(Number(item.service_count||1)).fill(null):[]}
-function next(){if(!snapshot.value?.paymentReady){ElMessage.warning('客户付款尚未核实，不能执行订单开通');return}if(step.value===1&&errors.value.length){ElMessage.warning(errors.value[0]);return}step.value=Math.min(3,step.value+1)}
-function back(){step.value=Math.max(0,step.value-1)}
-function closeOrder(){if(submitting.value)return;++previewVersion.value;snapshot.value=null;plans.value=[];result.value=null;step.value=0;previewError.value=false;router.replace('/service-provision');loadOrders()}
-async function confirm(){if(submitting.value||loading.value||previewError.value)return;if(!snapshot.value?.paymentReady){ElMessage.error('请先核实客户付款');return}if(errors.value.length){ElMessage.warning(errors.value[0]);step.value=1;return}
+function next(){if(loading.value||previewError.value||submitting.value||routeOrderId()!==Number(order.value.id))return;if(!snapshot.value?.paymentReady){ElMessage.warning('客户付款尚未核实，不能执行订单开通');return}if(step.value===1&&errors.value.length){ElMessage.warning(errors.value[0]);return}step.value=Math.min(3,step.value+1)}
+function back(){if(!submitting.value&&!loading.value)step.value=Math.max(0,step.value-1)}
+function closeOrder(){if(submitting.value)return;void router.replace({path:'/service-provision',query:{}})}
+async function verifyPersisted(orderId:number,version:number){
+ const request=++persistedVersion
+ persistedServices.value=[];persistedError.value=false;persistedMismatch.value=false
+ if(!auth.hasPermission('service:read')){persistedError.value=true;return}
+ persistedLoading.value=true
+ try{
+  const res=unwrap(await businessRelationsApi.orderServices(orderId))||{}
+  if(request!==persistedVersion||version!==previewVersion.value||
+     routeOrderId()!==orderId||Number(order.value.id)!==orderId)return
+  const linked=res.items||[]
+  const expected=(result.value?.services||[]).map((x:any)=>Number(x.serviceId))
+  persistedServices.value=linked
+  persistedMismatch.value=!expected.length||expected.some((sid:number)=>!sid||
+    !linked.some((x:any)=>Number(x.id)===sid))||!!res.truncated
+ }catch{
+  if(request===persistedVersion&&version===previewVersion.value&&routeOrderId()===orderId){
+   persistedError.value=true;persistedServices.value=[]
+  }
+ }finally{if(request===persistedVersion)persistedLoading.value=false}
+}
+async function confirm(){
+ const orderId=Number(order.value.id),version=previewVersion.value
+ if(submitting.value||loading.value||previewError.value||step.value!==3||
+    !snapshot.value?.paymentReady||snapshot.value?.alreadyProvisioned||!items.value.length||
+    routeOrderId()!==orderId||!Number.isSafeInteger(orderId)||orderId<=0)return
+ if(errors.value.length){ElMessage.warning(errors.value[0]);step.value=1;return}
  if(!reason.value.trim()){ElMessage.warning('请输入开通原因');return}
  if(!auth.hasPermission('order:provision')){ElMessage.error('没有订单开通权限');return}
+ const note=reason.value.trim()
+ const confirmedPlans=plans.value.map(p=>({
+  orderItemId:Number(p.orderItemId),deliveryMode:p.deliveryMode,
+  reverseProxyIds:[...(p.reverseProxyIds||[])]
+ }))
  submitting.value=true
  try{
-  result.value=unwrap(await orderServiceApi.provisionOrder(Number(order.value.id),reason.value.trim(),plans.value))
-  step.value=4
+  const response=unwrap(await orderServiceApi.provisionOrder(orderId,note,confirmedPlans))
+  if(version!==previewVersion.value||routeOrderId()!==orderId||
+     Number(order.value.id)!==orderId){
+   ElMessage.warning('原订单开通请求已返回，但当前已切换订单；请到原订单查看服务关联与审计')
+   return
+  }
+  result.value=response;step.value=4
   if(fullyVerified(result.value?.services||[]))ElMessage.success('各服务实际交付核验通过')
   else ElMessage.warning('服务实例已登记，尚无全部服务真实交付验证；请逐项回查')
- }
- catch{ElMessage.error('开通未完成，订单保持待开通；请检查原因后重新预检')}finally{submitting.value=false}}
+  await verifyPersisted(orderId,version)
+ }catch{
+  if(version===previewVersion.value&&routeOrderId()===orderId){
+   result.value=null
+   ElMessage.error('开通结果未确认；请回查订单服务关系和任务审计，重新预检后再决定是否重试')
+  }
+ }finally{submitting.value=false}
+}
 function copyText(s:any){if(s)navigator.clipboard?.writeText(String(s)).then(()=>ElMessage.success('已复制'))}
-onMounted(()=>{loadOrders();const id=Number(route.query.orderId);if(id>0)openOrder(id)})
+watch(()=>route.query.orderId,()=>{
+ clearOrder()
+ const next=routeOrderId()
+ if(next>0)void openOrder(next)
+ else void loadOrders()
+})
+onMounted(()=>{void loadOrders();const next=routeOrderId();if(next>0)void openOrder(next)})
 </script>
 <template>
 <div class="page-stack">
@@ -106,7 +168,7 @@ onMounted(()=>{loadOrders();const id=Number(route.query.orderId);if(id>0)openOrd
   <el-button v-if="listError" @click="loadOrders">重新查询待开通订单</el-button>
   <el-alert type="info" :closable="false" title="此处只处理待开通订单。管理员特殊手工开通不属于日常订单流程，需单独授权。"/>
   <el-card shadow="never"><div class="filters"><el-input v-model="q.keyword" placeholder="订单号/客户" clearable style="width:280px" @keyup.enter="q.page=1;loadOrders()"/><el-button type="primary" @click="q.page=1;loadOrders()">查询</el-button></div>
-   <el-table :data="orderRows" v-loading="listLoading" :empty-text="listError?'待开通订单读取失败':'暂无当前筛选的待开通订单'" stripe><el-table-column label="付款状态" width="118"><template #default="s"><el-tag :type="s.row.payment_status==='PAID_CONFIRMED'?'success':'warning'">{{s.row.payment_status==='PAID_CONFIRMED'?'已核实':'待核实'}}</el-tag></template></el-table-column><el-table-column prop="order_no" label="订单号" width="190"/><el-table-column prop="customer_name" label="客户" min-width="170"/><el-table-column prop="order_type" label="订单类型" width="100"/><el-table-column prop="item_total" label="订单项" width="80"/><el-table-column prop="service_total" label="服务实例数" width="105"/><el-table-column prop="expected_effective_at" label="预计生效" width="180"/><el-table-column prop="expected_expire_at" label="预计到期" width="180"/><el-table-column label="操作" width="120" fixed="right"><template #default="s"><el-button v-if="s.row.order_type==='NEW'" link type="primary" @click="openOrder(s.row.id)">进入开通</el-button><span v-else class="subtle">请走服务变更</span></template></el-table-column></el-table>
+   <el-table :data="orderRows" v-loading="listLoading" :empty-text="listError?'待开通订单读取失败':'暂无当前筛选的待开通订单'" stripe><el-table-column label="付款状态" width="118"><template #default="s"><el-tag :type="s.row.payment_status==='PAID_CONFIRMED'?'success':'warning'">{{s.row.payment_status==='PAID_CONFIRMED'?'已核实':'待核实'}}</el-tag></template></el-table-column><el-table-column prop="order_no" label="订单号" width="190"/><el-table-column prop="customer_name" label="客户" min-width="170"/><el-table-column prop="order_type" label="订单类型" width="100"/><el-table-column prop="item_total" label="订单项" width="80"/><el-table-column prop="service_total" label="服务实例数" width="105"/><el-table-column prop="expected_effective_at" label="预计生效" width="180"/><el-table-column prop="expected_expire_at" label="预计到期" width="180"/><el-table-column label="操作" width="120" fixed="right"><template #default="s"><el-button v-if="s.row.order_type==='NEW'" link type="primary" @click="selectOrder(Number(s.row.id))">进入开通</el-button><span v-else class="subtle">请走服务变更</span></template></el-table-column></el-table>
    <div class="pager"><el-pagination v-model:current-page="q.page" v-model:page-size="q.size" :total="total" layout="total,prev,pager,next" @change="loadOrders"/></div>
   </el-card>
  </template>
@@ -140,7 +202,23 @@ onMounted(()=>{loadOrders();const id=Number(route.query.orderId);if(id>0)openOrd
   <el-card v-if="step===4" shadow="never"><el-result :icon="fullyVerified(result?.services||[])?'success':'warning'"
    :title="fullyVerified(result?.services||[])?'真实交付已核验':'开通编排已返回，仍有服务待真实交付核验'"
    sub-title="仅首次显示一次性凭证；Mock/仅管理面状态不代表代理可用，请打开服务详情核验实际交付阶段"/><el-table :data="result?.services||[]" border><el-table-column prop="serviceNo" label="服务编号" min-width="180"/><el-table-column label="交付方式" width="125"><template #default="s">{{modeNames[s.row.deliveryMode]}}</template></el-table-column><el-table-column prop="status" label="状态" width="90"/><el-table-column label="交付确认" width="160"><template #default="s"><el-tag :type="isRealVerified(s.row.deliveryStage)?'success':'warning'">{{isRealVerified(s.row.deliveryStage)?'真实交付已验证':(s.row.deliveryStage||'UNVERIFIED')+' · 未证实真实交付'}}</el-tag></template></el-table-column><el-table-column label="一次性凭证" min-width="250"><template #default="s"><span>{{s.row.oneTimeCredential?.account||s.row.oneTimeCredential?.type}} · </span><el-button v-if="s.row.oneTimeCredential?.secret" link type="primary" @click="copyText(s.row.oneTimeCredential?.secret)">复制密钥（仅本次）</el-button><span v-else class="subtle">{{s.row.oneTimeCredential?.mask||'使用已有认证配置'}}</span></template></el-table-column><el-table-column label="操作" width="100"><template #default="s"><el-button link @click="router.push('/services/'+s.row.serviceId)">服务详情</el-button></template></el-table-column></el-table></el-card>
-  <div v-if="step<4" class="footer"><el-button :disabled="step===0" @click="back">上一步</el-button><el-button v-if="step<3" type="primary" :disabled="!snapshot.paymentReady||snapshot.alreadyProvisioned||(step===1&&errors.length>0)||(step===2&&errors.length>0)" @click="next">下一步</el-button><el-button v-else type="primary" :loading="submitting" :disabled="loading||previewError||!snapshot.paymentReady||errors.length>0||!reason.trim()||!auth.hasPermission('order:provision')" @click="confirm">确认开通</el-button></div>
+  <div v-if="step<4" class="footer"><el-button :disabled="step===0" @click="back">上一步</el-button><el-button v-if="step<3" type="primary" :disabled="loading||submitting||previewError||routeOrderId()!==Number(order.id)||!snapshot.paymentReady||snapshot.alreadyProvisioned||(step===1&&errors.length>0)||(step===2&&errors.length>0)" @click="next">下一步</el-button><el-button v-else type="primary" :loading="submitting" :disabled="loading||submitting||previewError||routeOrderId()!==Number(order.id)||snapshot.alreadyProvisioned||!snapshot.paymentReady||errors.length>0||!reason.trim()||!auth.hasPermission('order:provision')" @click="confirm">确认开通</el-button></div>
+  <el-card v-if="step===4" shadow="never" v-loading="persistedLoading">
+   <template #header><b>数据库服务关联回查（管理面持久记录）</b></template>
+   <el-alert type="info" :closable="false" title="以下记录重新从订单—服务关联接口读取，不是开通返回值；管理面记录一致不代表外部代理可连接或数据面已交付。"/>
+   <el-alert v-if="persistedError" type="error" :closable="false" title="订单关联服务回查失败或权限不足，不能据此认为没有生成服务。"/>
+   <el-alert v-if="persistedMismatch" type="warning" :closable="false" title="开通返回的服务与订单持久关联不完全一致或结果已截断，请进入订单详情进一步核对。"/>
+   <el-button v-if="!persistedLoading" style="margin:12px 0" @click="verifyPersisted(Number(order.id),previewVersion)">重新回查持久服务关系</el-button>
+   <el-table :data="persistedError?[]:persistedServices" border stripe :empty-text="persistedError?'关联读取失败':'当前没有已核对的服务记录'">
+    <el-table-column prop="service_no" label="服务编号" min-width="185"/>
+    <el-table-column prop="relation_type" label="关系类型" min-width="160"/>
+    <el-table-column prop="status" label="管理状态" width="115"/>
+    <el-table-column prop="delivery_stage" label="真实交付阶段" width="150"/>
+    <el-table-column label="回查" width="135"><template #default="s">
+     <el-button v-if="auth.hasPermission('service:read')" link type="primary" @click="router.push('/services/'+s.row.id)">资源绑定与任务详情</el-button>
+    </template></el-table-column>
+   </el-table>
+  </el-card>
   <div v-else class="footer"><el-button @click="router.push('/orders/'+order.id)">查看订单与收款凭证</el-button><el-button type="primary" @click="closeOrder">返回待开通订单</el-button></div>
  </template>
 </div>
