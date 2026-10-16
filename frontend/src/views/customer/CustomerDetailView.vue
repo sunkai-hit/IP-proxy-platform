@@ -1,37 +1,48 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessage} from 'element-plus'
 import {customerApi} from '@/api/customer'
 import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),id=Number(route.params.id)
+const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
 const detail=ref<any>(null),credentials=ref<any[]>([]),orders=ref<any[]>([])
-const ordersTruncated=ref(false),loading=ref(false),ordersError=ref(false)
+const ordersTruncated=ref(false),loading=ref(false),ordersError=ref(false),credentialError=ref(false),detailError=ref(false),requestVersion=ref(0)
 const fmt=(v:any)=>v===null||v===undefined||v===''?'—':String(v)
 async function load(){
- loading.value=true;ordersError.value=false
+ const version=++requestVersion.value,customerId=id
+ loading.value=true;detailError.value=false;ordersError.value=false;credentialError.value=false
+ detail.value=null;credentials.value=[];orders.value=[];ordersTruncated.value=false
  try{
-  detail.value=(await customerApi.detail(id)).data.data
-  const extra=await Promise.allSettled([
-   auth.hasPermission('customer:credential:read')?customerApi.credentials(id):Promise.resolve(null),
-   auth.hasPermission('order:read')?businessRelationsApi.customerOrders(id):Promise.resolve(null)
+  const result=(await customerApi.detail(customerId)).data.data
+  if(version!==requestVersion.value)return
+  if(!result?.customer?.customer_code)throw new Error('Customer primary record absent')
+  detail.value=result
+  const [cred,ord]=await Promise.allSettled([
+   auth.hasPermission('customer:credential:read')?customerApi.credentials(customerId):Promise.resolve(null),
+   auth.hasPermission('order:read')?businessRelationsApi.customerOrders(customerId):Promise.resolve(null)
   ])
-  if(extra[0].status==='fulfilled')credentials.value=extra[0].value?.data?.data||[]
-  else{credentials.value=[];ElMessage.warning('服务凭证关联查询未完成')}
-  if(extra[1].status==='fulfilled'){
-   orders.value=extra[1].value?.data?.data?.items||[]
-   ordersTruncated.value=!!extra[1].value?.data?.data?.truncated
-  }else{orders.value=[];ordersError.value=true}
- }finally{loading.value=false}
+  if(version!==requestVersion.value)return
+  if(cred.status==='fulfilled')credentials.value=cred.value?.data?.data||[]
+  else credentialError.value=true
+  if(ord.status==='fulfilled'){
+   orders.value=ord.value?.data?.data?.items||[]
+   ordersTruncated.value=!!ord.value?.data?.data?.truncated
+  }else ordersError.value=true
+ }catch{
+  if(version===requestVersion.value){
+   detailError.value=true;detail.value=null;credentials.value=[];orders.value=[]
+  }
+ }finally{if(version===requestVersion.value)loading.value=false}
 }
 function openOrder(newOrder=false){router.push({path:'/orders',query:{customerId:String(id),...(newOrder?{newOrder:'1'}:{})}})}
 function openService(serviceId:number){router.push('/services/'+serviceId)}
 function metric(v:any){return v==null?'—':v}
+watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 onMounted(load)
 </script>
 <template>
-<div v-if="detail" v-loading="loading" class="page">
+<div class="page" v-loading="loading"><el-alert v-if="detailError" type="error" :closable="false" title="客户详情读取失败，无法确认客户归属、合同、服务或认证状态。"/><el-button v-if="detailError" @click="load">重新加载客户详情</el-button><template v-if="detail?.customer">
  <div class="head">
   <div><el-button link @click="router.push('/customers')">← 返回客户列表</el-button>
    <h2>{{detail.customer.customer_name}}</h2><p>{{detail.customer.customer_code}}</p></div>
@@ -68,7 +79,7 @@ onMounted(load)
     <el-alert v-if="ordersError" title="订单关联明细暂不可用，不代表客户没有订单。" type="warning" :closable="false"/>
     <el-alert v-if="ordersTruncated" title="仅展示最近200条订单，请进入订单管理筛选查看其余记录。" type="info" :closable="false"/>
     <el-button style="margin-bottom:12px" @click="openOrder(false)">进入该客户订单管理</el-button>
-    <el-table :data="orders" stripe border>
+    <el-table :data="orders" :empty-text="ordersError?'订单关系读取失败':'暂无已登记订单'" stripe border>
      <el-table-column prop="order_no" label="订单号" min-width="165"/>
      <el-table-column prop="order_type" label="业务类型" width="105"/>
      <el-table-column prop="status" label="订单状态" width="125"/>
@@ -115,7 +126,8 @@ onMounted(load)
    </el-tab-pane>
    <el-tab-pane v-if="auth.hasPermission('customer:credential:read')" label="服务凭证摘要">
     <el-alert title="凭证不返回Token、私钥或密码明文。密钥只能在实际签发后经授权一次性展示。" type="info" :closable="false"/>
-    <el-table :data="credentials" stripe>
+    <el-alert v-if="credentialError" type="error" :closable="false" title="客户服务凭证摘要读取失败，不能据此认为该客户未配置凭证。"/>
+    <el-table :data="credentials" :empty-text="credentialError?'凭证读取失败':'暂无已登记凭证摘要'" stripe>
      <el-table-column prop="service_no" label="服务编号"/><el-table-column prop="product_name" label="产品"/>
      <el-table-column prop="credential_type" label="类型"/><el-table-column prop="account_name" label="账号"/>
      <el-table-column prop="secret_mask" label="掩码"/><el-table-column prop="status" label="状态"/>
@@ -124,6 +136,7 @@ onMounted(load)
    </el-tab-pane>
   </el-tabs>
  </el-card>
+ </template>
 </div>
 </template>
 <style scoped>

@@ -646,6 +646,103 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button',{name:'保存',exact:true})).toBeDisabled()
   })
 
+  test('domain list survives failed line/IP option loaders, and association save is disabled', async ({ page }) => {
+    await page.route('**/api/admin/v1/resources/lines?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_LINE_OPTIONS_DOWN',message:'synthetic error'}),
+    }))
+    await page.route('**/api/admin/v1/resources/ips?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_IP_OPTIONS_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/domains')
+    await expect(page.getByText('线路或IP选项读取失败，域名列表可查询，但保存资源关联暂不可用。')).toBeVisible()
+    await expect(page.getByRole('heading',{name:'域名配置'})).toBeVisible()
+    await page.getByRole('button',{name:'新增域名'}).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('dialog').getByRole('button',{name:'保存'})).toBeDisabled()
+  })
+
+  test('customer detail failures cannot retain previous customer identity and credentials', async ({ page }) => {
+    expect(customerId).toBeTruthy()
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await page.route('**/api/admin/v1/customers/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/customers/900992')
+    })
+    await expect(page.getByText('客户详情读取失败，无法确认客户归属、合同、服务或认证状态。')).toBeVisible()
+    await expect(page.getByText('V12 CI Customer')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'为该客户创建订单'})).toHaveCount(0)
+  })
+
+  test('customer credentials API 503 is reported independently of existing customer and orders', async ({ page }) => {
+    expect(customerId).toBeTruthy()
+    await page.route('**/api/admin/v1/customers/'+customerId+'/credentials',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_CREDENTIALS_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await page.getByRole('tab',{name:'服务凭证摘要'}).click()
+    await expect(page.getByText('客户服务凭证摘要读取失败，不能据此认为该客户未配置凭证。')).toBeVisible()
+    await expect(page.getByText('凭证读取失败',{exact:true})).toBeVisible()
+  })
+
+  test('customer auth list outage does not report no pending applications', async ({ page }) => {
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_KYC_LIST_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('客户认证列表读取失败，不能据此认为没有待审核申请。')).toBeVisible()
+    await expect(page.getByText('认证列表读取失败',{exact:true})).toBeVisible()
+  })
+
+  test('customer list outage cannot hide customers or overdue work', async ({ page }) => {
+    await page.route('**/api/admin/v1/customers?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_LIST_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customers')
+    await expect(page.getByText('客户列表读取失败，不能据此认定没有客户或没有未终止服务。')).toBeVisible()
+    await expect(page.getByText('客户列表读取失败',{exact:true})).toBeVisible()
+  })
+
+  test('customer option outage does not suppress the real customer ledger', async ({ page }) => {
+    await page.route('**/api/admin/v1/customers/options',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_OPTIONS_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customers')
+    await expect(page.getByText('客户类型/负责人选项读取失败，列表仍可查询；保存客户暂不可用。')).toBeVisible()
+    await expect(page.getByText('V12 CI Customer')).toBeVisible()
+    await page.getByRole('button',{name:'新增客户'}).click()
+    await expect(page.getByRole('dialog').getByRole('button',{name:'保存'})).toBeDisabled()
+  })
+
+  test('customer KYC details cannot display stale sensitive application material after HTTP outage', async ({ page }) => {
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,auth_no:'CI-KYC-900991',
+        customer_name:'CI Customer',status:'PENDING'}],total:1}}),
+    }))
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_KYC_DETAIL_DOWN',message:'synthetic outage'}),
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'详情'}).click()
+    await expect(page.getByText('认证详情读取失败，不能确认资料、审核状态或历史意见。')).toBeVisible()
+    await expect(page.getByText('证件/主体编号',{exact:true})).toHaveCount(0)
+    await expect(page.getByText('附件数量',{exact:true})).toHaveCount(0)
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
