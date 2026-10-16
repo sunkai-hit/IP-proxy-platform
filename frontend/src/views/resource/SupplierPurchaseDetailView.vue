@@ -78,7 +78,7 @@ onMounted(load)
    <el-descriptions-item label="剩余额度（可选）">{{fmt(row.remaining_quota)}}</el-descriptions-item>
   </el-descriptions>
  </el-card>
- <el-card shadow="never">
+ <el-card v-if="!loadError&&row.purchase_no" shadow="never">
   <el-tabs v-model="tab">
    <el-tab-pane v-if="auth.hasPermission('resource:reverse-proxy:read')" name="proxies" :label="'反向代理明细 ('+proxies.length+')'">
     <el-alert v-if="proxyWarning" type="warning" :closable="false" title="代理关联查询失败，不能据此认定采购尚未被使用。"/>
