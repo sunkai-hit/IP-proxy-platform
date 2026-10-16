@@ -977,7 +977,10 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button', { name: '登记采购' })).toBeDisabled()
     await expect(page.getByText('CI-PUR-R3', { exact: true })).toBeVisible()
     await page.unroute(url)
+    const reloaded=page.waitForResponse(r=>
+      r.request().method()==='GET' && new URL(r.url()).pathname.endsWith('/v12/external-delivery/options'))
     await page.getByRole('button', { name: '重新加载采购选项' }).click()
+    expect((await reloaded).status()).toBe(200)
     await expect(page.getByRole('button', { name: '登记采购' })).toBeEnabled()
   })
 
