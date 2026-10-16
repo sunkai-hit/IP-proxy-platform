@@ -129,6 +129,26 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     }
   })
 
+  test('additional 17 V1.3 management sections render in one real browser session', async ({ page }) => {
+    // Route-level smoke only: no claim that every field or product network
+    // interaction within these sections has been accepted.
+    const routes = [
+      '/resources', '/resources/centos', '/resources/ros', '/resources/lines',
+      '/exclusive-allocations', '/domains', '/suppliers',
+      '/customer-auth', '/customer-accounts', '/monitor', '/logs',
+      '/long-monitor/monitors', '/long-monitor/bots',
+      '/long-monitor/alarms', '/long-monitor/notifications',
+      '/statistics', '/system',
+    ]
+    for (const route of routes) {
+      await page.goto(base + route)
+      await expect(page, 'router unexpectedly left ' + route).toHaveURL(base + route)
+      await expect(page.locator('.console-main')).toBeVisible()
+      await expect(page.locator('.console-main h1, .console-main h2, .console-main .el-card, .console-main .el-table').first(),
+        'Missing visible business content at ' + route).toBeVisible({ timeout: 10000 })
+    }
+  })
+
   test('unpaid order cannot enter provisioning wizard or submit product actions', async ({ page }) => {
     expect(unpaidOrderId).toBeTruthy()
     const provisionPosts: string[] = []
