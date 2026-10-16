@@ -1,0 +1,10 @@
+<script setup lang="ts">
+import { onMounted,reactive,ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { longMonitorApi } from '@/api/longMonitor'
+const router=useRouter(),rows=ref<any[]>([]),total=ref(0),loading=ref(false),q=reactive<any>({page:1,size:20,keyword:'',enabled:undefined}),data=(r:any)=>r.data.data
+async function load(){loading.value=true;try{const d=data(await longMonitorApi.bots(q));rows.value=d.items||[];total.value=d.total||0}finally{loading.value=false}}
+async function test(r:any){const d=data(await longMonitorApi.testBot(r.id,'手工测试机器人'));ElMessage[d?.success?'success':'error'](d?.message||'测试完成');load()}
+onMounted(load)
+</script><template><div class="page"><div><h2>客户机器人</h2><p>为客户配置钉钉或飞书机器人，Webhook、Token和Secret按敏感信息处理。</p></div><el-card shadow="never"><div class="filters"><el-input v-model="q.keyword" placeholder="机器人编号/名称/客户" clearable/><el-button type="primary" @click="load">查询</el-button></div><el-table :data="rows" v-loading="loading" stripe><el-table-column prop="bot_no" label="编号" width="180"/><el-table-column prop="customer_name" label="客户"/><el-table-column prop="bot_name" label="名称"/><el-table-column prop="bot_type" label="类型" width="100"/><el-table-column prop="enabled" label="启用" width="80"><template #default="s">{{s.row.enabled?'是':'否'}}</template></el-table-column><el-table-column prop="last_test_status" label="最近测试"/><el-table-column label="操作" width="150"><template #default="s"><el-button link type="primary" @click="router.push(`/long-monitor/bots/${s.row.id}`)">详情</el-button><el-button link @click="test(s.row)">测试</el-button></template></el-table-column></el-table><div class="pager"><el-pagination v-model:current-page="q.page" v-model:page-size="q.size" :total="total" layout="total,sizes,prev,pager,next" @change="load"/></div></el-card></div></template><style scoped>.page{display:grid;gap:16px}h2{margin:0 0 6px}p{margin:0;color:#7b8494}.filters{display:flex;gap:10px;margin-bottom:14px}.filters>*{max-width:280px}.pager{display:flex;justify-content:flex-end;margin-top:14px}</style>

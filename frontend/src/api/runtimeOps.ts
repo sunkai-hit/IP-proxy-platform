@@ -25,6 +25,7 @@ export const alarmApi={
 export const statisticsApi={
   overview:()=>http.get('/statistics/overview'),
   resources:(params:any)=>http.get('/statistics/resources',{params}),
+  poolsCurrent:()=>http.get('/statistics/v12/pools/current'),
   ips:(params:any)=>http.get('/statistics/ips',{params}),
   customers:(params:any)=>http.get('/statistics/customers',{params}),
   products:(params:any)=>http.get('/statistics/products',{params}),

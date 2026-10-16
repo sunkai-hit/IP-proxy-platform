@@ -1,0 +1,23 @@
+  - heading "(备份机)ROS列表" [level=3]
+  - textbox "全部客户"
+  - textbox "是否管理"
+  - textbox "状态"
+  - textbox "全部ROS"
+  - textbox "请输入gateway"
+  - textbox "请输入account"
+  - textbox "请输入ip"
+  - button "搜索"
+  - button "删除"
+  - button "置為管理"
+        - columnheader "":
+        - columnheader "ID":
+        - columnheader "rosId 升序 降序":
+        - columnheader "ip 升序 降序":
+        - columnheader "管理":
+        - columnheader "域名":
+        - columnheader "用户":
+        - columnheader "线路别名 升序 降序":
+        - columnheader "拨号账号 升序 降序":
+        - columnheader "状态 升序 降序":
+        - columnheader "ROS上报时间 升序 降序":
+        - columnheader "操作":

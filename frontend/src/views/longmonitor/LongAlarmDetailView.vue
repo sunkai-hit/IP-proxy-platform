@@ -1,0 +1,76 @@
+<script setup lang="ts">
+import {onMounted,ref} from 'vue'
+import {useRoute,useRouter} from 'vue-router'
+import {ElMessage,ElMessageBox} from 'element-plus'
+import {longMonitorApi} from '@/api/longMonitor'
+import {useAuthStore} from '@/stores/auth'
+const route=useRoute(),router=useRouter(),auth=useAuthStore(),row=ref<any>({}),loading=ref(false),id=Number(route.params.id),data=(r:any)=>r.data.data
+async function load(){loading.value=true;try{row.value=data(await longMonitorApi.alarm(id))||{}}finally{loading.value=false}}
+async function close(){
+ await ElMessageBox.confirm('关闭只代表人工归档，不会改变代理网络状态或检测结果。请先核查监控及服务。','告警归档影响确认',{type:'warning'})
+ const {value}=await ElMessageBox.prompt('请输入归档原因','关闭告警',{inputValidator:v=>!!String(v||'').trim()||'必须填写原因'})
+ await longMonitorApi.closeAlarm(id,String(value).trim())
+ ElMessage.success('已归档告警；真实网络恢复仍以检测结果为准')
+ await load()
+}
+onMounted(load)
+</script>
+<template>
+<div class="page">
+ <div class="head">
+  <div><el-button link @click="router.push('/long-monitor/alarms')">← 返回告警列表</el-button>
+    <h2>{{row.alarm_no||'长效告警详情'}}</h2>
+    <p>异常 → 通知 → 检测恢复 → 人工归档。归档不能代替真实网络恢复。</p>
+  </div>
+  <div class="actions"><el-button @click="load">刷新</el-button>
+   <el-button v-if="auth.hasPermission('long-monitor:alarm:close')&&row.status!=='CLOSED'"
+     type="warning" @click="close">确认归档</el-button>
+  </div>
+ </div>
+ <el-alert type="warning" :closable="false"
+  title="告警状态和监控当前状态分别记录；人工关闭告警不会重新建立代理连接或清除真实故障。"/>
+ <el-card v-loading="loading" shadow="never">
+  <template #header><b>告警主记录</b></template>
+  <el-descriptions :column="2" border>
+   <el-descriptions-item label="告警编号">{{row.alarm_no||'—'}}</el-descriptions-item>
+   <el-descriptions-item label="告警类型">{{row.alarm_type||'—'}}</el-descriptions-item>
+   <el-descriptions-item label="告警状态"><el-tag :type="row.status==='OPEN'?'danger':'info'">{{row.status||'—'}}</el-tag></el-descriptions-item>
+   <el-descriptions-item label="检测当前状态">{{row.monitor_status||'UNKNOWN'}}</el-descriptions-item>
+   <el-descriptions-item label="所属客户">
+    <el-button v-if="auth.hasPermission('customer:read')" link type="primary" @click="router.push('/customers/'+row.customer_id)">{{row.customer_name}}</el-button>
+    <span v-else>{{row.customer_name||'—'}}</span>
+   </el-descriptions-item>
+   <el-descriptions-item label="关联服务">
+    <el-button v-if="auth.hasPermission('service:read')" link type="primary" @click="router.push('/services/'+row.service_id)">{{row.service_no}}</el-button>
+    <span v-else>{{row.service_no||'—'}}</span>
+   </el-descriptions-item>
+   <el-descriptions-item label="监控配置">
+    <el-button v-if="auth.hasPermission('long-monitor:read')" link type="primary" @click="router.push('/long-monitor/monitors/'+row.monitor_id)">{{row.monitor_no}}</el-button>
+    <span v-else>{{row.monitor_no||'—'}}</span>
+   </el-descriptions-item>
+   <el-descriptions-item label="通知机器人">
+    <el-button v-if="row.bot_id&&auth.hasPermission('long-monitor:bot:read')" link type="primary" @click="router.push('/long-monitor/bots/'+row.bot_id)">{{row.bot_name||row.bot_no}}</el-button>
+    <span v-else>{{row.bot_name||'未设置'}}</span>
+   </el-descriptions-item>
+   <el-descriptions-item label="检测目标">{{row.target_host||'—'}}:{{row.target_port||'—'}}</el-descriptions-item>
+   <el-descriptions-item label="连续失败/恢复阈值">{{row.failure_threshold||'—'}} / {{row.recovery_threshold||'—'}}</el-descriptions-item>
+   <el-descriptions-item label="告警发生">{{row.opened_at||'—'}}</el-descriptions-item>
+   <el-descriptions-item label="检测恢复">{{row.recovered_at||'尚无恢复证据'}}</el-descriptions-item>
+   <el-descriptions-item label="最近检测">{{row.last_checked_at||'尚无检测回执'}}</el-descriptions-item>
+   <el-descriptions-item label="归档时间">{{row.closed_at||'未归档'}}</el-descriptions-item>
+   <el-descriptions-item label="归档原因" :span="2">{{row.close_reason||'—'}}</el-descriptions-item>
+  </el-descriptions>
+ </el-card>
+ <el-card shadow="never">
+  <template #header><b>通知与回查</b></template>
+  <p>通知结果可在通知记录中按客户、监控编号核对；服务真实网络状态需回到监控详情确认。</p>
+  <div class="actions">
+   <el-button v-if="auth.hasPermission('long-monitor:notification:read')"
+    @click="router.push({path:'/long-monitor/notifications',query:{customerId:String(row.customer_id),monitorId:String(row.monitor_id)}})">查看通知记录</el-button>
+   <el-button v-if="auth.hasPermission('long-monitor:read')"
+    @click="router.push('/long-monitor/monitors/'+row.monitor_id)">检测历史</el-button>
+  </div>
+ </el-card>
+</div>
+</template>
+<style scoped>.page{display:grid;gap:16px}.head,.actions{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.head h2{margin:6px 0}.head p{margin:0;color:#7b8494}</style>

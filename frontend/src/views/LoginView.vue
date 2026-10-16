@@ -8,7 +8,7 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
-const form = reactive({ username: 'admin', password: 'admin123' })
+const form = reactive({ username: '', password: '' })
 
 async function submit() {
   loading.value = true
@@ -36,7 +36,7 @@ async function submit() {
         <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password size="large" /></el-form-item>
         <el-button type="primary" size="large" :loading="loading" style="width:100%" @click="submit">登录</el-button>
       </el-form>
-      <div class="login-tip">开发环境默认账号：admin / admin123</div>
+      <div class="login-tip">请使用已授权的管理账号登录。开发环境初始化凭证应通过环境配置或部署文档获取。</div>
     </el-card>
   </div>
 </template>

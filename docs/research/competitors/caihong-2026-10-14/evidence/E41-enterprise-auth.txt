@@ -1,0 +1,15 @@
+  - heading "企业认证审核" [level=3]
+  - textbox "请输入昵称"
+  - textbox "请输入手机号"
+  - textbox "请选择"
+  - button "搜索"
+        - columnheader "ID 升序 降序":
+        - columnheader "用户名":
+        - columnheader "手机":
+        - columnheader "余额(元)":
+        - columnheader "企业名称":
+        - columnheader "统一社会代码":
+        - columnheader "营业执照(点击放大)":
+        - columnheader "状态":
+        - columnheader "审核人":
+        - columnheader "审核":

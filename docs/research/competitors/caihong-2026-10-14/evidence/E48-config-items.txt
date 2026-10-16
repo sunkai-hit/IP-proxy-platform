@@ -1,0 +1,3 @@
+  - link "添 加":
+    - /url: http://www.caihongdaili.com/admin/configuration/create
+  - button "确 认"

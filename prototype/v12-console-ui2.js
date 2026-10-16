@@ -9,10 +9,10 @@
     {key:'resource',title:'资源管理',children:[
       {key:'resources.overview',title:'资源概览',module:'resources',tab:0,desc:'CentOS、ROS、家宽/线路、资源池及外部交付资源统一概览'},
       {key:'resources.centos',title:'CentOS列表',module:'resources',tab:1,desc:'对应现有主机列表，展示服务器承载与运行状态'},
-      {key:'resources.ros',title:'ROS列表',module:'resources',tab:2,desc:'对应现有ROS主机，展示线路、B/C段、BAS和负载信息'},
+      {key:'resources.ros',title:'ROS列表',module:'resources',tab:2,desc:'对应现有ROS主机，展示拨号线路、BAS与负载，不承担B/C统计'},
       {key:'resources.lines',title:'家宽/线路列表',module:'resources',tab:3,desc:'统一承载ROS逻辑线路、家宽账号和节点的业务信息'},
       {key:'resources.pools',title:'资源池',module:'resources',tab:4,desc:'按业务规则组织多个家宽/线路形成逻辑资源集合'},
-      {key:'resources.exclusive',title:'独享资源',module:'resources',tab:5,desc:'管理独享服务对家宽/线路及当前IP的占用关系'},
+      {key:'resources.exclusive',title:'独享资源',module:'resources',tab:5,desc:'以公网出口IPv4跨客户排他展示独享服务的占用与宽限保留'},
       {key:'resources.domains',title:'域名配置',module:'resources',tab:6,desc:'维护域名、线路、客户及DNSPOD同步关系'},
       {key:'resources.suppliers',title:'外部供应商',module:'resources',tab:7,desc:'维护外部供应商档案、账号及接口基础配置'},
       {key:'resources.purchases',title:'外部套餐/资源采购',module:'resources',tab:8,desc:'记录运营根据客户需求在外部供应商购买的套餐'},
@@ -59,7 +59,7 @@
   }
   function shell(){
     const r=current();
-    $('#app').innerHTML=`<div class="console-shell-static"><aside class="console-aside-static"><div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console</small></div></div><div class="console-menu-static">${navHtml()}</div></aside><section class="console-body-static"><header class="console-header-static"><div><span class="env-chip">V1.2</span><b>${r.title}</b></div><div class="header-user-static"><span>系统管理员</span><button class="header-link" data-action="demo">退出登录</button></div></header><main class="console-main-static"><div id="content"></div></main></section></div>`;
+    $('#app').innerHTML=`<div class="console-shell-static"><aside class="console-aside-static"><div class="console-brand"><span>IP</span><div><b>IP代理管理平台</b><small>Management Console</small></div></div><div class="console-menu-static">${navHtml()}</div></aside><section class="console-body-static"><header class="console-header-static"><div><span class="env-chip">V1.3</span><b>${r.title}</b></div><div class="header-user-static"><span>系统管理员</span><button class="header-link" data-action="demo">退出登录</button></div></header><main class="console-main-static"><div id="content"></div></main></section></div>`;
     $$('[data-route]').forEach(el=>el.onclick=()=>{state.route=el.dataset.route;const x=current();if(x.parent)state.openNav[x.parent]=true;if(x.module)state.page=x.module;if(x.tab!==undefined&&x.module)state.tabs[x.module]=x.tab;shell();renderConsolePage()});
     $$('[data-toggle]').forEach(el=>el.onclick=()=>{const k=el.dataset.toggle;state.openNav[k]=!isOpen({key:k});shell();renderConsolePage()});
     $$('[data-action]').forEach(el=>el.onclick=()=>showAction(el.dataset.action,el.textContent));

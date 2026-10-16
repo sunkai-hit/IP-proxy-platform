@@ -1,0 +1,584 @@
+name: V1.3 Consolidation CI
+
+on:
+  push:
+    branches: [main, feature/v1.2-full-upgrade, feature/v1.2-round3-unified-baseline-20261014]
+  pull_request:
+    branches: [main, feature/v1.2-full-upgrade, feature/v1.2-round3-unified-baseline-20261014]
+
+jobs:
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  backend-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: ip_proxy
+          POSTGRES_USER: ipproxy
+          POSTGRES_PASSWORD: ipproxy_dev
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U ipproxy -d ip_proxy"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: [6379:6379]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare Chromium for real browser E2E against management backend
+        working-directory: frontend
+        run: |
+          npm install --no-package-lock
+          npm install --no-save --no-package-lock @playwright/test@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Verify V1.3 uploaded baseline and cross-artifact file coverage
+        run: python3 scripts/ci_v13_baseline_gate.py
+      - name: Verify 31-item cross-team interface index and report DOCX internal version drift
+        run: python3 scripts/ci_v13_release_evidence_gate.py
+      - name: Verify V1.3 frontend/backend API routes and lifecycle RBAC
+        run: python3 scripts/ci_v13_api_contract_gate.py
+      - name: Verify V1.3 cross-page router, payment-selection and RBAC guards
+        run: python3 scripts/ci_v13_ui_workflow_gate.py
+      - name: Verify short-IP allocation guard
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest test
+        working-directory: backend
+      - name: Package backend
+        run: mvn -B -DskipTests package
+        working-directory: backend
+      - name: Boot and exercise V1.3 baseline against existing business flows
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: ip_proxy
+          DB_USER: ipproxy
+          DB_PASSWORD: ipproxy_dev
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: ci-v12-key-abcdefghijklmnopqrstuvwxyz-123456
+          M1_ADMIN_PASSWORD: admin123
+          SPRING_PROFILES_ACTIVE: m4-mock,m6-mock,m8-mock
+          MONITOR_SCHEDULED_ENABLED: 'false'
+          STATISTICS_SCHEDULED_ENABLED: 'false'
+        run: |
+          set -euo pipefail
+          java -jar backend/target/ip-proxy-platform-backend.jar >/tmp/backend.log 2>&1 &
+          PID=$!
+          trap 'kill $PID 2>/dev/null || true' EXIT
+          for i in {1..60}; do curl -fsS http://localhost:8080/actuator/health >/dev/null && break || sleep 2; done
+          LOGIN=$(curl -fsS -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' http://localhost:8080/api/admin/v1/auth/login)
+          TOKEN=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["accessToken"])' <<< "$LOGIN")
+          # Product-group authorization endpoint stays closed when no integration
+          # key is configured, even if a caller knows customer/service IDs.
+          PRODUCT_AUTH_CODE=$(curl -s -o /tmp/product-auth-denied.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' -d '{"subjectId":"1","serviceId":"1","action":"SHORT_EXTRACT","requestedUnits":1,"requestId":"ci-deny"}' \
+            http://localhost:8080/business/v1/authorizations/check)
+          echo "Product authorization default-off HTTP status: $PRODUCT_AUTH_CODE"
+          if [ "$PRODUCT_AUTH_CODE" != "403" ]; then
+            cat /tmp/product-auth-denied.json || true
+            exit 1
+          fi
+          echo 'Product authorization endpoint defaults closed (HTTP 403)'
+
+          H="Authorization: Bearer $TOKEN"
+          J='Content-Type: application/json'
+          # The product write path MUST be unavailable in the default CI profile.
+          # No service may be paused or released by accident without a
+          # deliberately enabled, independently signed-off product integration.
+          STOP_HTTP=$(curl -s -o /tmp/r3-write-disabled.json -w '%{http_code}' -X POST \
+            -H "$H" -H "$J" http://localhost:8080/api/admin/v1/v12/delivery-actions/unknown-op/dispatch-expiry-stop)
+          test "$STOP_HTTP" = "400"
+          python3 -c 'import json; d=json.load(open("/tmp/r3-write-disabled.json")); assert d["code"]=="PRODUCT_WRITE_DISABLED"'
+          # No outbound product-group endpoint is configured in this synthetic
+          # environment. The management UI must show that fact and fail closed.
+          GATEWAY=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/product-integration/status)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["configured"] is False and d["readOnly"] is True and d["writesEnabled"] is False' <<< "$GATEWAY"
+          POOL_HTTP_CODE=$(curl -s -o /tmp/product-pool-unavailable.json -w '%{http_code}' -H "$H" http://localhost:8080/api/admin/v1/v12/product-integration/short-pool)
+          test "$POOL_HTTP_CODE" = "400"
+          python3 -c 'import json; d=json.load(open("/tmp/product-pool-unavailable.json")); assert d["code"]=="PRODUCT_INTEGRATION_NOT_CONFIGURED"'
+
+          C=$(curl -fsS -H "$H" -H "$J" -d '{"customerName":"V12 CI Customer","customerTypeCode":"ENTERPRISE","contactName":"CI","contactPhone":"13800000000"}' http://localhost:8080/api/admin/v1/customers)
+          CID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$C")
+          for P in centos ros lines; do curl -fsS -H "$H" -H "$J" -d '{"reason":"V12 CI sync"}' http://localhost:8080/api/admin/v1/resources/$P/sync >/dev/null; done
+          LINES=$(curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/v12/resources/lines?page=1&size=20')
+          L1=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["total"]>=2; print(d["items"][0]["id"])' <<< "$LINES")
+          L2=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["items"][1]["id"])' <<< "$LINES")
+          POOL=$(curl -fsS -H "$H" -H "$J" -d "{\"poolCode\":\"CI-V12-SHARED\",\"poolName\":\"V12 Shared Pool\",\"poolType\":\"SHARED\",\"purpose\":\"CI\",\"regionCodes\":[],\"carrierCodes\":[],\"lineIds\":[$L1,$L2]}" http://localhost:8080/api/admin/v1/v12/resource-pools)
+          POOLID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$POOL")
+          MEMBERS=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/resource-pools/$POOLID/lines)
+          python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["total"]==2' <<< "$MEMBERS"
+
+          PROD=$(curl -fsS -H "$H" -H "$J" -d '{"productCode":"CI-V12-SHORT","productName":"V12 Short IP","productType":"SHORT_IP","accessModeCode":"API_EXTRACT","protocolCodes":["HTTP"],"authModeCodes":["TOKEN"],"resourceMode":"SHARED","regionCodes":[],"carrierCodes":[],"typeConfig":{"ipValidSeconds":60,"singleExtractLimit":10,"extractRateLimit":100,"extractRateWindowSeconds":60,"dedupPeriodSeconds":300,"whitelistRequired":true,"switchPolicy":{"mode":"BUILTIN"}}}' http://localhost:8080/api/admin/v1/products)
+          PID2=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$PROD")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"V12 CI enable"}' http://localhost:8080/api/admin/v1/v12/products/$PID2/enable >/dev/null
+          PKG=$(curl -fsS -H "$H" -H "$J" -d "{\"packageCode\":\"CI-V12-PKG\",\"productId\":$PID2,\"packageName\":\"V12 Package\",\"serviceDays\":30,\"extractQuota\":10000,\"price\":100,\"currency\":\"CNY\",\"quotaConfig\":{}}" http://localhost:8080/api/admin/v1/packages)
+          PKGID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$PKG")
+          SVC=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"productId\":$PID2,\"packageId\":$PKGID,\"deliveryMode\":\"SELF_OWNED\",\"remark\":\"CI\"}" http://localhost:8080/api/admin/v1/services/provision)
+          SID=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="ACTIVE" and d["deliveryMode"]=="SELF_OWNED"; print(d["serviceId"])' <<< "$SVC")
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID >/dev/null
+          CUSTOMER_ROWS=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/customers?page=1&size=20")
+          python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]["items"]; c=next(v for v in rows if v["id"]==int(sys.argv[1])); assert c["service_count"]>=1 and "next_expire_at" in c and "grace_pending_count" in c' "$CID" <<< "$CUSTOMER_ROWS"
+          echo 'UI-02 customer list includes service counts, next expiry and grace pending fields'
+
+          # R3 read-model and contract smoke; this remains Mock-only, not genuine proxy delivery.
+          SUMMARY=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/services/$SID/delivery-summary)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["serviceId"]>0 and d["deliveryStage"] in ("MANAGEMENT_ONLY","MOCK_ONLY","ADAPTER_ACK_UNVERIFIED"); assert d["dataSource"]=="MANAGEMENT_DB_UNVERIFIED"' <<< "$SUMMARY"
+          CLAIMS=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/services/$SID/egress-claims)
+          python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]==[]' <<< "$CLAIMS"
+          GRACE=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/packages/$PKGID/grace)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["packageId"]>0 and d["graceDays"] is None' <<< "$GRACE"
+          # Lifecycle operations must not silently claim success against Mock-only adapters.
+          STOP_CODE=$(curl -s -o /tmp/r3-mock-stop.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"R3 mock pause must be blocked"}' http://localhost:8080/api/admin/v1/services/$SID/suspend)
+          test "$STOP_CODE" -ge 400
+          AFTER_BLOCK=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/services/$SID)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="ACTIVE"' <<< "$AFTER_BLOCK"
+          echo 'R3 mocked lifecycle safe gate verified'
+          echo 'R3 API read model / grace contract smoke passed (Mock only)'
+
+          # R3 synthetic fixed-service fixtures exercise the safe planner ONLY.
+          # They do not represent true LONG_IP network delivery or real entitlement migration.
+          PGID=$(docker ps --filter "ancestor=postgres:17-alpine" --format '{{.ID}}' | head -n1)
+          test -n "$PGID"
+          # Original resource chain UI acceptance: a line belongs to one ROS and
+          # through it one CentOS; source pools are N:M, not current-IP ownership.
+          LINE_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/lines/$L1")
+          LIST_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/lines?page=1&size=20")
+          python3 -c 'import json,sys; l=json.loads(sys.argv[1])["data"]; rows=json.loads(sys.argv[2])["data"]["items"]; assert "broadband_account" not in l and "broadband_account_mask" in l and all("broadband_account" not in x for x in rows)' "$LINE_RECORD" "$LIST_RECORD"
+          R3_ROSID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["ros_id"])' <<< "$LINE_RECORD")
+          R3_CENTOSID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["centos_id"])' <<< "$LINE_RECORD")
+          ROS_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/ros/$R3_ROSID")
+          CENTOS_RECORD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/resources/centos/$R3_CENTOSID")
+          python3 -c 'import json,sys; r=json.loads(sys.argv[1])["data"]; c=json.loads(sys.argv[2])["data"]; assert r["centos_id"]==int(sys.argv[3]) and c["ros"]["id"]==r["id"]' "$ROS_RECORD" "$CENTOS_RECORD" "$R3_CENTOSID"
+          SECOND_POOL=$(curl -fsS -H "$H" -H "$J" -d "{\"poolCode\":\"CI-V12-SECOND\",\"poolName\":\"CI N:M Another Pool\",\"lineIds\":[$L1]}" http://localhost:8080/api/admin/v1/v12/resource-pools)
+          SECOND_POOL_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$SECOND_POOL")
+          R3_POOL_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/lines/$L1/pools")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==2 and len(set(r["id"] for r in x))==2' <<< "$R3_POOL_LIST"
+          ACTIVE_POOL_BINDING=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_resource_binding WHERE service_id=$SID AND resource_type='POOL' AND resource_id=$POOLID AND status='ACTIVE'")
+          test "$ACTIVE_POOL_BINDING" -gt 0
+          POOL_REMOVE_HTTP=$(curl -s -o /tmp/r3-pool-last-source.json -w '%{http_code}' -H "$H" -H "$J" -d "{\"lineIds\":[$L1,$L2],\"reason\":\"CI fail closed for active service source\"}" "http://localhost:8080/api/admin/v1/v12/resource-pools/$POOLID/lines/remove")
+          test "$POOL_REMOVE_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-pool-last-source.json"))["code"]=="POOL_LAST_SOURCE_IN_USE"'
+          UNCHANGED_POOL_LINES=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM res_pool_line WHERE pool_id=$POOLID AND enabled=TRUE")
+          test "$UNCHANGED_POOL_LINES" -eq 2
+          echo 'CentOS/ROS/line linkage, server-masked broadband account, N:M pool and in-use source protection verified'
+          # Synthetic same-customer second service must NOT reuse an exclusive
+          # contracted IPv4 even if the source line is the same. No real IP is allocated.
+          for INDEX in A B; do
+            docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "
+              INSERT INTO svc_instance(service_no,customer_id,product_id,package_id,
+                product_type,product_snapshot,package_snapshot,quota_snapshot,
+                effective_at,expire_at,status,delivery_stage)
+              SELECT 'CI-EXCLUSIVE-RES-$INDEX',customer_id,product_id,package_id,
+                'EXCLUSIVE_IP',product_snapshot,package_snapshot,quota_snapshot,
+                now(),now()+interval '30 days','ACTIVE','MOCK_ONLY'
+              FROM svc_instance WHERE id=$SID" >/dev/null
+          done
+          EX_CI_A=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-EXCLUSIVE-RES-A'")
+          EX_CI_B=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-EXCLUSIVE-RES-B'")
+          docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status) VALUES($EX_CI_A,$CID,$L1,'198.51.100.42','EXCLUSIVE','RESERVED')" >/dev/null
+          if docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "INSERT INTO svc_egress_claim(service_id,customer_id,source_line_id,egress_ipv4,claim_mode,claim_status) VALUES($EX_CI_B,$CID,$L1,'198.51.100.42','EXCLUSIVE','RESERVED')" >/tmp/r3-exclusive-conflict.log 2>&1; then
+            echo 'Exclusive IPv4 conflict was wrongly accepted' >&2
+            exit 1
+          fi
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_egress_claim WHERE egress_ipv4='198.51.100.42'::inet AND claim_status<>'RELEASED'")" -eq 1
+          echo 'Same-customer different-service exclusive IPv4 collision rejected without extra claim'
+
+
+          docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "
+            INSERT INTO svc_instance(
+              service_no,customer_id,product_id,package_id,product_type,
+              product_snapshot,package_snapshot,quota_snapshot,
+              effective_at,expire_at,status,grace_days_snapshot,grace_until_at,
+              expiry_phase,delivery_stage
+            )
+            SELECT 'CI-R3-EXP-'||s.id||'-'||v.grace, s.customer_id,s.product_id,s.package_id,
+                   'LONG_IP',s.product_snapshot,s.package_snapshot,s.quota_snapshot,
+                   now()-interval '5 days',now()-interval '2 days','ACTIVE',v.grace,
+                   now()-interval '2 days'+v.grace*interval '1 day','NONE','MOCK_ONLY'
+            FROM svc_instance s CROSS JOIN (VALUES (0),(3)) v(grace) WHERE s.id=$SID
+          "
+          EXP0=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-R3-EXP-$SID-0'")
+          EXP3=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT id FROM svc_instance WHERE service_no='CI-R3-EXP-$SID-3'")
+          test -n "$EXP0" && test -n "$EXP3"
+          SCAN=$(curl -fsS -H "$H" -H "$J" -d '{"limit":200,"reason":"CI deterministic expiry scan"}' http://localhost:8080/api/admin/v1/v12/service-expiry/reconcile)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["realActionsExecuted"]==0 and d["created"]+d["existing"]>=2' <<< "$SCAN"
+          SECOND=$(curl -fsS -H "$H" -H "$J" -d '{"limit":200,"reason":"CI repeated expiry scan"}' http://localhost:8080/api/admin/v1/v12/service-expiry/reconcile)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["created"]==0 and d["existing"]>=2 and not d["dataPlaneVerified"]' <<< "$SECOND"
+          TASK_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_action_task WHERE service_id IN ($EXP0,$EXP3) AND action_type='STOP_FOR_GRACE'")
+          test "$TASK_COUNT" -eq 2
+          V13_QUEUE=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/service-expiry/queue)
+          python3 -c 'import json,sys; a=json.load(sys.stdin)["data"]; ids=set(sys.argv[1:]); b=[r for r in a if str(r["serviceId"]) in ids]; assert len(b)==2; assert all(r.get("operationKey","").startswith("expiry:STOP_FOR_GRACE:") and r.get("actionType")=="STOP_FOR_GRACE" and r.get("taskStatus")=="PRECHECK_BLOCKED" for r in b)' "$EXP0" "$EXP3" <<< "$V13_QUEUE"
+          echo 'V1.3 expiry queue contains durable task operation IDs and statuses'
+          STATUS_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_instance WHERE id IN ($EXP0,$EXP3) AND status='ACTIVE' AND expiry_phase='STOP_PENDING'")
+          test "$STATUS_COUNT" -eq 2
+          CLAIM_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_egress_claim WHERE service_id IN ($EXP0,$EXP3) AND claim_status='RELEASED'")
+          test "$CLAIM_COUNT" -eq 0
+          echo 'R3 expiry planner idempotent, zero-day held, data-plane state unchanged (Mock-only)'
+          # Fixed-IP original grace: prevent collecting payment for an impossible
+          # RENEW order; within-grace still needs genuine adapter verification.
+          FIXED_RENEW_0=$(printf '{"customerId":%s,"orderType":"RENEW","renewalServiceId":%s,"items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$EXP0" "$PID2" "$PKGID")
+          OUTSIDE_CREATE_HTTP=$(curl -s -o /tmp/r3-outside-renew-create.json -w '%{http_code}' -H "$H" -H "$J" -d "$FIXED_RENEW_0" http://localhost:8080/api/admin/v1/orders)
+          test "$OUTSIDE_CREATE_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-outside-renew-create.json"))["code"]=="RENEW_OUTSIDE_GRACE"'
+          FIXED_RENEW_3=$(printf '{"customerId":%s,"orderType":"RENEW","renewalServiceId":%s,"items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$EXP3" "$PID2" "$PKGID")
+          FIXED_ORDER=$(curl -fsS -H "$H" -H "$J" -d "$FIXED_RENEW_3" http://localhost:8080/api/admin/v1/orders)
+          FIXED_ORDER_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$FIXED_ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI within-grace renewal approval"}' "http://localhost:8080/api/admin/v1/orders/$FIXED_ORDER_ID/confirm" >/dev/null
+          curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-WITHIN-GRACE","reason":"Synthetic customer receipt verified"}' "http://localhost:8080/api/admin/v1/orders/$FIXED_ORDER_ID/payment-confirmation" >/dev/null
+          FIXED_EXEC=$(printf '{"days":30,"renewalOrderId":%s,"reason":"CI verify original grace"}' "$FIXED_ORDER_ID")
+          MOCK_FIXED_HTTP=$(curl -s -o /tmp/r3-within-grace-mock.json -w '%{http_code}' -H "$H" -H "$J" -d "$FIXED_EXEC" "http://localhost:8080/api/admin/v1/services/$EXP3/renew")
+          test "$MOCK_FIXED_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-within-grace-mock.json"))["code"]=="DATA_PLANE_ADAPTER_UNAVAILABLE"'
+          # Simulate elapsed time between order payment and execution, without
+          # calling any real network or changing the original grace-day contract.
+          docker exec "$PGID" psql -U ipproxy -d ip_proxy -v ON_ERROR_STOP=1 -c "UPDATE svc_instance SET expire_at=now()-interval '5 days',grace_until_at=now()-interval '2 days' WHERE id=$EXP3" >/dev/null
+          AFTER_GRACE_BEFORE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT expire_at::text||'/'||grace_days_snapshot::text FROM svc_instance WHERE id=$EXP3")
+          LATE_FIXED_HTTP=$(curl -s -o /tmp/r3-after-payment-grace.json -w '%{http_code}' -H "$H" -H "$J" -d "$FIXED_EXEC" "http://localhost:8080/api/admin/v1/services/$EXP3/renew")
+          test "$LATE_FIXED_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-after-payment-grace.json"))["code"]=="RENEW_OUTSIDE_GRACE"'
+          AFTER_GRACE_AFTER=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT expire_at::text||'/'||grace_days_snapshot::text FROM svc_instance WHERE id=$EXP3")
+          test "$AFTER_GRACE_BEFORE" = "$AFTER_GRACE_AFTER"
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM biz_order WHERE id=$FIXED_ORDER_ID")" = "PENDING_PROVISION"
+          echo 'Original fixed-IP grace guards RENEW order before payment and protects execution after deadline'
+
+          # V22 real-PostgreSQL release lifecycle: one shared customer leaves
+          # without disturbing peers; final return needs verified network proof.
+          # The proof is SYNTHETIC for CI and does not enable actual product writes.
+          bash scripts/ci_r3_release_postgres_smoke.sh "$PGID" "$SID" "$H"
+
+          # The legacy exclusive-release API must never mark an allocation recycled
+          # merely because a management operator submitted a reason.
+          LEGACY_EXCLUSIVE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_exclusive_allocation(allocation_no,resource_type,line_id,customer_id,service_id,status) VALUES('CI-R3-LEGACY-HOLD','LINE',$L1,$CID,$EXP0,'ALLOCATED') RETURNING id" | head -n1)
+          DIRECT_RELEASE=$(curl -s -o /tmp/r3-direct-exclusive-release.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI require real IPv4 reclamation"}' "http://localhost:8080/api/admin/v1/exclusive-allocations/$LEGACY_EXCLUSIVE/release")
+          test "$DIRECT_RELEASE" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-direct-exclusive-release.json"))["code"]=="EXCLUSIVE_RELEASE_REQUIRES_VERIFIED_LIFECYCLE"'
+          LEGACY_STATE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM res_exclusive_allocation WHERE id=$LEGACY_EXCLUSIVE")
+          test "$LEGACY_STATE" = "ALLOCATED"
+          PACKAGE_SERVICES=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/packages/$PKGID/services")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert any(v["grace_days_snapshot"]==0 for v in x) and any(v["grace_days_snapshot"]==3 for v in x)' <<< "$PACKAGE_SERVICES"
+          # Human-only failover inspection never touches line/egress allocation state.
+          CANDIDATE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO svc_backup_candidate(service_id,line_id,expected_ipv4,health_status,created_by) SELECT $EXP0,id,current_public_ip,'UNKNOWN',1 FROM res_line WHERE id=$L2 RETURNING id" | head -n1)
+          CAND_BODY=$(printf '{"backupCandidateId":%s}' "$CANDIDATE")
+          IMPACT=$(curl -fsS -H "$H" -H "$J" -d "$CAND_BODY" "http://localhost:8080/api/admin/v1/v12/services/$EXP0/failover-preview")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["allowed"] is False and x["adapterReady"] is False and x["customerConsentVerified"] is False and len(x["blockers"])>0' <<< "$IMPACT"
+          echo 'Direct independent exclusive release blocked, package snapshots preserved and failover preview read-only'
+          LONG_PROD=$(curl -fsS -H "$H" -H "$J" -d '{"productCode":"CI-V12-LONG-MANUAL","productName":"CI Long Manual","productType":"LONG_IP","accessModeCode":"HTTP_PROXY","protocolCodes":["HTTP"],"authModeCodes":["USERNAME_PASSWORD"],"resourceMode":"SHARED","regionCodes":[],"carrierCodes":[],"typeConfig":{"holdPeriodSeconds":86400,"bindType":"LINE","autoReplace":false,"failureThreshold":3}}' "http://localhost:8080/api/admin/v1/products")
+          LPID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$LONG_PROD")
+          LONG_BAD=$(curl -s -o /tmp/r3-auto-failover.json -w '%{http_code}' -H "$H" -H "$J" -X PUT -d '{"holdPeriodSeconds":86400,"bindType":"LINE","autoReplace":true,"failureThreshold":3}' "http://localhost:8080/api/admin/v1/products/$LPID/config")
+          test "$LONG_BAD" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-auto-failover.json"))["code"]=="LONG_IP_AUTOMATIC_FAILOVER_DISABLED"'
+          AUTO_REPLACE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT auto_replace FROM prd_long_ip_config WHERE product_id=$LPID")
+          test "$AUTO_REPLACE" = "f"
+          echo 'LONG_IP manual-only product backend and database config guard verified'
+          # The preview below is a valid NEW order, so enable this synthetic
+          # LONG product before creating its order. Leave real provisioning off.
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI long product preview must use active catalog item"}' "http://localhost:8080/api/admin/v1/v12/products/$LPID/enable" >/dev/null
+          ZERO_PKG_BASE=$(printf '{"packageCode":"CI-ZERO-GRACE-R3","productId":%s,"packageName":"CI zero grace long","serviceDays":30,"price":25,"currency":"CNY","graceDays":0}' "$LPID")
+          ZERO_UNACK=$(curl -s -o /tmp/r3-zero-create-unack.json -w '%{http_code}' -H "$H" -H "$J" -d "$ZERO_PKG_BASE" http://localhost:8080/api/admin/v1/packages)
+          test "$ZERO_UNACK" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-zero-create-unack.json"))["code"]=="PACKAGE_ZERO_GRACE_ACK_REQUIRED"'
+          ZERO_PKG_JSON=$(printf '{"packageCode":"CI-ZERO-GRACE-R3","productId":%s,"packageName":"CI zero grace long","serviceDays":30,"price":25,"currency":"CNY","graceDays":0,"zeroGraceRiskAccepted":true}' "$LPID")
+          ZERO_PKG=$(curl -fsS -H "$H" -H "$J" -d "$ZERO_PKG_JSON" http://localhost:8080/api/admin/v1/packages)
+          ZPKGID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$ZERO_PKG")
+          # V1.3 multi-team rule: LONG preview must not instruct operators
+          # to pick a NEW line before checking reusable verified shared egress.
+          LONG_ORDER=$(curl -fsS -H "$H" -H "$J" -d "$(printf '{"customerId":%s,"orderType":"NEW","items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$LPID" "$ZPKGID")" http://localhost:8080/api/admin/v1/orders)
+          LONG_OID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$LONG_ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"V1.3 long shared egress review"}' "http://localhost:8080/api/admin/v1/orders/$LONG_OID/confirm" >/dev/null
+          LONG_PREVIEW=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/orders/$LONG_OID/provision-preview")
+          python3 -c 'import json,sys; p=json.load(sys.stdin)["data"]; assert len(p["items"])==1 and p["items"][0]["product_type"]=="LONG_IP"; advice=p["items"][0]["deliveryAdvice"]; assert "优先复用" in advice and "共享出口" in advice and "产品组" in advice; assert p["paymentReady"] is False' <<< "$LONG_PREVIEW"
+          echo 'V1.3 long-IP order preview prefers eligible shared egress and requires product-side conversion'
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI disable new zero day package"}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/disable" >/dev/null
+          ZERO_ENABLE_UNACK=$(curl -s -o /tmp/r3-zero-enable-unack.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI no zero day acknowledgement"}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/enable")
+          test "$ZERO_ENABLE_UNACK" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-zero-enable-unack.json"))["code"]=="PACKAGE_ZERO_GRACE_ACK_REQUIRED"'
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI acknowledged immediate expiration risk","zeroGraceRiskAccepted":true}' "http://localhost:8080/api/admin/v1/packages/$ZPKGID/enable" >/dev/null
+          ZERO_STATUS=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM prd_package WHERE id=$ZPKGID")
+          test "$ZERO_STATUS" = "ACTIVE"
+          echo 'Zero-day package create and reactivation both require server-side explicit risk acknowledgement'
+          ZERO_ALT_UNACK=$(curl -s -o /tmp/r3-zero-alt-unack.json -w '%{http_code}' -H "$H" -H "$J" -X PUT -d '{"graceDays":0,"reason":"CI alternate path without risk receipt"}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace")
+          test "$ZERO_ALT_UNACK" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-zero-alt-unack.json"))["code"]=="PACKAGE_ZERO_GRACE_ACK_REQUIRED"'
+          curl -fsS -H "$H" -H "$J" -X PUT -d '{"graceDays":0,"reason":"CI explicit zero risk receipt","zeroGraceRiskAccepted":true}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace" >/dev/null
+          echo 'Alternate V12 package grace editing endpoint also rejects zero-day risk bypass'
+          # Original contracted grace must remain independent of later package edits.
+          HIST_SERVICE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
+            INSERT INTO svc_instance(
+              service_no,customer_id,product_id,package_id,product_type,
+              product_snapshot,package_snapshot,quota_snapshot,
+              effective_at,expire_at,status,grace_days_snapshot,grace_until_at,
+              expiry_phase,delivery_stage
+            )
+            SELECT 'CI-R3-OLD-CONTRACT',$CID,p.id,k.id,'LONG_IP',
+                   to_jsonb(p),to_jsonb(k),'{}'::jsonb,
+                   now()-interval '3 days',now()+interval '30 days',
+                   'ACTIVE',0,now()+interval '30 days','NONE','MOCK_ONLY'
+            FROM prd_product p JOIN prd_package k ON k.product_id=p.id
+            WHERE p.id=$LPID AND k.id=$ZPKGID RETURNING id" | head -n1)
+          curl -fsS -H "$H" -H "$J" -X PUT -d '{"graceDays":3,"reason":"CI new sales term, not historical entitlement"}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace" >/dev/null
+          PACKAGE_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace")
+          HIST_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/services/$HIST_SERVICE")
+          HIST_CHILD=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/packages/$ZPKGID/services")
+          python3 -c 'import json,sys; pkg=json.loads(sys.argv[1])["data"]; old=json.loads(sys.argv[2])["data"]; child=json.loads(sys.argv[3])["data"]["items"]; assert pkg["graceDays"]==3 and old["grace_days_snapshot"]==0 and any(v["id"]==old["id"] and v["grace_days_snapshot"]==0 for v in child)' "$PACKAGE_TERM" "$HIST_TERM" "$HIST_CHILD"
+          echo 'Current package grace changed to 3 days; original service contract stayed at 0 days'
+
+
+
+
+ 
+          # New-order provisioning: preview -> explicit item plan -> fulfill -> prevent duplicate
+          ORDER=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"orderType\":\"NEW\",\"currency\":\"CNY\",\"items\":[{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":2}]}" http://localhost:8080/api/admin/v1/orders)
+          OID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI confirm"}' http://localhost:8080/api/admin/v1/orders/$OID/confirm >/dev/null
+          PREVIEW=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/orders/$OID/provision-preview)
+          ITEMID=$(python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert len(d["items"])==1 and d["items"][0]["service_count"]==2; print(d["items"][0]["id"])' <<< "$PREVIEW")
+          # Order confirmation alone must not bypass verified customer payment.
+          PAYMENT=$(curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-PAID-RECEIPT-0001","reason":"CI privileged verification of external receipt"}' http://localhost:8080/api/admin/v1/orders/$OID/payment-confirmation)
+          python3 -c 'import json,sys; assert json.load(sys.stdin)["data"]["paymentStatus"]=="PAID_CONFIRMED"' <<< "$PAYMENT"
+          PLAN=$(curl -fsS -H "$H" -H "$J" -d "{\"reason\":\"CI provision\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
+          python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["status"]=="PROVISIONED" and len(d["services"])==2 and all(x["status"]=="ACTIVE" for x in d["services"])' <<< "$PLAN"
+          REPEAT_CODE=$(curl -s -o /tmp/repeat-provision.json -w '%{http_code}' -H "$H" -H "$J" -d "{\"reason\":\"repeat\",\"plans\":[{\"orderItemId\":$ITEMID,\"deliveryMode\":\"SELF_OWNED\",\"reverseProxyIds\":[]}]}" http://localhost:8080/api/admin/v1/orders/$OID/provision)
+          test "$REPEAT_CODE" -ge 400
+          echo 'Order provisioning preview/plan/idempotency smoke passed'
+          # First-version acceptance: one NEW order, two order items, three service
+          # instances. A confirmed but unpaid order must create no instances.
+          MULTI_ORDER=$(curl -fsS -H "$H" -H "$J" -d "{\"customerId\":$CID,\"orderType\":\"NEW\",\"items\":[{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":2},{\"productId\":$PID2,\"packageId\":$PKGID,\"quantity\":1,\"serviceCount\":1}]}" http://localhost:8080/api/admin/v1/orders)
+          MULTI_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$MULTI_ORDER")
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI first-version multitem confirmation"}' "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/confirm" >/dev/null
+          MULTI_PREVIEW=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision-preview")
+          read -r MULTI_ITEM1 MULTI_ITEM2 < <(python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["paymentReady"] is False and len(x["items"])==2; print(*(v["id"] for v in x["items"]))' <<< "$MULTI_PREVIEW")
+          MULTI_BODY=$(printf '{"reason":"CI multi-item checkout","plans":[{"orderItemId":%s,"deliveryMode":"SELF_OWNED","reverseProxyIds":[]},{"orderItemId":%s,"deliveryMode":"SELF_OWNED","reverseProxyIds":[]}]}' "$MULTI_ITEM1" "$MULTI_ITEM2")
+          UNPAID_MULTI_HTTP=$(curl -s -o /tmp/r3-multi-unpaid.json -w '%{http_code}' -H "$H" -H "$J" -d "$MULTI_BODY" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision")
+          test "$UNPAID_MULTI_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-multi-unpaid.json"))["code"]=="ORDER_PAYMENT_NOT_CONFIRMED"'
+          MULTI_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_instance WHERE order_id=$MULTI_ID")
+          test "$MULTI_COUNT" = "0"
+          curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-MULTI-RECEIPT","reason":"Synthetic independently verified payment"}' "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/payment-confirmation" >/dev/null
+          MULTI_PROVISION=$(curl -fsS -H "$H" -H "$J" -d "$MULTI_BODY" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["status"]=="PROVISIONED" and len(x["services"])==3 and all(s["deliveryStage"]!="VERIFIED" for s in x["services"])' <<< "$MULTI_PROVISION"
+          MULTI_RELATIONS=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$MULTI_ID/services")
+          python3 -c 'import json,sys,collections; a=json.load(sys.stdin)["data"]["items"]; c=collections.Counter(v["order_item_id"] for v in a); assert sorted(c.values())==[1,2] and all(v["relation_type"]=="CREATED_FROM_ORDER" for v in a)' <<< "$MULTI_RELATIONS"
+          MULTI_REPLAY=$(curl -s -o /tmp/r3-multi-replay.json -w '%{http_code}' -H "$H" -H "$J" -d "$MULTI_BODY" "http://localhost:8080/api/admin/v1/orders/$MULTI_ID/provision")
+          test "$MULTI_REPLAY" -eq 400
+          MULTI_AFTER=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM svc_instance WHERE order_id=$MULTI_ID")
+          test "$MULTI_AFTER" = "3"
+          echo 'First-version two-item/three-service order, payment gate, repeat safety and source links verified (Mock-only)'
+
+          # Order detail must distinguish actually created instances from renewal targets.
+          ORDER_CHILDREN=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$OID/services")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==2 and all(v["relation_type"]=="CREATED_FROM_ORDER" for v in x)' <<< "$ORDER_CHILDREN"
+          RENEW_JSON=$(printf '{"customerId":%s,"orderType":"RENEW","renewalServiceId":%s,"items":[{"productId":%s,"packageId":%s,"quantity":1,"serviceCount":1}]}' "$CID" "$SID" "$PID2" "$PKGID")
+          RENEW_ORDER=$(curl -fsS -H "$H" -H "$J" -d "$RENEW_JSON" http://localhost:8080/api/admin/v1/orders)
+          REN_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$RENEW_ORDER")
+          REN_CHILDREN=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/orders/$REN_ID/services")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["relation_type"]=="RENEWAL_TARGET"' <<< "$REN_CHILDREN"
+          echo 'Order-created service subtables and original service renewal target verified in Mock/DB'
+          curl -fsS -H "$H" -H "$J" -d '{"reason":"CI renewal order approval"}' "http://localhost:8080/api/admin/v1/orders/$REN_ID/confirm" >/dev/null
+          UNPAID_RENEW_BODY=$(printf '{"days":30,"renewalOrderId":%s,"reason":"CI renewal must not proceed unpaid"}' "$REN_ID")
+          UNPAID_RENEW_HTTP=$(curl -s -o /tmp/r3-valid-unpaid-renew.json -w '%{http_code}' -H "$H" -H "$J" -d "$UNPAID_RENEW_BODY" "http://localhost:8080/api/admin/v1/services/$SID/renew")
+          test "$UNPAID_RENEW_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-valid-unpaid-renew.json"))["code"]=="RENEW_PAYMENT_OR_TARGET_INVALID"'
+          curl -fsS -H "$H" -H "$J" -d '{"paymentReference":"CI-RENEW-ORDER-PAID","reason":"CI synthetic payment evidence"}' "http://localhost:8080/api/admin/v1/orders/$REN_ID/payment-confirmation" >/dev/null
+          READY_RENEW=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/services/$SID/paid-renewal-orders")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["order_no"] and x[0]["payment_status"]=="PAID_CONFIRMED" and x[0]["status"]=="PENDING_PROVISION"' <<< "$READY_RENEW"
+          echo 'Exactly targeted paid renewal order selection verified with synthetic payment evidence'
+          OLD_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/services/$SID")
+          OLD_EXP=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["expire_at"])' <<< "$OLD_TERM")
+          BAD_TERM_BODY=$(printf '{"days":7,"renewalOrderId":%s,"reason":"CI term mismatch"}' "$REN_ID")
+          BAD_TERM_HTTP=$(curl -s -o /tmp/r3-valid-term-mismatch.json -w '%{http_code}' -H "$H" -H "$J" -d "$BAD_TERM_BODY" "http://localhost:8080/api/admin/v1/services/$SID/renew")
+          test "$BAD_TERM_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-valid-term-mismatch.json"))["code"]=="RENEW_TERM_MISMATCH"'
+          MOCK_RENEW_BODY=$(printf '{"days":30,"renewalOrderId":%s,"reason":"CI paid mock must not extend term"}' "$REN_ID")
+          MOCK_RENEW_HTTP=$(curl -s -o /tmp/r3-valid-mock-renew.json -w '%{http_code}' -H "$H" -H "$J" -d "$MOCK_RENEW_BODY" "http://localhost:8080/api/admin/v1/services/$SID/renew")
+          test "$MOCK_RENEW_HTTP" -eq 400
+          python3 -c 'import json; assert json.load(open("/tmp/r3-valid-mock-renew.json"))["code"]=="DATA_PLANE_ADAPTER_UNAVAILABLE"'
+          NEW_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/services/$SID")
+          NEW_EXP=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["expire_at"])' <<< "$NEW_TERM")
+          test "$OLD_EXP" = "$NEW_EXP"
+          RENEW_STATUS=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM biz_order WHERE id=$REN_ID")
+          test "$RENEW_STATUS" = "PENDING_PROVISION"
+          echo 'Unpaid, mismatched term and Mock renewal fail closed with exact business errors; DB term/order unchanged'
+
+
+
+
+          # Synthetic supplier -> purchase -> proxy -> service drill-down only.
+          # No upstream payment, access credential or network adapter is invoked.
+          SUPID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier(supplier_code,supplier_name,api_endpoint,auth_type_code) VALUES('CI-SUPPLIER-R3','CI Supplier','https://supplier.invalid','TOKEN') RETURNING id" | head -n 1)
+          PURID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,customer_id,source_customer_order_id,supplier_package_name,expire_at) VALUES('CI-PUR-R3',$SUPID,$CID,$OID,'CI synthetic purchase',now()+interval '30 days') RETURNING id" | head -n 1)
+          PROXYID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_reverse_proxy(proxy_no,purchase_id,customer_id,service_id,protocol_code,upstream_host,upstream_port,platform_host,platform_port,status) VALUES('CI-PROXY-R3',$PURID,$CID,NULL,'HTTP','upstream.invalid',18080,'platform.invalid',18081,'PENDING') RETURNING id" | head -n 1)
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$PURID/proxies" >/tmp/r3-purchase-proxies.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$PURID/services" >/tmp/r3-purchase-services.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases/$PURID" >/tmp/r3-purchase-detail.json
+          python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-proxies.json"))["data"]; assert x["items"][0]["proxy_no"]=="CI-PROXY-R3"'
+          python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-services.json"))["data"]; assert x["items"]==[]'
+          python3 -c 'import json; x=json.load(open("/tmp/r3-purchase-detail.json"))["data"]; assert x["purchase_cost"] is None and x["source_customer_payment_status"]=="PAID_CONFIRMED"'
+          echo 'Synthetic purchase/proxy config and no-fake-delivery subtable checks passed'
+          # Customer-paid procurement -> customer-owned proxy -> service: first-version
+          # management-only positive and negative acceptance, no real supplier or gateway.
+          EXTERNAL_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases?page=1&size=20")
+          PROXY_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies?page=1&size=20")
+          python3 -c 'import json,sys; assert isinstance(json.loads(sys.argv[1])["data"]["items"],list) and isinstance(json.loads(sys.argv[2])["data"]["items"],list)' "$EXTERNAL_LIST" "$PROXY_LIST"
+          echo 'External purchase/proxy list without filters passed'
+          CUSTOMER_TWO=$(curl -fsS -H "$H" -H "$J" -d '{"customerName":"CI Other Proxy Customer","customerTypeCode":"ENTERPRISE","contactName":"Other","contactPhone":"13800009999"}' http://localhost:8080/api/admin/v1/customers)
+          CID_TWO=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$CUSTOMER_TWO")
+          WRONG_PURCHASE=$(printf '{"supplierId":%s,"customerId":%s,"sourceCustomerOrderId":%s,"supplierPackageName":"CI wrong customer","expireAt":"2028-10-14T00:00:00Z"}' "$SUPID" "$CID_TWO" "$OID")
+          WRONG_PURCHASE_HTTP=$(curl -s -o /tmp/r3-procure-wrong-owner.json -w '%{http_code}' -H "$H" -H "$J" -d "$WRONG_PURCHASE" http://localhost:8080/api/admin/v1/v12/external-delivery/purchases)
+          if [ "$WRONG_PURCHASE_HTTP" -ne 400 ]; then echo "Unexpected wrong-owner purchase HTTP: $WRONG_PURCHASE_HTTP"; cat /tmp/r3-procure-wrong-owner.json; exit 1; fi
+          python3 -c 'import json; assert json.load(open("/tmp/r3-procure-wrong-owner.json"))["code"]=="PURCHASE_PAYMENT_NOT_VERIFIED"'
+          DEDICATED_PAYLOAD=$(printf '{"supplierId":%s,"customerId":%s,"sourceCustomerOrderId":%s,"supplierPackageName":"CI paid customer package","expireAt":"2028-10-14T00:00:00Z"}' "$SUPID" "$CID" "$OID")
+          DEDICATED=$(curl -fsS -H "$H" -H "$J" -d "$DEDICATED_PAYLOAD" http://localhost:8080/api/admin/v1/v12/external-delivery/purchases)
+          DEDICATED_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$DEDICATED")
+          DEDICATED_DETAIL=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases/$DEDICATED_ID")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["source_customer_payment_status"]=="PAID_CONFIRMED" and x["purchase_cost"] is None and x["package_quota"] is None' <<< "$DEDICATED_DETAIL"
+          STOCK_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,supplier_package_name,expire_at) VALUES('CI-UNASSIGNED-INVENTORY',$SUPID,'unassigned stock',now()+interval '50 days') RETURNING id" | head -n1)
+          STOCK_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$STOCK_ID" "$CID")
+          STOCK_HTTP=$(curl -s -o /tmp/r3-stock-proxy.json -w '%{http_code}' -H "$H" -H "$J" -d "$STOCK_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          if [ "$STOCK_HTTP" -ne 400 ]; then echo "Unexpected STOCK_HTTP: $STOCK_HTTP"; cat /tmp/r3-stock-proxy.json; exit 1; fi
+          python3 -c 'import json; assert json.load(open("/tmp/r3-stock-proxy.json"))["code"]=="PROXY_PURCHASE_CUSTOMER_MISMATCH"'
+          BAD_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$DEDICATED_ID" "$CID_TWO")
+          BAD_PROXY_HTTP=$(curl -s -o /tmp/r3-cross-customer-proxy.json -w '%{http_code}' -H "$H" -H "$J" -d "$BAD_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          if [ "$BAD_PROXY_HTTP" -ne 400 ]; then echo "Unexpected BAD_PROXY_HTTP: $BAD_PROXY_HTTP"; cat /tmp/r3-cross-customer-proxy.json; exit 1; fi
+          python3 -c 'import json; assert json.load(open("/tmp/r3-cross-customer-proxy.json"))["code"]=="PROXY_PURCHASE_CUSTOMER_MISMATCH"'
+          OTHER_SERVICE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
+            INSERT INTO svc_instance(service_no,customer_id,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,effective_at,expire_at,status,delivery_stage)
+            SELECT 'CI-OTHER-SERVICE',$CID_TWO,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,now(),now()+interval '28 days','ACTIVE','MOCK_ONLY' FROM svc_instance WHERE id=$SID RETURNING id" | head -n1)
+          WRONG_SERVICE_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"serviceId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$DEDICATED_ID" "$CID" "$OTHER_SERVICE")
+          WRONG_SERVICE_HTTP=$(curl -s -o /tmp/r3-wrong-proxy-service.json -w '%{http_code}' -H "$H" -H "$J" -d "$WRONG_SERVICE_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          if [ "$WRONG_SERVICE_HTTP" -ne 400 ]; then echo "Unexpected WRONG_SERVICE_HTTP: $WRONG_SERVICE_HTTP"; cat /tmp/r3-wrong-proxy-service.json; exit 1; fi
+          python3 -c 'import json; assert json.load(open("/tmp/r3-wrong-proxy-service.json"))["code"]=="PROXY_SERVICE_CUSTOMER_MISMATCH"'
+          GOOD_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"serviceId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$DEDICATED_ID" "$CID" "$SID")
+          GOOD_PROXY_RESP=$(curl -fsS -H "$H" -H "$J" -d "$GOOD_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
+          GOOD_PROXY_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$GOOD_PROXY_RESP")
+          REAL_APPLY_HTTP=$(curl -s -o /tmp/r3-proxy-noop-apply.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI cannot fake remote proxy"}' "http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies/$GOOD_PROXY_ID/apply")
+          if [ "$REAL_APPLY_HTTP" -ne 400 ]; then echo "Unexpected REAL_APPLY_HTTP: $REAL_APPLY_HTTP"; cat /tmp/r3-proxy-noop-apply.json; exit 1; fi
+          python3 -c 'import json; assert json.load(open("/tmp/r3-proxy-noop-apply.json"))["code"]=="EXTERNAL_PROXY_DATA_PLANE_UNVERIFIED"'
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM res_reverse_proxy WHERE id=$GOOD_PROXY_ID")" = "PENDING"
+          PURCHASE_PROXIES=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$DEDICATED_ID/proxies")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert len(x)==1 and x[0]["id"]==int(sys.argv[1])' "$GOOD_PROXY_ID" <<< "$PURCHASE_PROXIES"
+          echo 'Customer-paid procurement/proxy ownership and Mock fail-closed delivery verified'
+
+
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/long-monitor/overview >/dev/null
+          curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=CENTOS' >/dev/null
+          curl -fsS -H "$H" 'http://localhost:8080/api/admin/v1/monitor/objects?page=1&size=20&objectType=ROS' >/dev/null
+          curl -fsS -H "$H" http://localhost:8080/api/admin/v1/statistics/v12/pools/current >/tmp/v12-pool-stats.json
+          for LOG_CATEGORY in centos ros dial ip-change remote domain external operation; do
+            curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/runtime-logs/v12/$LOG_CATEGORY?page=1&size=10" >/tmp/v12-source-log.json
+          done
+          echo 'V1.2 pool membership statistics and eight additional scoped log endpoints queried'
+          # Cross-document business substables: ensure real master-child SQL works in PostgreSQL.
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/customers/$CID/orders" >/tmp/r3-customer-orders.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/lines/$L1/pools" >/tmp/r3-line-pools.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/lines/$L1/services" >/tmp/r3-line-services.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/pools/$POOLID/services" >/tmp/r3-pool-services.json
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/services/$SID/bindings" >/tmp/r3-service-bindings.json
+          python3 -c 'import json; d=json.load(open("/tmp/r3-customer-orders.json"))["data"]; assert any(x["id"]>0 for x in d["items"])'
+          python3 -c 'import json; d=json.load(open("/tmp/r3-line-pools.json"))["data"]; assert any(x["pool_code"]=="CI-V12-SHARED" for x in d["items"])'
+          python3 -c 'import json; d=json.load(open("/tmp/r3-service-bindings.json"))["data"]; assert len(d["items"])>0 and any(x["related_path"] for x in d["items"])'
+          echo 'V1.2 customer/line/pool/service master-child relationship smoke passed'
+          # UI-31 existing bot management: Webhook and adapter secrets must not
+          # leak from list/detail responses, even if stored in historical records.
+          BOT_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO lm_bot(bot_no,customer_id,bot_name,bot_type,webhook_url,last_test_message) VALUES('CI-BOT-MASK-R3',$CID,'CI bot','DINGTALK','https://example.invalid/secret-webhook-key','raw secret adapter diagnostic') RETURNING id" | head -n1)
+          BOT_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/bots?page=1&size=20")
+          python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]["items"]; x=next(v for v in rows if v["bot_no"]=="CI-BOT-MASK-R3"); assert "webhook_url" not in x and "last_test_message" not in x and x["webhook_configured"] is True' <<< "$BOT_LIST"
+          BOT_DETAIL=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/bots/$BOT_ID")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert "webhook_url" not in x and "access_token_cipher" not in x and "secret_cipher" not in x and "last_test_message" not in x and x["webhook_mask"]=="已配置（不回显地址）" and isinstance(x["monitorReferences"],list)' <<< "$BOT_DETAIL"
+          echo 'UI-31 bot secret redaction and monitor reference shape verified'
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/monitors?page=1&size=20" >/dev/null
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/alarms?page=1&size=20" >/dev/null
+          curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/notifications?page=1&size=20" >/dev/null
+          echo 'Monitor, alarm and notification default-list HTTP checks passed'
+          echo 'V1.3 backend business smoke passed'
+          # CI-only least-privilege actor. Copy the test admin's bcrypt digest
+          # ONLY inside the ephemeral PostgreSQL runner; never expose it.
+          docker exec -i "$PGID" psql -v ON_ERROR_STOP=1 -U ipproxy -d ip_proxy <<'SQL'
+          INSERT INTO sys_role(role_code,role_name,data_scope)
+          VALUES ('CI_V13_READONLY','CI V1.3 read-only acceptance actor','ALL')
+          ON CONFLICT DO NOTHING;
+          INSERT INTO sys_user(username,password_hash,display_name,status)
+          SELECT 'ci_v13_readonly', password_hash, 'CI Read Only', 'ACTIVE'
+          FROM sys_user WHERE username='admin' AND deleted=FALSE
+          ON CONFLICT DO NOTHING;
+          INSERT INTO sys_user_role(user_id,role_id)
+          SELECT u.id,r.id FROM sys_user u CROSS JOIN sys_role r
+          WHERE u.username='ci_v13_readonly' AND r.role_code='CI_V13_READONLY'
+          ON CONFLICT DO NOTHING;
+          INSERT INTO sys_role_permission(role_id,permission_id)
+          SELECT r.id,p.id FROM sys_role r CROSS JOIN sys_permission p
+          WHERE r.role_code='CI_V13_READONLY'
+            AND p.permission_code IN (
+              'customer:access','customer:read','order-service:access',
+              'order:read','service:read')
+          ON CONFLICT DO NOTHING;
+          SQL
+          RBAC_COUNT=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM sys_role_permission rp JOIN sys_role r ON rp.role_id=r.id WHERE r.role_code='CI_V13_READONLY'")
+          test "$RBAC_COUNT" = "5"
+          echo 'CI least-privilege actor seeded with exactly five read/menu permissions'
+          # The same Spring Boot, PostgreSQL and Redis instances remain live
+          # for actual Chromium user-interface E2E. No product-group network
+          # writes are enabled; source records use synthetic CI adapter data.
+          npm --prefix frontend run dev -- --host 127.0.0.1 > /tmp/vite-e2e.log 2>&1 &
+          VITE_PID=$!
+          trap 'kill "$VITE_PID" "$PID" 2>/dev/null || true' EXIT
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:5173/ >/dev/null; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:5173/ >/dev/null
+          # Verify the browser-facing Vite origin can reach the actual
+          # Spring authentication endpoint, not just return index.html.
+          VITE_LOGIN_STATUS=$(curl -s -o /tmp/vite-login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -H 'Origin: http://127.0.0.1:5173' \
+            -d '{"username":"admin","password":"admin123"}' \
+            http://127.0.0.1:5173/api/admin/v1/auth/login)
+          if [ "$VITE_LOGIN_STATUS" != "200" ]; then
+            echo "Browser-facing API login preflight failed HTTP $VITE_LOGIN_STATUS"
+            cat /tmp/vite-login.json || true
+            tail -n 100 /tmp/vite-e2e.log || true
+            exit 1
+          fi
+          echo 'Vite proxy -> real Spring login HTTP preflight OK'
+          (
+            cd frontend
+            V13_E2E_USER=admin V13_E2E_PASSWORD=admin123 \
+            V13_E2E_CUSTOMER_ID="$CID" V13_E2E_ORDER_ID="$MULTI_ID" \
+            V13_E2E_SERVICE_ID="$SID" V13_E2E_POOL_ID="$POOLID" \
+            V13_E2E_UNPAID_ORDER_ID="$LONG_OID" \
+            V13_E2E_VIEWER_USER=ci_v13_readonly V13_E2E_VIEWER_PASSWORD=admin123 \
+            npx playwright test tests/e2e/v13-real-backend.spec.ts tests/e2e/v13-least-privilege.spec.ts --reporter=line --workers=1 --timeout=40000
+          )
+          echo 'V1.3 Chromium actual browser + Spring Boot/PostgreSQL E2E smoke passed'
+      - name: Backend log on failure
+        if: failure()
+        run: tail -n 400 /tmp/backend.log || true
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build application images
+        run: docker compose build backend frontend

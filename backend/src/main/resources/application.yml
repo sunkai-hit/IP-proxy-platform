@@ -54,6 +54,15 @@ app:
     stale-seconds: ${MONITOR_STALE_SECONDS:300}
   alarm:
     dingtalk-webhook: ${DINGTALK_WEBHOOK_URL:}
+  integration:
+    # Disabled unless explicitly configured with a 32+ character secret.
+    product-bearer-token: ${PRODUCT_INTEGRATION_BEARER_TOKEN:}
+    # Outbound read-only product gateway. Both are required for real requests;
+    # empty values keep this integration disabled. Writes are not enabled here.
+    product-base-url: ${PRODUCT_GROUP_BASE_URL:}
+    product-api-token: ${PRODUCT_GROUP_API_TOKEN:}
+    # Highly privileged: disabled until both teams approve the live contract.
+    product-writes-enabled: ${PRODUCT_GROUP_WRITES_ENABLED:false}
   statistics:
     scheduled-enabled: ${STATISTICS_SCHEDULED_ENABLED:true}
     cron: ${STATISTICS_CRON:0 5 * * * *}

@@ -24,12 +24,43 @@ public class OrderServiceMapper {
     public Long tunnelDomain(Long productId){List<Long>x=jdbc.query("SELECT entry_domain_id FROM prd_tunnel_config WHERE product_id=? AND entry_domain_id IS NOT NULL",(r,n)->r.getLong(1),productId);return x.isEmpty()?null:x.getFirst();}
 
     public long countOrders(String keyword,String status,Long customerId){return jdbc.queryForObject("SELECT count(*) FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.deleted=FALSE AND (?='' OR o.order_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%') AND (?='' OR o.status=?) AND (?=0 OR o.customer_id=?)",Long.class,keyword,keyword,keyword,status,status,customerId==null?0:customerId,customerId==null?0:customerId);}
-    public List<Map<String,Object>> orders(String keyword,String status,Long customerId,int size,int offset){return jdbc.queryForList("SELECT o.id,o.order_no,o.customer_id,c.customer_code,c.customer_name,o.order_type,o.status,o.total_amount,o.currency,o.expected_effective_at,o.expected_expire_at,o.remark,o.created_at,(SELECT count(*) FROM biz_order_item i WHERE i.order_id=o.id) item_total,(SELECT count(*) FROM svc_instance s WHERE s.order_id=o.id AND s.deleted=FALSE) service_total FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.deleted=FALSE AND (?='' OR o.order_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%') AND (?='' OR o.status=?) AND (?=0 OR o.customer_id=?) ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?",keyword,keyword,keyword,status,status,customerId==null?0:customerId,customerId==null?0:customerId,size,offset);}
+    public List<Map<String,Object>> orders(String keyword,String status,Long customerId,int size,int offset){return jdbc.queryForList("SELECT o.id,o.order_no,o.customer_id,c.customer_code,c.customer_name,o.order_type,o.renewal_service_id,o.status,o.payment_status,o.payment_verified_at,o.total_amount,o.currency,o.expected_effective_at,o.expected_expire_at,o.remark,o.created_at,(SELECT count(*) FROM biz_order_item i WHERE i.order_id=o.id) item_total,(SELECT count(*) FROM svc_instance s WHERE s.order_id=o.id AND s.deleted=FALSE) service_total FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.deleted=FALSE AND (?='' OR o.order_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%') AND (?='' OR o.status=?) AND (?=0 OR o.customer_id=?) ORDER BY o.created_at DESC,o.id DESC LIMIT ? OFFSET ?",keyword,keyword,keyword,status,status,customerId==null?0:customerId,customerId==null?0:customerId,size,offset);}
     public Map<String,Object> order(Long id){return one("SELECT o.*,c.customer_code,c.customer_name FROM biz_order o JOIN customer c ON c.id=o.customer_id WHERE o.id=? AND o.deleted=FALSE",id);}
     public List<Map<String,Object>> orderItems(Long id){return jdbc.queryForList("SELECT i.*,p.product_code,p.product_name,p.product_type,k.package_code,k.package_name FROM biz_order_item i JOIN prd_product p ON p.id=i.product_id LEFT JOIN prd_package k ON k.id=i.package_id WHERE i.order_id=? ORDER BY i.line_no",id);}
-    public Long insertOrder(String no,Long customerId,String type,BigDecimal total,String currency,OffsetDateTime effective,OffsetDateTime expire,Long owner,String remark,Long actor){return jdbc.queryForObject("INSERT INTO biz_order(order_no,customer_id,order_type,status,total_amount,currency,expected_effective_at,expected_expire_at,owner_user_id,remark,created_by,updated_by) VALUES(?,?,?,'PENDING_CONFIRM',?,?,?,?,?,?,?,?) RETURNING id",Long.class,no,customerId,type,total,currency,effective,expire,owner,remark,actor,actor);}
+    public Long insertOrder(String no,Long customerId,String type,BigDecimal total,String currency,OffsetDateTime effective,OffsetDateTime expire,Long owner,String remark,Long renewalServiceId,Long actor){return jdbc.queryForObject("INSERT INTO biz_order(order_no,customer_id,order_type,status,total_amount,currency,expected_effective_at,expected_expire_at,owner_user_id,remark,renewal_service_id,created_by,updated_by) VALUES(?,?,?,'PENDING_CONFIRM',?,?,?,?,?,?,?,?,?) RETURNING id",Long.class,no,customerId,type,total,currency,effective,expire,owner,remark,renewalServiceId,actor,actor);}
     public Long insertItem(Long orderId,int line,Long productId,Long packageId,int qty,BigDecimal unit,BigDecimal amount,String productJson,String packageJson,int serviceCount,String remark){return jdbc.queryForObject("INSERT INTO biz_order_item(order_id,line_no,product_id,package_id,quantity,unit_price,line_amount,product_snapshot,package_snapshot,entitlement_snapshot,service_count,remark) VALUES(?,?,?,?,?,?,?,CAST(? AS jsonb),CAST(NULLIF(?,'') AS jsonb),'{}'::jsonb,?,?) RETURNING id",Long.class,orderId,line,productId,packageId,qty,unit,amount,productJson,packageJson==null?"":packageJson,serviceCount,remark);}
     public int orderStatus(Long id,String status,Long actor){return jdbc.update("UPDATE biz_order SET status=?,updated_at=now(),updated_by=?,confirmed_at=CASE WHEN ?='PENDING_PROVISION' THEN now() ELSE confirmed_at END,completed_at=CASE WHEN ?='COMPLETED' THEN now() ELSE completed_at END,cancelled_at=CASE WHEN ?='CANCELLED' THEN now() ELSE cancelled_at END WHERE id=? AND deleted=FALSE",status,actor,status,status,status,id);}
+    public boolean hasUnreconciledOtherLegacyEgress(Long serviceId){
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+          SELECT EXISTS(SELECT 1 FROM res_exclusive_allocation a
+            WHERE a.deleted=FALSE AND a.status IN ('LOCKED','ALLOCATED','PENDING_RECYCLE')
+            AND a.current_ip_snapshot IS NULL
+            AND a.service_id IS DISTINCT FROM ?)
+        """,Boolean.class,serviceId));
+    }
+    public Map<String,Object> lockedRenewalOrder(Long id){
+        return one("SELECT id,customer_id,renewal_service_id,order_type,status,payment_status FROM biz_order WHERE id=? AND deleted=FALSE FOR UPDATE",id);
+    }
+    public List<Map<String,Object>> renewalItems(Long id){
+        return jdbc.queryForList("""
+          SELECT product_id,package_id,quantity,service_count,
+                 (package_snapshot->>'service_days')::integer term_days
+          FROM biz_order_item WHERE order_id=? ORDER BY line_no
+        """,id);
+    }
+    public int completeRenewedService(Long id,OffsetDateTime expiry,OffsetDateTime graceEnd,boolean restore,Long actor){
+        jdbc.update("UPDATE svc_egress_claim SET hold_until_at=?,claim_status=CASE WHEN claim_status IN ('GRACE_HELD','RELEASE_PENDING') THEN 'ACTIVE' ELSE claim_status END,updated_at=now() WHERE service_id=? AND claim_status<>'RELEASED'",graceEnd,id);
+        jdbc.update("UPDATE res_exclusive_allocation SET expire_at=?,updated_at=now(),version=version+1 WHERE service_id=? AND deleted=FALSE AND status IN ('LOCKED','ALLOCATED')",expiry,id);
+        jdbc.update("UPDATE svc_credential SET expire_at=?,updated_at=now(),version=version+1 WHERE service_id=? AND deleted=FALSE AND status IN ('ACTIVE','FROZEN')",expiry,id);
+        if(restore)jdbc.update("UPDATE svc_credential SET status='ACTIVE',updated_at=now(),version=version+1 WHERE service_id=? AND deleted=FALSE AND status='FROZEN'",id);
+        jdbc.update("UPDATE svc_action_task SET last_error_code='SUPERSEDED_BY_VERIFIED_RENEWAL',last_error_message='该到期任务已由真实核验续费覆盖',updated_at=now() WHERE service_id=? AND task_status='PRECHECK_BLOCKED' AND action_type='STOP_FOR_GRACE'",id);
+        return jdbc.update("""
+          UPDATE svc_instance SET expire_at=?,grace_until_at=?,expiry_phase='NONE',
+            status=CASE WHEN ? THEN 'ACTIVE' ELSE status END,
+            delivery_stage='VERIFIED',last_delivery_verified_at=now(),
+            updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE
+        """,expiry,graceEnd,restore,actor,id);
+    }
     public int cancelOrder(Long id,String reason,Long actor){return jdbc.update("UPDATE biz_order SET status='CANCELLED',cancel_reason=?,cancelled_at=now(),updated_at=now(),updated_by=? WHERE id=? AND deleted=FALSE",reason,actor,id);}
 
     public Long insertService(String no,Long customerId,Long orderId,Long itemId,Long productId,Long packageId,Long strategyId,String productType,String productJson,String packageJson,String strategyJson,String quotaJson,OffsetDateTime effective,OffsetDateTime expire,Long actor){return jdbc.queryForObject("INSERT INTO svc_instance(service_no,customer_id,order_id,order_item_id,product_id,package_id,strategy_id,product_type,product_snapshot,package_snapshot,strategy_snapshot,quota_snapshot,effective_at,expire_at,status,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,CAST(? AS jsonb),CAST(NULLIF(?,'') AS jsonb),CAST(? AS jsonb),CAST(? AS jsonb),?,?,'PENDING',?,?) RETURNING id",Long.class,no,customerId,orderId,itemId,productId,packageId,strategyId,productType,productJson,packageJson==null?"":packageJson,strategyJson,quotaJson,effective,expire,actor,actor);}
@@ -48,6 +79,7 @@ public class OrderServiceMapper {
     public int activateCredentials(Long id){return jdbc.update("UPDATE svc_credential SET status='ACTIVE',updated_at=now(),version=version+1 WHERE service_id=? AND deleted=FALSE AND status='FROZEN'",id);}
     public int revokeCredentials(Long id){return jdbc.update("UPDATE svc_credential SET status='REVOKED',updated_at=now(),version=version+1 WHERE service_id=? AND deleted=FALSE AND status IN ('ACTIVE','FROZEN')",id);}
     public int releaseBindings(Long id){return jdbc.update("UPDATE svc_resource_binding SET status='RELEASED',released_at=now() WHERE service_id=? AND status='ACTIVE'",id);}
+    public int releaseEgressClaims(Long id){return jdbc.update("UPDATE svc_egress_claim SET claim_status='RELEASED',released_at=now(),updated_at=now() WHERE service_id=? AND claim_status IN ('RESERVED','ACTIVE','GRACE_HELD','RELEASE_PENDING')",id);}
     public int recycleExclusive(Long id){return jdbc.update("UPDATE res_exclusive_allocation SET status='PENDING_RECYCLE',released_at=now(),updated_at=now(),version=version+1 WHERE service_id=? AND deleted=FALSE AND status IN ('LOCKED','ALLOCATED')",id);}
     public int renew(Long id,OffsetDateTime expire,Long actor){return jdbc.update("UPDATE svc_instance SET expire_at=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",expire,actor,id);}
     public Long insertChange(String no,Long serviceId,String type,String beforeJson,String afterJson,String reason,String status,Long actor){return jdbc.queryForObject("INSERT INTO svc_change(change_no,service_id,change_type,before_snapshot,after_snapshot,reason,status,operator_id,started_at,finished_at,created_by,updated_by) VALUES(?,?,?,CAST(? AS jsonb),CAST(? AS jsonb),?,?,?,now(),CASE WHEN ? IN ('SUCCESS','FAILED') THEN now() END,?,?) RETURNING id",Long.class,no,serviceId,type,beforeJson,afterJson,reason,status,actor,status,actor,actor);}

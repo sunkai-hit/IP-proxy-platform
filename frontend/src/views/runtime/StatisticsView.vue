@@ -1,25 +1,176 @@
 <script setup lang="ts">
-import{nextTick,onBeforeUnmount,onMounted,ref,watch}from'vue'
-import * as echarts from'echarts'
-import{ElMessage}from'element-plus'
-import{statisticsApi}from'@/api/runtimeOps'
-import{useAuthStore}from'@/stores/auth'
-const auth=useAuthStore(),active=ref('resources'),loading=ref(false),calculating=ref(false),rows=ref<any[]>([]),overview=ref<any>({}),chartEl=ref<HTMLElement>(),chart=ref<echarts.ECharts>(),range=ref<[Date,Date]>([new Date(Date.now()-24*3600_000),new Date()])
-const tabs=[['resources','基础资源统计'],['ips','IP资源统计'],['customers','客户使用统计'],['products','产品与服务统计'],['suppliers','外部资源统计']]
-function fmt(v:any){return v?new Date(v).toLocaleString():'-'}
+import {nextTick,onBeforeUnmount,onMounted,ref,watch} from 'vue'
+import * as echarts from 'echarts'
+import {ElMessage} from 'element-plus'
+import {statisticsApi} from '@/api/runtimeOps'
+import {useAuthStore} from '@/stores/auth'
+
+type Group='centos'|'ros'|'lines'|'pools'|'customers'|'products'|'suppliers'
+const auth=useAuthStore(),active=ref<Group>('centos'),loading=ref(false),calculating=ref(false)
+const rows=ref<any[]>([]),overview=ref<any>({}),snapshotAt=ref(''),chartEl=ref<HTMLElement>(),chart=ref<echarts.ECharts>()
+const range=ref<[Date,Date]>([new Date(Date.now()-24*3600_000),new Date()])
+const tabs:{key:Group;label:string;meaning:string}[]=[
+ {key:'centos',label:'CentOS统计',meaning:'B/C段只按CentOS关联家宽当前IPv4的/16、/24快照去重'},
+ {key:'ros',label:'ROS统计',meaning:'ROS仅反映拨号与运行对象，不出现B/C段或自动主备'},
+ {key:'lines',label:'家宽/线路统计',meaning:'SHARED/LONG家宽和当前线路状态，来源为资源主档'},
+ {key:'pools',label:'资源池统计',meaning:'以来源池家宽线路成员统计；同一线路可多池，跨池不可直接相加'},
+ {key:'customers',label:'客户使用统计',meaning:'IP提取和真实代理连接/流量是不同事件，缺使用事件显示未接入'},
+ {key:'products',label:'产品服务统计',meaning:'ACTIVE为业务管理状态，不表示已通过真实数据面验证'},
+ {key:'suppliers',label:'外部采购与代理统计',meaning:'历史供应商获取日志不同于现有采购及平台代理真实可用状态'}
+]
+const selected=()=>tabs.find(t=>t.key===active.value)
+const fmt=(v:any)=>v?new Date(v).toLocaleString():'—'
 function params(){return{from:range.value?.[0]?.toISOString(),to:range.value?.[1]?.toISOString()}}
-async function load(){loading.value=true;try{const api:any=(statisticsApi as any)[active.value];const [o,r]=await Promise.all([statisticsApi.overview(),api(params())]);overview.value=o.data.data;rows.value=r.data.data||[];await nextTick();draw()}finally{loading.value=false}}
-async function recalculate(){calculating.value=true;try{await statisticsApi.recalculate();ElMessage.success('当前小时统计已重算');await load()}finally{calculating.value=false}}
-function aggregate(fields:string[]){const map=new Map<string,Record<string,number>>();for(const r of rows.value){const key=new Date(r.stat_hour).toISOString();if(!map.has(key))map.set(key,{});const v=map.get(key)!;for(const f of fields)v[f]=(v[f]||0)+Number(r[f]||0)}return[...map.entries()].sort((a,b)=>a[0].localeCompare(b[0]))}
-function draw(){if(!chartEl.value)return;chart.value?.dispose();chart.value=echarts.init(chartEl.value);let fields:string[]=[];if(active.value==='resources')fields=['centos_online','ros_online','line_online'];if(active.value==='ips')fields=['ip_available','ip_total','ip_unique'];if(active.value==='customers')fields=['extract_count','returned_ip_count','request_count'];if(active.value==='products')fields=['active_service_count','extract_count','request_count'];if(active.value==='suppliers')fields=['fetch_count','success_count','received_resource_count'];const data=aggregate(fields);chart.value.setOption({tooltip:{trigger:'axis'},legend:{data:fields},grid:{left:60,right:20,top:48,bottom:48},xAxis:{type:'time'},yAxis:{type:'value'},series:fields.map(f=>({name:f,type:'line',smooth:true,showSymbol:false,data:data.map(([t,v])=>[t,v[f]||0])}))})}
+function sourceState(r:any){
+ if(r.usage_source_state==='NO_DATA_PLANE_EVENTS')return '无真实使用事件'
+ if(r.usage_source_state==='LOG_EVENTS_PRESENT_UNVERIFIED')return '有使用日志，未核验网络'
+ if(r.usage_source_state==='NO_EXTERNAL_FETCH_EVENTS')return '无供应商抓取日志'
+ if(r.usage_source_state==='FETCH_LOG_EVENTS_PRESENT_UNVERIFIED')return '有抓取日志，未核验上游'
+ return '管理面统计快照'
+}
+function usageValue(row:any,field:string){
+ if(row.usage_source_state==='NO_DATA_PLANE_EVENTS'&&
+  ['request_count','success_count','failure_count','unique_outbound_ip_count','upload_bytes','download_bytes'].includes(field))return '—'
+ if(row.usage_source_state==='NO_EXTERNAL_FETCH_EVENTS'&&
+  ['success_count','failure_count','received_resource_count','unique_ip_count','available_ip_count','imported_ip_count','avg_elapsed_ms'].includes(field))return '—'
+ return row[field]??'—'
+}
+const chartFields:Record<Group,string[]>={
+ centos:['centos_total','centos_online','b_prefix_count','c_prefix_count'],
+ ros:['ros_total','ros_online'],
+ lines:['line_total','line_online','line_abnormal'],
+ pools:[],
+ customers:['extract_count','returned_ip_count','request_count'],
+ products:['active_service_count','extract_count','request_count'],
+ suppliers:['fetch_count','received_resource_count']
+}
+function chartRows(){
+ const byTime=new Map<string,Record<string,number|null>>()
+ const fields=chartFields[active.value]
+ for(const row of rows.value){
+  if(!row.stat_hour)continue
+  const t=new Date(row.stat_hour).toISOString()
+  const metrics=byTime.get(t)||{}
+  for(const field of fields){
+   const missing=usageValue(row,field)==='—'
+   if(missing||row[field]==null)continue
+   metrics[field]=(metrics[field]??0)+Number(row[field])
+  }
+  byTime.set(t,metrics)
+ }
+ return [...byTime.entries()].sort((a,b)=>a[0].localeCompare(b[0]))
+}
+function draw(){
+ chart.value?.dispose();chart.value=undefined
+ if(!chartEl.value||active.value==='pools')return
+ const fields=chartFields[active.value],history=chartRows()
+ chart.value=echarts.init(chartEl.value)
+ chart.value.setOption({
+  tooltip:{trigger:'axis'},legend:{data:fields},grid:{left:56,right:26,top:52,bottom:55},
+  xAxis:{type:'time'},yAxis:{type:'value'},
+  series:fields.map(field=>({name:field,type:'line',connectNulls:false,showSymbol:true,
+   data:history.map(([t,metrics])=>[t,metrics[field]??null])}))
+ })
+}
+async function load(){
+ loading.value=true
+ try{
+  const api=active.value==='pools'?statisticsApi.poolsCurrent:
+   (['centos','ros','lines'].includes(active.value)?()=>statisticsApi.resources(params()):
+     active.value==='customers'?()=>statisticsApi.customers(params()):
+     active.value==='products'?()=>statisticsApi.products(params()):
+     ()=>statisticsApi.suppliers(params()))
+  const [summary,result]=await Promise.all([statisticsApi.overview(),api()])
+  overview.value=summary.data.data||{}
+  rows.value=result.data.data||[]
+  snapshotAt.value=active.value==='pools'?new Date().toISOString():''
+  await nextTick();draw()
+ }catch{rows.value=[];ElMessage.error('统计加载失败，请检查统计权限、数据库或采集任务')}
+ finally{loading.value=false}
+}
+async function recalculate(){
+ calculating.value=true
+ try{await statisticsApi.recalculate();ElMessage.success('已重算管理面小时统计，未接入数据面不能据此断言真实流量');await load()}
+ finally{calculating.value=false}
+}
 watch(active,load);onMounted(load);onBeforeUnmount(()=>chart.value?.dispose())
 </script>
-<template><div class="page-stack"><el-card shadow="never"><div class="page-title"><div><h2>数据统计</h2><p>统计最小粒度为 1 小时。IP提取与API调用来自 M7 真实运行日志；代理流量请求、上下行字节等指标仅在真实数据面回传使用日志后计入。</p></div><el-button v-if="auth.hasPermission('statistics:recalculate')" type="primary" :loading="calculating" @click="recalculate">重算当前小时</el-button></div><el-tabs v-model="active"><el-tab-pane v-for="t in tabs" :key="t[0]" :label="t[1]" :name="t[0]"/></el-tabs><div class="filter-row"><el-date-picker v-model="range" type="datetimerange" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间"/><el-button type="primary" @click="load">查询</el-button><span style="margin-left:auto;color:#8a94a6">最近计算：{{fmt(overview?.lastCalculation?.started_at)}}</span></div><div class="metric-grid" style="margin-top:16px"><el-card shadow="never"><span>有效客户</span><strong>{{overview.active_customers??0}}</strong><small>当前 ACTIVE 客户</small></el-card><el-card shadow="never"><span>有效服务</span><strong>{{overview.active_services??0}}</strong><small>当前 ACTIVE 服务</small></el-card><el-card shadow="never"><span>今日返回IP</span><strong>{{overview.today_returned_ips??0}}</strong><small>来自 IP 提取日志</small></el-card><el-card shadow="never"><span>当前活动告警</span><strong>{{overview.active_alarms??0}}</strong><small>未恢复/处理中</small></el-card></div></el-card>
-<el-card shadow="never" v-loading="loading"><div ref="chartEl" style="height:330px"></div></el-card>
-<el-card shadow="never"><el-table :data="rows" v-loading="loading" border stripe>
-<template v-if="active==='resources'"><el-table-column label="统计小时" min-width="170"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column><el-table-column prop="centos_total" label="CentOS总数"/><el-table-column prop="centos_online" label="CentOS在线"/><el-table-column prop="ros_total" label="ROS总数"/><el-table-column prop="ros_online" label="ROS在线"/><el-table-column prop="line_total" label="线路总数"/><el-table-column prop="line_online" label="线路在线"/><el-table-column prop="line_abnormal" label="线路异常"/></template>
-<template v-else-if="active==='ips'"><el-table-column label="统计小时" min-width="170"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column><el-table-column prop="ip_total" label="IP总量"/><el-table-column prop="ip_unique" label="去重IP"/><el-table-column prop="ip_available" label="可用IP"/><el-table-column prop="ip_unavailable" label="不可用IP"/><el-table-column prop="duplicate_count" label="重复标记"/></template>
-<template v-else-if="active==='customers'"><el-table-column label="统计小时" min-width="170"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column><el-table-column prop="customer_name" label="客户" min-width="160"/><el-table-column prop="service_no" label="服务" min-width="160"/><el-table-column prop="product_name" label="产品" min-width="150"/><el-table-column prop="extract_count" label="提取请求IP数"/><el-table-column prop="returned_ip_count" label="返回IP数"/><el-table-column prop="unique_outbound_ip_count" label="实际出站IP去重"/><el-table-column prop="request_count" label="代理请求数"/><el-table-column prop="success_count" label="成功请求"/><el-table-column prop="failure_count" label="失败请求"/></template>
-<template v-else-if="active==='products'"><el-table-column label="统计小时" min-width="170"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column><el-table-column prop="product_name" label="产品" min-width="160"/><el-table-column prop="package_name" label="套餐" min-width="150"/><el-table-column prop="active_customer_count" label="有效客户"/><el-table-column prop="active_service_count" label="有效服务"/><el-table-column prop="extract_count" label="提取IP数"/><el-table-column prop="request_count" label="代理请求"/><el-table-column prop="success_count" label="成功请求"/><el-table-column prop="unique_outbound_ip_count" label="出站IP去重"/></template>
-<template v-else><el-table-column label="统计小时" min-width="170"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column><el-table-column prop="supplier_name" label="供应商" min-width="170"/><el-table-column prop="fetch_count" label="获取次数"/><el-table-column prop="success_count" label="成功"/><el-table-column prop="failure_count" label="失败"/><el-table-column prop="received_resource_count" label="获取资源数"/><el-table-column prop="unique_ip_count" label="供应商去重IP"/><el-table-column prop="available_ip_count" label="可用IP"/><el-table-column prop="imported_ip_count" label="入库IP"/><el-table-column prop="avg_elapsed_ms" label="平均耗时ms"/></template>
-</el-table></el-card></div></template>
+
+<template>
+<div class="page-stack">
+ <el-card shadow="never">
+  <div class="page-title"><div><h2>数据统计｜七类业务口径</h2><p>区别来源池与历史IP、管理面活跃与真实交付、无数据与数值为0。</p></div>
+   <el-button v-if="auth.hasPermission('statistics:recalculate')" :loading="calculating" type="primary" @click="recalculate">重算管理面小时数据</el-button></div>
+  <el-tabs v-model="active"><el-tab-pane v-for="t in tabs" :key="t.key" :label="t.label" :name="t.key"/></el-tabs>
+  <el-alert :closable="false" type="info" :title="selected()?.meaning||''" show-icon/>
+  <div class="filter-row" style="margin-top:12px">
+   <el-date-picker v-if="active!=='pools'" v-model="range" type="datetimerange" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间"/>
+   <el-text v-else type="warning">资源池为当前成员快照，尚无逐池历史小时序列，日期范围不适用</el-text>
+   <el-button type="primary" @click="load">刷新</el-button>
+   <span style="margin-left:auto;color:#8a94a6">最近重算：{{fmt(overview?.lastCalculation?.started_at)}}</span>
+  </div>
+  <div class="metric-grid" style="margin-top:16px">
+   <el-card shadow="never"><span>有效客户</span><strong>{{overview.active_customers??'—'}}</strong><small>主档ACTIVE</small></el-card>
+   <el-card shadow="never"><span>业务 ACTIVE 服务</span><strong>{{overview.active_services??'—'}}</strong><small>不等于网络交付已核验</small></el-card>
+   <el-card shadow="never"><span>今日提取返回IP</span><strong>{{overview.today_returned_ips??'—'}}</strong><small>IP提取日志，不是流量</small></el-card>
+   <el-card shadow="never"><span>活动告警</span><strong>{{overview.active_alarms??'—'}}</strong><small>平台告警记录</small></el-card>
+  </div>
+ </el-card>
+ <el-card v-if="active!=='pools'" shadow="never" v-loading="loading">
+  <el-alert type="warning" :closable="false" title="图表按已入库的小时统计展示；缺少真实使用事件时留空，不以0伪装实际流量。资源快照不是历史设备原始采样。" style="margin-bottom:12px"/>
+  <div ref="chartEl" style="height:320px"/>
+ </el-card>
+ <el-card shadow="never" v-loading="loading">
+  <div style="margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;align-items:center">
+   <b>{{selected()?.label}}</b><el-text size="small">记录 {{rows.length}} 条；{{active==='pools'?'当前成员快照 '+fmt(snapshotAt):'小时快照/日志聚合'}}</el-text>
+  </div>
+  <el-table :data="rows" border stripe empty-text="该时段没有已生成的统计记录；不等于实际业务数值为0">
+   <template v-if="active==='centos'">
+    <el-table-column label="快照小时" min-width="175"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column>
+    <el-table-column prop="centos_total" label="主机总数"/><el-table-column prop="centos_online" label="报在线主机"/>
+    <el-table-column prop="b_prefix_count" label="B段 /16 去重"/><el-table-column prop="c_prefix_count" label="C段 /24 去重"/>
+   </template>
+   <template v-else-if="active==='ros'">
+    <el-table-column label="快照小时" min-width="175"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column>
+    <el-table-column prop="ros_total" label="ROS数"/><el-table-column prop="ros_online" label="报在线ROS"/>
+   </template>
+   <template v-else-if="active==='lines'">
+    <el-table-column label="快照小时" min-width="175"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column>
+    <el-table-column prop="line_total" label="线路数"/><el-table-column prop="line_online" label="报在线线路"/><el-table-column prop="line_abnormal" label="异常线路"/>
+   </template>
+   <template v-else-if="active==='pools'">
+    <el-table-column prop="poolCode" label="来源池号" min-width="155"/>
+    <el-table-column prop="poolName" label="池名称" min-width="160"/>
+    <el-table-column label="省市/运营商" min-width="180"><template #default="s">{{[s.row.provinceCode,s.row.cityCode,s.row.carrierCode].filter(Boolean).join(' / ')||'未指定'}}</template></el-table-column>
+    <el-table-column prop="lineCount" label="线路数"/><el-table-column prop="sharedLines" label="共享线路"/><el-table-column prop="longLines" label="长效线路"/>
+    <el-table-column prop="onlineLines" label="报在线"/><el-table-column prop="currentDistinctIpv4" label="当前去重IPv4"/>
+    <el-table-column prop="staleLines" label="采样超时/缺失"/>
+    <el-table-column label="最近线路同步" min-width="175"><template #default="s">{{fmt(s.row.lastLineSyncAt)}}</template></el-table-column>
+   </template>
+   <template v-else-if="active==='customers'">
+    <el-table-column label="小时" min-width="160"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column>
+    <el-table-column prop="customer_name" label="客户" min-width="140"/><el-table-column prop="service_no" label="服务编号" min-width="160"/>
+    <el-table-column prop="extract_count" label="请求提取数"/><el-table-column prop="returned_ip_count" label="实际返回IP数"/>
+    <el-table-column label="代理请求事件"><template #default="s">{{usageValue(s.row,'request_count')}}</template></el-table-column>
+    <el-table-column label="上行字节"><template #default="s">{{usageValue(s.row,'upload_bytes')}}</template></el-table-column>
+    <el-table-column label="下行字节"><template #default="s">{{usageValue(s.row,'download_bytes')}}</template></el-table-column>
+    <el-table-column label="数据来源" min-width="190"><template #default="s">{{sourceState(s.row)}}</template></el-table-column>
+   </template>
+   <template v-else-if="active==='products'">
+    <el-table-column label="小时" min-width="160"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column>
+    <el-table-column prop="product_name" label="产品" min-width="130"/><el-table-column prop="package_name" label="套餐" min-width="150"/>
+    <el-table-column prop="active_service_count" label="业务ACTIVE数"/><el-table-column prop="extract_count" label="提取IP数"/>
+    <el-table-column label="代理请求事件"><template #default="s">{{usageValue(s.row,'request_count')}}</template></el-table-column>
+    <el-table-column label="数据来源" min-width="190"><template #default="s">{{sourceState(s.row)}}</template></el-table-column>
+   </template>
+   <template v-else>
+    <el-table-column label="小时" min-width="160"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column>
+    <el-table-column prop="supplier_name" label="供应商" min-width="150"/><el-table-column prop="fetch_count" label="抓取记录"/>
+    <el-table-column label="返回资源数"><template #default="s">{{usageValue(s.row,'received_resource_count')}}</template></el-table-column>
+    <el-table-column label="平均耗时ms"><template #default="s">{{usageValue(s.row,'avg_elapsed_ms')}}</template></el-table-column>
+    <el-table-column label="来源状态" min-width="210"><template #default="s">{{sourceState(s.row)}}</template></el-table-column>
+   </template>
+  </el-table>
+ </el-card>
+</div>
+</template>

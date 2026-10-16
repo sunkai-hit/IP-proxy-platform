@@ -1,3 +1,18 @@
+## 当前统一需求基线：V1.3（2026年10月15日）
+
+最新需求已上传：[V1.3详细版](docs/requirements/IP代理管理平台需求说明书%20V1.3.docx)、[V1.3概要版](docs/requirements/IP代理管理平台需求说明书%20V1.3%20概要版.docx)；两组接口以[《IP代理管理平台接口说明书 V1.0》](docs/requirements/《IP代理管理平台接口说明书%20V1.0》.docx)为依据。详见[当前基线索引](docs/requirements/README.md)。
+
+下列M1–M8及V1.2-R3内容为历史工程说明，代码、数据库、API和原型尚需按V1.3整体核对。没有真实产品组环境，不能把CI/模拟联调当成网络侧验收。
+
+## V1.3 当前收敛与研发交接（2026-10-16）
+
+- [集中收敛与研发交接执行单](docs/project-progress/V1.3-集中收敛与研发交接执行单-20261016.md)：按管理平台离线交接 / 跨组联调 / 真实网络发布分层验收，汇总已做事项及外部阻塞。
+- [31 项候选跨组接口联合签收矩阵](docs/integration/V1.3-31接口联合技术签收矩阵-20261016.md)：依据最新 66 页候选接口完善稿，A01–F06 的方法/路径/提供责任逐项记录。**尚未经过产品组技术签收，不等于 31 个真实接口已完成。**
+- [正式资料当前索引与版本差异](docs/requirements/README.md)：详细需求 Word 正文版号与文件名待统一；原仓库上传的 25 项时期接口文档不能直接等同后续 31 项完整版。
+- CI 新增 `scripts/ci_v13_release_evidence_gate.py`：强制核对 31 行接口目录，提示 DOCX 内部版号差异；V1.3 浏览器测试补充资源池审计失败可见性与跨模块路由。**以最终提交 SHA 的 Actions 为验收依据。**
+
+---
+
 # IP代理管理平台
 
 当前已完成 **M1 工程骨架 + M2 系统基础能力 + M3 客户管理 + M4 资源管理 + M5 产品管理 + M6 订单与服务管理 + M7 Open API 与运行日志体系 + M8 监控、告警与数据统计**。
@@ -11,7 +26,7 @@
 ├── prototype/              # 已确认的静态原型，作为产品/视觉基准
 ├── frontend/               # Vue 3 + TypeScript + Vite + Element Plus + ECharts
 ├── backend/                # Java 21 + Spring Boot 4.1.1
-├── database/migration/     # PostgreSQL Flyway V1-V12
+├── database/migration/     # PostgreSQL Flyway V1-V27
 ├── docs/                   # ER、OpenAPI、架构设计
 ├── docker-compose.yml      # PostgreSQL + Redis + Backend + Frontend
 └── .github/workflows/      # CI 构建与 M3-M8 真实业务生命周期验证
