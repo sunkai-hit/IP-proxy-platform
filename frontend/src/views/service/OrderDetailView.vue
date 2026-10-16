@@ -17,6 +17,20 @@ const canPay=computed(()=>auth.hasPermission('order:payment:verify'))
 const canProvision=computed(()=>auth.hasPermission('order:provision')&&auth.hasPermission('service:provision'))
 const canRenew=computed(()=>auth.hasPermission('service:renew')&&auth.hasPermission('service:change'))
 const fmt=(v:any)=>v==null||v===''?'—':String(v)
+const orderReady=computed(()=>!loading.value&&!detailError.value&&id>0&&Number(row.value.id)===id)
+function actionSnapshot(permission:string){
+ if(!orderReady.value||working.value||!auth.hasPermission(permission)){
+  ElMessage.warning('订单资料或操作权限尚未核实，不能提交')
+  return null
+ }
+ return {id,version:requestVersion.value,number:String(row.value.order_no||id),
+  status:row.value.status,payment:row.value.payment_status}
+}
+function sameOrder(s:{id:number,version:number,status:any,payment:any},permission:string){
+ return orderReady.value&&id===s.id&&requestVersion.value===s.version&&
+  row.value.status===s.status&&row.value.payment_status===s.payment&&
+  auth.hasPermission(permission)
+}
 
 async function load(){
  const version=++requestVersion.value,orderId=id
@@ -40,34 +54,71 @@ async function load(){
  }finally{if(version===requestVersion.value)loading.value=false}
 }
 async function act(type:'confirm'|'cancel'|'provision'){
- if(type==='provision'){router.push({path:'/service-provision',query:{orderId:String(id)}});return}
+ const permission=type==='provision'?'order:provision':'order:status'
+ const snapshot=actionSnapshot(permission)
+ if(!snapshot)return
+ if(type==='provision'){
+  if(!canProvision.value||snapshot.status!=='PENDING_PROVISION'||!isPaid.value||
+     row.value.order_type!=='NEW')return
+  await router.push({path:'/service-provision',query:{orderId:String(snapshot.id)}})
+  return
+ }
+ if(type==='confirm'&&!['DRAFT','PENDING_CONFIRM'].includes(snapshot.status))return
+ if(type==='cancel'&&['PROVISIONED','COMPLETED','CANCELLED'].includes(snapshot.status))return
  const labels={confirm:'确认订单',cancel:'取消订单'}
- const {value}=await ElMessageBox.prompt('请输入业务原因',labels[type],
- {inputValidator:v=>!!String(v||'').trim()||'原因不能为空'})
  working.value=true
  try{
-  if(type==='confirm')await orderServiceApi.confirmOrder(id,String(value).trim())
-  else await orderServiceApi.cancelOrder(id,String(value).trim())
-  ElMessage.success('订单状态已更新，请核查付款和后续交付')
-  await load()
+  const {value}=await ElMessageBox.prompt(`订单：${snapshot.number}。请输入业务原因`,labels[type],{
+   inputValidator:v=>!!String(v||'').trim()||'原因不能为空'
+  })
+  if(!sameOrder(snapshot,permission)){
+   ElMessage.warning('确认期间订单、状态或权限已变化；没有提交订单操作，请重新核对')
+   return
+  }
+  if(type==='confirm')await orderServiceApi.confirmOrder(snapshot.id,String(value).trim())
+  else await orderServiceApi.cancelOrder(snapshot.id,String(value).trim())
+  if(sameOrder(snapshot,permission)){
+   ElMessage.success('订单状态变更请求已返回，请核查付款和后续交付')
+   await load()
+  }else ElMessage.warning('原订单状态变更请求已返回；当前页面已切换，请回原订单回查')
+ }catch(e:any){
+  if(e!=='cancel'&&e!=='close')ElMessage.error('订单变更未确认成功，请查询原订单审计和状态，避免重复提交')
  }finally{working.value=false}
 }
 async function paymentConfirm(){
- const proof=await ElMessageBox.prompt('填写已核实到账的外部付款流水号或凭证编号','核实客户付款',{
-  inputValidator:v=>!!String(v||'').trim()||'凭证号不能为空'})
- const reason=await ElMessageBox.prompt('填写实际查验渠道及凭证；该操作不会自动收款','核实收款',{
-  inputValidator:v=>!!String(v||'').trim()||'核实依据不能为空'})
+ const snapshot=actionSnapshot('order:payment:verify')
+ if(!snapshot||snapshot.status!=='PENDING_PROVISION'||snapshot.payment==='PAID_CONFIRMED')return
  working.value=true
  try{
-  await orderServiceApi.confirmPayment(id,String(proof.value).trim(),String(reason.value).trim())
-  ElMessage.success('已核实并记录收款凭证；供应商尚未自动采购，服务未自动开通')
-  await load()
+  const proof=await ElMessageBox.prompt(`订单：${snapshot.number}。填写已核实到账的外部付款流水号或凭证编号`,'核实客户付款',{
+   inputValidator:v=>!!String(v||'').trim()||'凭证号不能为空'
+  })
+  if(!sameOrder(snapshot,'order:payment:verify')){
+   ElMessage.warning('核款期间订单或付款状态已变化，未提交付款确认')
+   return
+  }
+  const reason=await ElMessageBox.prompt(`订单：${snapshot.number}。填写实际查验渠道及凭证；该操作不会自动收款`,'核实收款',{
+   inputValidator:v=>!!String(v||'').trim()||'核实依据不能为空'
+  })
+  if(!sameOrder(snapshot,'order:payment:verify')){
+   ElMessage.warning('核款期间订单或付款状态已变化，未提交付款确认')
+   return
+  }
+  await orderServiceApi.confirmPayment(snapshot.id,String(proof.value).trim(),String(reason.value).trim())
+  if(sameOrder(snapshot,'order:payment:verify')){
+   ElMessage.success('付款凭证核实请求已返回；供应商尚未自动采购，服务未自动开通')
+   await load()
+  }else ElMessage.warning('原订单付款核实请求已返回，当前页面已切换；请回原订单查看审计凭证')
+ }catch(e:any){
+  if(e!=='cancel'&&e!=='close')ElMessage.error('付款核实未确认成功，请核对原始流水与审计，不要重复提交')
  }finally{working.value=false}
 }
 function goRenew(){
+ if(!orderReady.value||working.value||!canRenew.value||!isPaid.value||
+    row.value.order_type!=='RENEW'||row.value.status!=='PENDING_PROVISION')return
  const target=Number(row.value.renewal_service_id)
  if(!target)return ElMessage.warning('续费订单缺少合法的原服务引用')
- router.push({path:'/service-changes',query:{serviceId:String(target),renewalOrderId:String(id)}})
+ void router.push({path:'/service-changes',query:{serviceId:String(target),renewalOrderId:String(id)}})
 }
 watch(()=>route.params.id,()=>{id=Number(route.params.id);tab.value='items';load()})
 onMounted(load)
@@ -80,15 +131,15 @@ onMounted(load)
    <p>客户购买意图 → 确认 → 收款核实 → 实际开通或续费 → 实例回查。</p>
   </div>
   <div class="actions">
-   <el-button @click="load">刷新</el-button>
-   <el-button v-if="!detailError&&canChange&&['DRAFT','PENDING_CONFIRM'].includes(row.status)" :loading="working" @click="act('confirm')">确认订单</el-button>
-   <el-button v-if="!detailError&&canPay&&!isPaid&&row.status==='PENDING_PROVISION'" :loading="working" type="primary" @click="paymentConfirm">核实客户付款</el-button>
+   <el-button :disabled="working" @click="load">刷新</el-button>
+   <el-button v-if="!detailError&&canChange&&['DRAFT','PENDING_CONFIRM'].includes(row.status)" :loading="working" :disabled="!orderReady||working" @click="act('confirm')">确认订单</el-button>
+   <el-button v-if="!detailError&&canPay&&!isPaid&&row.status==='PENDING_PROVISION'" :loading="working" :disabled="!orderReady||working" type="primary" @click="paymentConfirm">核实客户付款</el-button>
    <el-button v-if="!detailError&&canProvision&&row.order_type==='NEW'&&row.status==='PENDING_PROVISION'"
-     :disabled="!isPaid" type="success" @click="act('provision')">进入服务开通向导</el-button>
+     :disabled="!orderReady||working||!isPaid" type="success" @click="act('provision')">进入服务开通向导</el-button>
    <el-button v-if="!detailError&&canRenew&&row.order_type==='RENEW'&&row.status==='PENDING_PROVISION'"
-     :disabled="!isPaid||!row.renewal_service_id" type="success" @click="goRenew">对原服务执行续费</el-button>
+     :disabled="!orderReady||working||!isPaid||!row.renewal_service_id" type="success" @click="goRenew">对原服务执行续费</el-button>
    <el-button v-if="!detailError&&canChange&&row.status&&!['PROVISIONED','COMPLETED','CANCELLED'].includes(row.status)"
-     type="danger" plain :loading="working" @click="act('cancel')">取消订单</el-button>
+     type="danger" plain :loading="working" :disabled="!orderReady||working" @click="act('cancel')">取消订单</el-button>
   </div>
  </div>
  <el-alert v-if="detailError" type="error" :closable="false" title="订单详情读取失败，无法核实付款、订单项和实际服务。"/>
