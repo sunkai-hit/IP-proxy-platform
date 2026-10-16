@@ -713,6 +713,36 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('客户列表读取失败',{exact:true})).toBeVisible()
   })
 
+  test('customer option outage does not suppress the real customer ledger', async ({ page }) => {
+    await page.route('**/api/admin/v1/customers/options',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_OPTIONS_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customers')
+    await expect(page.getByText('客户类型/负责人选项读取失败，列表仍可查询；保存客户暂不可用。')).toBeVisible()
+    await expect(page.getByText('V12 CI Customer')).toBeVisible()
+    await page.getByRole('button',{name:'新增客户'}).click()
+    await expect(page.getByRole('dialog').getByRole('button',{name:'保存'})).toBeDisabled()
+  })
+
+  test('customer KYC details cannot display stale sensitive application material after HTTP outage', async ({ page }) => {
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,auth_no:'CI-KYC-900991',
+        customer_name:'CI Customer',status:'PENDING'}],total:1}}),
+    }))
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_KYC_DETAIL_DOWN',message:'synthetic outage'}),
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'详情'}).click()
+    await expect(page.getByText('认证详情读取失败，不能确认资料、审核状态或历史意见。')).toBeVisible()
+    await expect(page.getByText('证件/主体编号',{exact:true})).toHaveCount(0)
+    await expect(page.getByText('附件数量',{exact:true})).toHaveCount(0)
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
