@@ -1,28 +1,34 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {resourceApi} from '@/api/resource'
 import {externalDeliveryApi} from '@/api/externalDelivery'
 import {useAuthStore} from '@/stores/auth'
 import {ElMessage} from 'element-plus'
 
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),id=Number(route.params.id)
-const row=ref<any>({}),purchases=ref<any[]>([]),total=ref(0),loading=ref(false),childError=ref(false)
+const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
+const row=ref<any>({}),purchases=ref<any[]>([]),total=ref(0),loading=ref(false),childError=ref(false),loadError=ref(false),requestVersion=ref(0)
 const data=(r:any)=>r.data.data,fmt=(x:any)=>x==null||x===''?'—':String(x)
 const mask=(x:any)=>x?('••••'+String(x).slice(-4)):'—'
 async function load(){
- loading.value=true;childError.value=false
+ const version=++requestVersion.value,supplierId=id
+ loading.value=true;loadError.value=false;childError.value=false
+ row.value={};purchases.value=[];total.value=0
  try{
-  row.value=data(await resourceApi.supplier(id))||{}
+  const details=data(await resourceApi.supplier(supplierId))||{}
+  if(version!==requestVersion.value)return
+  row.value=details
   if(auth.hasPermission('resource:purchase:read')){
    try{
-    const result=data(await externalDeliveryApi.purchases({page:1,size:200,supplierId:id}))
+    const result=data(await externalDeliveryApi.purchases({page:1,size:200,supplierId}))||{}
+    if(version!==requestVersion.value)return
     purchases.value=result.items||[];total.value=result.total||0
-   }catch{childError.value=true;purchases.value=[]}
+   }catch{if(version===requestVersion.value){childError.value=true;purchases.value=[];total.value=0}}
   }
- }catch{ElMessage.error('供应商详情加载失败')}
- finally{loading.value=false}
+ }catch{if(version===requestVersion.value){loadError.value=true;row.value={};purchases.value=[];total.value=0}}
+ finally{if(version===requestVersion.value)loading.value=false}
 }
+watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 onMounted(load)
 </script>
 <template>
@@ -33,7 +39,8 @@ onMounted(load)
    <p>供应商基本资料、已登记采购套餐及下游交付链；上游接口能力以实际适配器证据为准。</p></div>
   <el-button @click="load">刷新</el-button>
  </div>
- <el-card shadow="never" v-loading="loading">
+ <el-alert v-if="loadError" type="error" :closable="false" title="供应商详情读取失败，无法核实接口状态、认证配置与下游采购。"/><el-button v-if="loadError" @click="load">重新加载供应商详情</el-button>
+ <el-card v-if="!loadError&&row.supplier_code" shadow="never" v-loading="loading">
   <template #header><b>供应商主记录</b></template>
   <el-descriptions :column="3" border>
    <el-descriptions-item label="供应商编码">{{fmt(row.supplier_code)}}</el-descriptions-item>
@@ -50,7 +57,7 @@ onMounted(load)
    <el-descriptions-item label="创建时间">{{fmt(row.created_at)}}</el-descriptions-item>
   </el-descriptions>
  </el-card>
- <el-card v-if="auth.hasPermission('resource:purchase:read')" shadow="never">
+ <el-card v-if="!loadError&&row.supplier_code&&auth.hasPermission('resource:purchase:read')" shadow="never">
   <template #header><div class="head"><b>关联采购套餐（共 {{total}} 条）</b><el-button @click="router.push('/supplier-purchases')">进入采购管理</el-button></div></template>
   <el-alert type="info" :closable="false" title="采购记录、供应商接口状态和真实代理交付是不同事实。需要进入采购详情检查反向代理及客户服务。"/>
   <el-alert v-if="childError" type="warning" :closable="false" title="采购关联查询失败，不能据此认定供应商没有下游服务。"/>

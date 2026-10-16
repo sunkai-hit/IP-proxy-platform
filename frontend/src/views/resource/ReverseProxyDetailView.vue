@@ -1,32 +1,42 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessage,ElMessageBox} from 'element-plus'
 import {externalDeliveryApi} from '@/api/externalDelivery'
 import {useAuthStore} from '@/stores/auth'
 
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),id=Number(route.params.id)
-const row=ref<any>({}),loading=ref(false),busy=ref(false)
+const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
+const row=ref<any>({}),loading=ref(false),busy=ref(false),loadError=ref(false),requestVersion=ref(0)
 const data=(r:any)=>r.data.data,fmt=(v:any)=>v==null||v===''?'—':String(v)
 const mask=(v:any)=>v?('••••'+String(v).slice(-4)):'—'
 async function load(){
- loading.value=true
- try{row.value=data(await externalDeliveryApi.reverseProxy(id))||{}}
- finally{loading.value=false}
+ const version=++requestVersion.value,proxyId=id
+ loading.value=true;loadError.value=false;row.value={}
+ try{const result=data(await externalDeliveryApi.reverseProxy(proxyId))||{};if(version===requestVersion.value)row.value=result}
+ catch{if(version===requestVersion.value){loadError.value=true;row.value={}}}
+ finally{if(version===requestVersion.value)loading.value=false}
 }
 async function action(kind:'apply'|'test'|'disable'){
+ if(loading.value||busy.value||loadError.value||!row.value.proxy_no)return
+ const allowed=kind==='test'?'resource:reverse-proxy:test':'resource:reverse-proxy:status'
+ if(!auth.hasPermission(allowed))return
+ const proxyId=id,version=requestVersion.value
  const title={apply:'应用平台代理配置',test:'验证平台代理连通性',disable:'真实停用平台代理入口'}[kind]
  const {value}=await ElMessageBox.prompt('请输入操作原因。没有真实网关验证的返回将被后端拒绝，配置登记状态不等于成功。',title,
   {inputValidator:(v:string)=>!!String(v||'').trim()||'原因不能为空'})
+ if(id!==proxyId||version!==requestVersion.value)return
  busy.value=true
  try{
-  if(kind==='apply')await externalDeliveryApi.applyReverseProxy(id,String(value).trim())
-  if(kind==='test')await externalDeliveryApi.testReverseProxy(id,String(value).trim())
-  if(kind==='disable')await externalDeliveryApi.disableReverseProxy(id,String(value).trim())
-  ElMessage.success('已收到并通过后端真实回执校验')
+  if(kind==='apply')await externalDeliveryApi.applyReverseProxy(proxyId,String(value).trim())
+  if(kind==='test')await externalDeliveryApi.testReverseProxy(proxyId,String(value).trim())
+  if(kind==='disable')await externalDeliveryApi.disableReverseProxy(proxyId,String(value).trim())
+  if(id!==proxyId||version!==requestVersion.value)return
+  ElMessage.success('管理请求已获得后端返回；实际网关可用性仍以真实探测回执为准')
   await load()
- }finally{busy.value=false}
+ }catch{if(id===proxyId&&version===requestVersion.value)ElMessage.error('平台代理操作未确认成功，不能据此认定已应用或已停用')}
+ finally{busy.value=false}
 }
+watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 onMounted(load)
 </script>
 <template>
@@ -39,14 +49,15 @@ onMounted(load)
   </div>
   <div class="actions">
    <el-button @click="load">刷新</el-button>
-   <el-button v-if="auth.hasPermission('resource:reverse-proxy:test')" :loading="busy" @click="action('test')">真实连通性验证</el-button>
-   <el-button v-if="auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='ACTIVE'" :loading="busy" type="primary" @click="action('apply')">应用配置</el-button>
-   <el-button v-if="auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='DISABLED'" :loading="busy" type="danger" plain @click="action('disable')">受控停用</el-button>
+   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:test')" :loading="busy" @click="action('test')">真实连通性验证</el-button>
+   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='ACTIVE'" :loading="busy" type="primary" @click="action('apply')">应用配置</el-button>
+   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='DISABLED'" :loading="busy" type="danger" plain @click="action('disable')">受控停用</el-button>
   </div>
  </div>
  <el-alert type="warning" :closable="false" show-icon
    title="配置保存、状态ACTIVE或适配器收到传输ACK，不足以证明真实交付；未通过真实网关核验时后台操作必须拒绝。"/>
- <el-card shadow="never" v-loading="loading">
+ <el-alert v-if="loadError" type="error" :closable="false" title="反向代理详情读取失败，禁止推断配置已生效或网关可连接。"/><el-button v-if="loadError" @click="load">重新加载反向代理</el-button>
+ <el-card v-if="!loadError&&row.proxy_no" shadow="never" v-loading="loading">
   <template #header><b>平台代理主记录</b></template>
   <el-descriptions :column="3" border>
    <el-descriptions-item label="代理编号">{{fmt(row.proxy_no)}}</el-descriptions-item>
