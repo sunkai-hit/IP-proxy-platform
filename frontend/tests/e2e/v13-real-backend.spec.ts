@@ -1420,4 +1420,104 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('人工切换影响预检（禁止直接执行）')).toHaveCount(0)
     await expect(page.getByRole('button',{name:/真实切换不可用/})).toHaveCount(0)
   })
+
+  test('A1 order cancellation approval cannot retarget after SPA navigation', async ({ page }) => {
+    expect(unpaidOrderId).toBeTruthy()
+    expect(multiOrderId).toBeTruthy()
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&/\/api\/admin\/v1\/orders\/\d+\/cancel$/.test(new URL(r.url()).pathname))
+        writes.push(r.url())
+    })
+    await page.goto(base+'/orders/'+unpaidOrderId)
+    await expect(page.getByRole('button',{name:'取消订单'})).toBeEnabled()
+    await page.getByRole('button',{name:'取消订单'}).click()
+    const modal=page.locator('.el-message-box').last()
+    await expect(modal).toContainText('取消订单')
+    await modal.locator('input').fill('CI A1 cross-order cancel should be rejected')
+    await page.evaluate(async next=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/orders/'+next)
+    },multiOrderId)
+    await expect(page).toHaveURL(base+'/orders/'+multiOrderId)
+    await modal.locator('.el-message-box__btns .el-button--primary').click()
+    expect(writes).toHaveLength(0)
+    await expect(page.getByText('确认期间订单、状态或权限已变化；没有提交订单操作，请重新核对')).toBeVisible()
+  })
+
+  test('A1 payment reference approval cannot retarget to another order', async ({ page }) => {
+    expect(unpaidOrderId).toBeTruthy()
+    expect(multiOrderId).toBeTruthy()
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&/\/api\/admin\/v1\/orders\/\d+\/payment-confirmation$/.test(new URL(r.url()).pathname))
+        writes.push(r.url())
+    })
+    await page.goto(base+'/orders/'+unpaidOrderId)
+    await page.getByRole('button',{name:'核实客户付款'}).click()
+    const modal=page.locator('.el-message-box').last()
+    await expect(modal).toContainText('核实客户付款')
+    await modal.locator('input').fill('CI-A1-SYNTHETIC-PAYMENT-DO-NOT-SUBMIT')
+    await page.evaluate(async next=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/orders/'+next)
+    },multiOrderId)
+    await modal.locator('.el-message-box__btns .el-button--primary').click()
+    await expect(page.getByText('核款期间订单或付款状态已变化，未提交付款确认')).toBeVisible()
+    expect(writes).toHaveLength(0)
+    await expect(page.getByText('核实收款',{exact:true})).toHaveCount(0)
+  })
+
+  test('A1 payment second approval step cannot use an obsolete order identity', async ({ page }) => {
+    expect(unpaidOrderId).toBeTruthy()
+    expect(multiOrderId).toBeTruthy()
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&/\/api\/admin\/v1\/orders\/\d+\/payment-confirmation$/.test(new URL(r.url()).pathname))
+        writes.push(r.url())
+    })
+    await page.goto(base+'/orders/'+unpaidOrderId)
+    await page.getByRole('button',{name:'核实客户付款'}).click()
+    const first=page.locator('.el-message-box').last()
+    await first.locator('input').fill('CI-A1-PAYMENT-PROOF-NO-WRITE')
+    await first.locator('.el-message-box__btns .el-button--primary').click()
+    const second=page.locator('.el-message-box').last()
+    await expect(second).toContainText('核实收款')
+    await second.locator('input').fill('CI checked external payment reference')
+    await page.evaluate(async next=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/orders/'+next)
+    },multiOrderId)
+    await second.locator('.el-message-box__btns .el-button--primary').click()
+    await expect(page.getByText('核款期间订单或付款状态已变化，未提交付款确认')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A1 order confirmation review cannot confirm another order if page switches', async ({ page }) => {
+    expect(unpaidOrderId).toBeTruthy()
+    expect(multiOrderId).toBeTruthy()
+    // Display a synthetic DRAFT snapshot only to test the UI confirmation guard.
+    // Never send a write to PostgreSQL from this fixture.
+    const url='**/api/admin/v1/orders/'+unpaidOrderId
+    await page.route(url,async route=>{
+      const response=await route.fetch()
+      const json=await response.json()
+      json.data.status='DRAFT'
+      await route.fulfill({response,json})
+    })
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&/\/api\/admin\/v1\/orders\/\d+\/confirm$/.test(new URL(r.url()).pathname))
+        writes.push(r.url())
+    })
+    await page.goto(base+'/orders/'+unpaidOrderId)
+    await expect(page.getByRole('button',{name:'确认订单'})).toBeEnabled()
+    await page.getByRole('button',{name:'确认订单'}).click()
+    const modal=page.locator('.el-message-box').last()
+    await expect(modal).toContainText('确认订单')
+    await modal.locator('input').fill('CI A1 ensure original order only')
+    await page.evaluate(async next=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/orders/'+next)
+    },multiOrderId)
+    await modal.locator('.el-message-box__btns .el-button--primary').click()
+    await expect(page.getByText('确认期间订单、状态或权限已变化；没有提交订单操作，请重新核对')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
 })
