@@ -8,7 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 const router=useRouter(),auth=useAuthStore()
 const rows=ref<any[]>([]),total=ref(0),loading=ref(false),saving=ref(false),drawer=ref(false)
 const suppliers=ref<any[]>([]),customers=ref<any[]>([]),paidOrders=ref<any[]>([])
-const loadError=ref(false),optionsError=ref(false)
+const loadError=ref(false),optionsError=ref(false),optionsLoading=ref(true)
 let listRequestVersion=0
 const q=reactive<any>({page:1,size:20,keyword:'',status:''})
 const form=reactive<any>({supplierId:null,customerId:null,sourceCustomerOrderId:null,supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',remainingQuota:'',purchaseCost:null,currency:'CNY',effectiveAt:'',expireAt:'',remark:''})
@@ -26,14 +26,14 @@ async function load(){
  }finally{if(version===listRequestVersion)loading.value=false}
 }
 async function loadOptions(){
- optionsError.value=false
+ optionsLoading.value=true;optionsError.value=false
  try{
   const o=data(await externalDeliveryApi.options())
   suppliers.value=o.suppliers||[]
   customers.value=o.customers||[]
  }catch{
   optionsError.value=true;suppliers.value=[];customers.value=[]
- }
+ }finally{optionsLoading.value=false}
 }
 let paidOrderRequestVersion=0
 async function loadPaidOrders(){
@@ -52,7 +52,7 @@ async function loadPaidOrders(){
  }
 }
 function add(){
- if(optionsError.value){ElMessage.warning('采购选项读取失败，请重新加载后再登记');return}
+ if(optionsError.value||optionsLoading.value){ElMessage.warning('采购选项读取失败，请重新加载后再登记');return}
  ++paidOrderRequestVersion
  Object.assign(form,{supplierId:null,customerId:null,sourceCustomerOrderId:null,
   supplierPackageName:'',supplierPackageNo:'',purchaseAccount:'',packageQuota:'',
@@ -82,7 +82,7 @@ onMounted(()=>{void load();void loadOptions()})
 </script>
 <template>
 <div class="page">
- <div class="head"><div><h2>外部套餐 / 资源采购</h2><p>只登记运营已取得的供应商套餐。新增客户专属采购必须先核实客户付款；平台不自动购买。</p></div><el-button v-if="auth.hasPermission('resource:purchase:write')" type="primary" :disabled="optionsError" @click="add">登记采购</el-button></div>
+ <div class="head"><div><h2>外部套餐 / 资源采购</h2><p>只登记运营已取得的供应商套餐。新增客户专属采购必须先核实客户付款；平台不自动购买。</p></div><el-button v-if="auth.hasPermission('resource:purchase:write')" type="primary" :disabled="optionsError||optionsLoading" @click="add">登记采购</el-button></div>
  <el-alert v-if="loadError" type="error" :closable="false" title="采购列表查询失败，不能据此判断没有采购记录或客户资源。" />
  <el-button v-if="loadError" @click="load">重新加载采购列表</el-button>
  <el-alert v-if="optionsError" type="warning" :closable="false" title="供应商或客户选项读取失败，暂不能登记采购；已有采购记录仍可查询。" />
