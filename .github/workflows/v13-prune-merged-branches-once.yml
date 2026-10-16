@@ -39,6 +39,7 @@ jobs:
           'fix/v13-release-receipt-binding-20261016'
           'fix/v13-resource-sync-customer-console-closeout-20261016'
           'fix/v13-service-order-ux-closeout-20261016'
+          'chore/v13-a-acceptance-branch-prune-20261016'
           )
           for branch in "${branches[@]}"; do
             current="$(git ls-remote origin "refs/heads/${branch}" | cut -f1)"
@@ -75,6 +76,8 @@ jobs:
             exit 1
           fi
           git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git tag -a "${archive}" "${current}" -m 'Archive closed unmerged PR #18 before deleting historical branch; reconciled by PR #17/#19'
           git push origin "refs/tags/${archive}"
           git push --force-with-lease="refs/heads/${branch}:${current}" origin ":refs/heads/${branch}"
