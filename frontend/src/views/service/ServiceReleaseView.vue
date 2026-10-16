@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted,reactive,ref } from 'vue'
+import { onMounted,reactive,ref,watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage,ElMessageBox } from 'element-plus'
 import { orderServiceApi } from '@/api/orderService'
@@ -9,7 +9,9 @@ import { useAuthStore } from '@/stores/auth'
 const router=useRouter(),auth=useAuthStore(),tab=ref('queue')
 const loading=ref(false),scanning=ref(false),queue=ref<any[]>([]),rows=ref<any[]>([]),total=ref(0),lastScan=ref<any>(null),queueError=ref(false),releaseError=ref(false),requestVersion=ref(0)
 const q=reactive<any>({page:1,size:20,status:'',phase:''})
-const taskDrawer=ref(false),taskLoading=ref(false),taskDetail=ref<any>(null),releasePlan=ref<any>(null)
+const taskDrawer=ref(false),taskLoading=ref(false),taskError=ref(false),selectedOperationKey=ref('')
+const taskDetail=ref<any>(null),releasePlan=ref<any>(null),planLoading=ref(false),planError=ref(false)
+let taskRequestVersion=0,planRequestVersion=0
 const data=(r:any)=>r.data.data
 const states:Record<string,string>={
   NONE:'未进入到期阶段',STOP_PENDING:'待真实停服',GRACE_HELD:'宽限保留（已验证停服）',
@@ -52,22 +54,55 @@ async function reconcile(){
  }catch{ElMessage.error('扫描未完成，请核查权限及后端日志')}
  finally{scanning.value=false}
 }
+async function reloadTask(){
+ const key=selectedOperationKey.value,version=++taskRequestVersion
+ ++planRequestVersion
+ taskLoading.value=true;taskError.value=false;taskDetail.value=null
+ releasePlan.value=null;planError.value=false;planLoading.value=false
+ if(!key||!taskDrawer.value){taskLoading.value=false;return}
+ try{
+  const detail=data(await http.get(`/v12/delivery-actions/${encodeURIComponent(key)}`))||{}
+  if(version!==taskRequestVersion||!taskDrawer.value||selectedOperationKey.value!==key)return
+  // A cross-task response must never be presented under the selected task.
+  if(detail.operationKey!==key)throw new Error('task key mismatch')
+  taskDetail.value=detail
+ }catch{
+  if(version===taskRequestVersion&&taskDrawer.value&&selectedOperationKey.value===key){
+   taskError.value=true;taskDetail.value=null
+  }
+ }finally{
+  if(version===taskRequestVersion)taskLoading.value=false
+ }
+}
 async function showTask(row:any){
  if(!row.operationKey){ElMessage.warning('本服务尚未生成操作任务，请先执行受控扫描');return}
- taskLoading.value=true;taskDetail.value=null;releasePlan.value=null;taskDrawer.value=true
- try{
-  taskDetail.value=data(await http.get(`/v12/delivery-actions/${encodeURIComponent(row.operationKey)}`))
- }catch{ElMessage.error('任务详情读取失败；真实代理状态不能推断为已完成')}
- finally{taskLoading.value=false}
+ selectedOperationKey.value=String(row.operationKey)
+ taskDrawer.value=true
+ await reloadTask()
 }
 async function inspectRelease(){
- if(!taskDetail.value?.operationKey||taskDetail.value?.action!=='RELEASE')return
- taskLoading.value=true;releasePlan.value=null
+ const key=selectedOperationKey.value
+ if(!key||taskLoading.value||!taskDrawer.value||taskDetail.value?.operationKey!==key||taskDetail.value?.action!=='RELEASE')return
+ const version=++planRequestVersion,taskVersion=taskRequestVersion
+ planLoading.value=true;planError.value=false;releasePlan.value=null
  try{
-  releasePlan.value=data(await http.get(`/v12/release-inspections/${encodeURIComponent(taskDetail.value.operationKey)}`))
- }catch{ElMessage.warning('释放预检未通过：合同宽限、其他共享客户占用或产品端证明可能尚不满足条件')}
- finally{taskLoading.value=false}
+  const response=data(await http.get(`/v12/release-inspections/${encodeURIComponent(key)}`))||{}
+  if(version!==planRequestVersion||taskVersion!==taskRequestVersion||!taskDrawer.value||selectedOperationKey.value!==key)return
+  releasePlan.value=response
+ }catch{
+  if(version===planRequestVersion&&taskVersion===taskRequestVersion&&taskDrawer.value&&selectedOperationKey.value===key){
+   planError.value=true;releasePlan.value=null
+  }
+ }finally{if(version===planRequestVersion)planLoading.value=false}
 }
+watch(taskDrawer,visible=>{
+ if(!visible){
+  ++taskRequestVersion;++planRequestVersion
+  selectedOperationKey.value='';taskDetail.value=null;releasePlan.value=null
+  taskError.value=false;planError.value=false
+  taskLoading.value=false;planLoading.value=false
+ }
+})
 onMounted(load)
 </script>
 <template>
@@ -116,6 +151,9 @@ onMounted(load)
   <el-drawer v-model="taskDrawer" title="实际操作任务与交付核对" size="540px">
    <div v-loading="taskLoading">
     <el-alert type="warning" :closable="false" show-icon title="本页只展示任务台账和释放预检，不会下发代理操作或直接释放公网IPv4。真实操作需产品组环境及授权。" />
+    <el-alert v-if="taskError" type="error" :closable="false"
+      title="任务详情读取失败或任务身份不匹配，不能据此认定已停服、已释放或不存在异常。" style="margin-top:12px"/>
+    <el-button v-if="taskError" @click="reloadTask">重新读取任务详情</el-button>
     <el-descriptions v-if="taskDetail" border :column="1" style="margin-top:16px">
      <el-descriptions-item label="业务任务编号">{{taskDetail.operationKey}}</el-descriptions-item>
      <el-descriptions-item label="服务编号">{{taskDetail.serviceId}}</el-descriptions-item>
@@ -126,7 +164,10 @@ onMounted(load)
      <el-descriptions-item label="最近异常">{{taskDetail.lastErrorMessage||taskDetail.lastErrorCode||'无'}}</el-descriptions-item>
     </el-descriptions>
     <div v-if="taskDetail?.action==='RELEASE'" style="margin-top:16px">
-     <el-button :loading="taskLoading" @click="inspectRelease">检查宽限及共享客户占用</el-button>
+     <el-button :loading="planLoading" :disabled="taskLoading" @click="inspectRelease">检查宽限及共享客户占用</el-button>
+     <el-alert v-if="planError" type="error" :closable="false" style="margin-top:12px"
+       title="释放预检读取失败，宽限、共享客户占用及产品回执条件均为未知，禁止据此判断可释放。"/>
+     <el-button v-if="planError" @click="inspectRelease">重新检查释放条件</el-button>
      <el-alert v-if="releasePlan" style="margin-top:12px" type="info" :closable="false" show-icon
       :title="releasePlan.ready?'仅满足业务释放预检，不代表代理已回池':'未满足释放条件'">
       <div v-for="claim in releasePlan.claims||[]" :key="claim.claimId">
