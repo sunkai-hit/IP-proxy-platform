@@ -144,8 +144,29 @@ public class V12ExtendedLogController {
                 COALESCE(o.object_id,'') "objectCode",o.operation "eventType",o.result "result",
                 ('模块 '||o.module_code||' / 执行人 '||COALESCE(o.operator_name,'系统')) "summary",
                 o.request_id "operationKey",'REDACTED_OPERATION_AUDIT' "source",
-                CASE WHEN o.object_type='SERVICE' AND o.object_id ~ '^[0-9]+$'
-                  THEN '/services/'||o.object_id ELSE NULL END "relatedPath"
+                CASE WHEN o.object_id ~ '^[0-9]+
+                FROM sys_operation_log o
+                WHERE o.occurred_at>=? AND o.occurred_at<?
+                  AND (COALESCE(o.object_id,'') ILIKE ? OR o.module_code ILIKE ?)
+              """;
+            default->throw new BusinessException("LOG_CATEGORY_UNSUPPORTED","未知日志类型");
+        };
+    }
+}
+ AND o.object_type='SERVICE'
+                  THEN '/services/'||o.object_id
+                  WHEN o.object_id ~ '^[0-9]+
+                FROM sys_operation_log o
+                WHERE o.occurred_at>=? AND o.occurred_at<?
+                  AND (COALESCE(o.object_id,'') ILIKE ? OR o.module_code ILIKE ?)
+              """;
+            default->throw new BusinessException("LOG_CATEGORY_UNSUPPORTED","未知日志类型");
+        };
+    }
+}
+ AND o.object_type IN ('ORDER','BIZ_ORDER')
+                  THEN '/orders/'||o.object_id
+                  ELSE NULL END "relatedPath"
                 FROM sys_operation_log o
                 WHERE o.occurred_at>=? AND o.occurred_at<?
                   AND (COALESCE(o.object_id,'') ILIKE ? OR o.module_code ILIKE ?)
