@@ -2,15 +2,26 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { resourceApi } from '@/api/resource'
-const router=useRouter();const loading=ref(false);const data=ref<any>({recentSyncTasks:[]})
-async function load(){loading.value=true;try{data.value=(await resourceApi.overview()).data.data}finally{loading.value=false}}
+const router=useRouter();const loading=ref(false);const error=ref('');const data=ref<any>({recentSyncTasks:[]})
+const loadVersion=ref(0)
+async function load(){
+ const version=++loadVersion.value
+ loading.value=true;error.value='';data.value={recentSyncTasks:[]}
+ try{
+  const result=(await resourceApi.overview()).data.data
+  if(version===loadVersion.value)data.value=result||{recentSyncTasks:[]}
+ }catch{
+  if(version===loadVersion.value){data.value={recentSyncTasks:[]};error.value='资源概览读取失败，当前资源数量与同步状态未知，请重新加载；不能沿用上次统计。'}
+ }finally{if(version===loadVersion.value)loading.value=false}
+}
 const metric=(key:string)=>data.value?.[key]??'—'
 const cards=[['CentOS','centos_total','centos_online','/resources/centos'],['ROS','ros_total','ros_online','/resources/ros'],['家宽/线路','line_total','line_online','/resources/lines'],['资源池','active_pool_total','active_pool_total','/resource-pools']]
 onMounted(load)
 </script>
 <template><div class="page" v-loading="loading"><div class="head"><div><h2>资源概览</h2><p>CentOS负责管理及B/C段，ROS负责拨号，家宽/线路是来源池成员。下方为数据库当前管理面计数，不等于真实在线探测，空数据不按0处理。</p></div><el-button @click="load">刷新</el-button></div>
+<el-alert v-if="error" type="error" :closable="false" :title="error" show-icon/><el-button v-if="error" @click="load">重新加载资源概览</el-button>
 <div class="cards"><el-card v-for="c in cards" :key="String(c[0])" shadow="never" class="card" @click="router.push(String(c[3]))"><small>{{ c[0] }}</small><b>{{ metric(String(c[1])) }}</b><span>{{c[0]==='资源池'?'当前启用':`报在线 ${metric(String(c[2]))}`}}</span></el-card><el-card shadow="never"><small>外部供应商</small><b>{{ metric('supplier_total') }}</b><span>外部资源独立交付</span></el-card><el-card shadow="never"><small>独享占用</small><b>{{ metric('exclusive_active_total') }}</b><span>锁定/已分配</span></el-card><el-card shadow="never"><small>24h同步失败</small><b>{{ metric('sync_failed_24h') }}</b><span>需运维关注</span></el-card></div>
 <el-card shadow="never"><template #header><div class="section"><b>自有资源主链</b><span>CentOS（管理） → ROS（拨号） → 家宽/线路 → 当前公网IP</span></div></template><el-steps :active="0" align-center><el-step title="CentOS" description="管理、负载、B/C段聚合"/><el-step title="ROS" description="与CentOS 1:1，负责拨号"/><el-step title="家宽/线路" description="家宽账号/节点统一对象"/><el-step title="当前公网IP" description="线路当前拨号结果"/><el-step title="资源池" description="按来源属性组织线路"/></el-steps></el-card>
 <el-alert type="info" :closable="false" title="自有资源主链为业务对象关系示意，不代表五步远端操作已经成功。外部供应商采购/代理走独立服务交付链。" />
-<el-card shadow="never"><template #header><div class="section"><b>最近同步任务</b><el-button link type="primary" @click="router.push('/sync-tasks')">查看全部</el-button></div></template><el-table :data="data.recentSyncTasks||[]"><el-table-column prop="task_no" label="任务编号" min-width="180"/><el-table-column prop="source_type" label="类型" width="110"/><el-table-column prop="supplier_name" label="供应商" min-width="140"/><el-table-column prop="status" label="状态" width="120"/><el-table-column prop="received_count" label="接收" width="80"/><el-table-column prop="available_count" label="可用" width="80"/><el-table-column prop="created_at" label="创建时间" min-width="180"/></el-table></el-card></div></template>
+<el-card shadow="never"><template #header><div class="section"><b>最近同步任务</b><span class="meta-note">仅当前页面可核实的管理面同步记录；旧同步任务页面未列入V1.3现行导航</span></div></template><el-table :data="data.recentSyncTasks||[]" :empty-text="error?'同步任务来源读取失败':'暂无可核实的管理面同步记录'"><el-table-column prop="task_no" label="任务编号" min-width="180"/><el-table-column prop="source_type" label="类型" width="110"/><el-table-column prop="supplier_name" label="供应商" min-width="140"/><el-table-column prop="status" label="状态" width="120"/><el-table-column prop="received_count" label="接收" width="80"/><el-table-column prop="available_count" label="可用" width="80"/><el-table-column prop="created_at" label="创建时间" min-width="180"/></el-table></el-card></div></template>
 <style scoped>.page{display:grid;gap:16px}.head,.section{display:flex;justify-content:space-between;align-items:center}.head h2{margin:0 0 6px}.head p{margin:0;color:#7b8494}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{cursor:pointer}.card small,.card span{display:block;color:#7b8494}.card b{display:block;font-size:28px;margin:8px 0}@media(max-width:1100px){.cards{grid-template-columns:repeat(2,1fr)}}</style>

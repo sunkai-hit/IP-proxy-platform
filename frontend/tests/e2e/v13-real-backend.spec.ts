@@ -1776,4 +1776,97 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(trigger).toBeEnabled()
     await expect(page.getByText('任务扫描已完成',{exact:false})).toHaveCount(0)
   })
+  test('A UI-06 resource overview outage removes stale metrics and legacy sync-task navigation',async({page})=>{
+    const api='**/api/admin/v1/resources/overview'
+    let unavailable=false
+    await page.route(api,route=>route.fulfill({
+      status:unavailable?503:200,contentType:'application/json',
+      body:unavailable?JSON.stringify({code:'CI_RESOURCE_OVERVIEW_DOWN',message:'synthetic outage'}):
+        JSON.stringify({code:'OK',data:{centos_total:1737,centos_online:2,ros_total:2,ros_online:2,
+          line_total:3,line_online:3,active_pool_total:1,supplier_total:1,
+          exclusive_active_total:1,sync_failed_24h:0,recentSyncTasks:[]}})
+    }))
+    await page.goto(base+'/resources')
+    await expect(page.getByText('1737',{exact:true})).toBeVisible()
+    await expect(page.getByRole('button',{name:'查看全部'})).toHaveCount(0)
+    unavailable=true
+    await page.getByRole('button',{name:'刷新'}).click()
+    await expect(page.getByText('资源概览读取失败，当前资源数量与同步状态未知，请重新加载；不能沿用上次统计。')).toBeVisible()
+    await expect(page.getByText('1737',{exact:true})).toHaveCount(0)
+    await expect(page.getByText('—',{exact:true}).first()).toBeVisible()
+    await page.unroute(api)
+    const response=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/resources/overview')
+    await page.getByRole('button',{name:'重新加载资源概览'}).click()
+    expect((await response).status()).toBe(200)
+    await expect(page.getByText('资源概览读取失败，当前资源数量与同步状态未知，请重新加载；不能沿用上次统计。')).toHaveCount(0)
+  })
+
+  test('A UI-05 customer account ledger outage cannot expose stale accounts and retries actual backend',async({page})=>{
+    const api='**/api/admin/v1/customer-accounts?*'
+    let unavailable=false
+    await page.route(api,route=>route.fulfill({
+      status:unavailable?503:200,contentType:'application/json',
+      body:unavailable?JSON.stringify({code:'CI_ACCOUNT_LEDGER_DOWN',message:'synthetic outage'}):
+        JSON.stringify({code:'OK',data:{items:[{id:9100001,username:'CI-ACCOUNT-SAFE',
+          customer_id:Number(customerId),customer_name:'V12 CI Customer',status:'ACTIVE',account_type_code:'DEFAULT'}],total:1}})
+    }))
+    await page.goto(base+'/customer-accounts')
+    await expect(page.getByText('CI-ACCOUNT-SAFE',{exact:true})).toBeVisible()
+    unavailable=true
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('账号列表读取失败，当前账号状态未知，禁止依据旧记录执行账号操作。')).toBeVisible()
+    await expect(page.getByText('CI-ACCOUNT-SAFE',{exact:true})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'重置密码'})).toHaveCount(0)
+    await page.unroute(api)
+    const response=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/customer-accounts')
+    await page.getByRole('button',{name:'重新加载账号列表'}).click()
+    expect((await response).status()).toBe(200)
+    await expect(page.getByText('账号列表读取失败，当前账号状态未知，禁止依据旧记录执行账号操作。')).toHaveCount(0)
+  })
+
+  test('A UI-05 failed customer choices block new account creation without hiding the account ledger',async({page})=>{
+    await page.route('**/api/admin/v1/customers/options',route=>route.fulfill({
+      status:503,contentType:'application/json',body:JSON.stringify({code:'CI_ACCOUNT_OPTIONS_DOWN',message:'synthetic outage'})
+    }))
+    await page.route('**/api/admin/v1/customer-accounts?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:9100002,username:'CI-ACCOUNT-EXISTING',
+        customer_id:Number(customerId),customer_name:'V12 CI Customer',status:'ACTIVE',account_type_code:'DEFAULT'}],total:1}})
+    }))
+    await page.goto(base+'/customer-accounts')
+    await expect(page.getByText('CI-ACCOUNT-EXISTING',{exact:true})).toBeVisible()
+    await expect(page.getByText('客户或账号类型选项读取失败，现有账号列表仍可查询，但创建账号必须等选项恢复。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'创建账号'})).toBeDisabled()
+    await page.unroute('**/api/admin/v1/customers/options')
+    const response=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/customers/options')
+    await page.getByRole('button',{name:'重新加载创建选项'}).click()
+    expect((await response).status()).toBe(200)
+    await expect(page.getByRole('button',{name:'创建账号'})).toBeEnabled()
+  })
+
+  test('A UI-05 customer account freeze confirmation cancellation has no management write',async({page})=>{
+    const api='**/api/admin/v1/customer-accounts?*'
+    await page.route(api,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:9100003,username:'CI-ACCOUNT-CANCEL',
+        customer_id:Number(customerId),customer_name:'V12 CI Customer',status:'ACTIVE',account_type_code:'DEFAULT'}],total:1}})
+    }))
+    const writes:string[]=[]
+    page.on('request',req=>{
+      if(req.method()==='POST'&&/\/customer-accounts\/9100003\/(freeze|disable|reset-password)$/.test(new URL(req.url()).pathname))writes.push(req.url())
+    })
+    await page.goto(base+'/customer-accounts')
+    await expect(page.getByText('CI-ACCOUNT-CANCEL',{exact:true})).toBeVisible()
+    await page.getByRole('button',{name:'冻结',exact:true}).click()
+    const prompt=page.locator('.el-message-box').last()
+    await expect(prompt).toContainText('CI-ACCOUNT-CANCEL')
+    await expect(page.getByRole('button',{name:'重置密码'})).toBeDisabled()
+    await prompt.locator('.el-message-box__btns .el-button').first().click()
+    await expect(prompt).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
 })
