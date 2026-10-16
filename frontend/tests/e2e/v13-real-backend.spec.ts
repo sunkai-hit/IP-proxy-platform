@@ -1080,4 +1080,149 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('长效监控总览读取失败，统计值未知，不能据此认定没有异常代理、开放告警或失败通知。')).toHaveCount(0)
     await expect(page.locator('.cards .el-card strong').first()).toHaveText(/^\d+$/)
   })
+
+  test('A2 release task detail and inspection errors remain unknown until explicit retry', async ({ page }) => {
+    const taskKey='CI-RELEASE-OP-900991'
+    const queueApi='**/api/admin/v1/v12/service-expiry/queue?*'
+    const taskApi='**/api/admin/v1/v12/delivery-actions/'+taskKey
+    const planApi='**/api/admin/v1/v12/release-inspections/'+taskKey
+    await page.route(queueApi,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:[{
+        serviceId:900991,serviceNo:'CI-RELEASE-SERVICE-900991',productType:'EXCLUSIVE_IP',
+        businessStatus:'SUSPENDED',expiryPhase:'RELEASE_PENDING',nextRequiredAction:'RELEASE_NOT_VERIFIED',
+        operationKey:taskKey,actionType:'RELEASE',taskStatus:'PENDING',taskStage:'WAITING_RECEIPT'
+      }]})
+    }))
+    await page.route(taskApi,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_TASK_DOWN',message:'synthetic task outage'})
+    }))
+    await page.goto(base+'/service-releases')
+    await expect(page.getByText('CI-RELEASE-SERVICE-900991')).toBeVisible()
+    await page.getByRole('button',{name:'任务',exact:true}).click()
+    await expect(page.getByText('任务详情读取失败或任务身份不匹配，不能据此认定已停服、已释放或不存在异常。')).toBeVisible()
+    await expect(page.getByText('业务任务编号')).toHaveCount(0)
+    await page.unroute(taskApi)
+    await page.route(taskApi,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        operationKey:taskKey,serviceId:900991,action:'RELEASE',taskStatus:'PENDING',stage:'WAITING_RECEIPT'
+      }})
+    }))
+    await page.getByRole('button',{name:'重新读取任务详情'}).click()
+    await expect(page.getByText(taskKey,{exact:true})).toBeVisible()
+    await page.route(planApi,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_INSPECTION_DOWN',message:'synthetic precheck outage'})
+    }))
+    await page.getByRole('button',{name:'检查宽限及共享客户占用'}).click()
+    await expect(page.getByText('释放预检读取失败，宽限、共享客户占用及产品回执条件均为未知，禁止据此判断可释放。')).toBeVisible()
+    await expect(page.getByText('仅满足业务释放预检，不代表代理已回池')).toHaveCount(0)
+    await page.unroute(planApi)
+    await page.route(planApi,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{ready:false,claims:[{
+        claimId:9001,ipv4:'198.51.100.43',releasePlan:'UNBIND_SERVICE_ONLY',otherProtectedClaims:2
+      }]}})
+    }))
+    await page.getByRole('button',{name:'重新检查释放条件'}).click()
+    await expect(page.getByText('未满足释放条件')).toBeVisible()
+    await expect(page.getByText(/198\.51\.100\.43/)).toBeVisible()
+  })
+
+  test('A2 stale task detail response cannot replace next task or leak into reopened drawer', async ({ page }) => {
+    const oldKey='CI-OLD-TASK-900991',newKey='CI-NEW-TASK-900992'
+    await page.route('**/api/admin/v1/v12/service-expiry/queue?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:[
+        {serviceId:900991,serviceNo:'CI-OLD-SVC',operationKey:oldKey,actionType:'STOP',taskStatus:'PENDING'},
+        {serviceId:900992,serviceNo:'CI-NEW-SVC',operationKey:newKey,actionType:'STOP',taskStatus:'PENDING'}
+      ]})
+    }))
+    await page.route('**/api/admin/v1/v12/delivery-actions/'+oldKey,async route=>{
+      await new Promise(resolve=>setTimeout(resolve,1300))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{operationKey:oldKey,action:'STOP',taskStatus:'CI-OLD-STATE'}})})
+    })
+    await page.route('**/api/admin/v1/v12/delivery-actions/'+newKey,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{operationKey:newKey,action:'STOP',taskStatus:'CI-NEW-STATE'}})
+    }))
+    await page.goto(base+'/service-releases')
+    await expect(page.getByText('CI-OLD-SVC')).toBeVisible()
+    await page.locator('.el-table__body tr').filter({hasText:'CI-OLD-SVC'}).getByRole('button',{name:'任务'}).click()
+    await expect(page.getByText('实际操作任务与交付核对')).toBeVisible()
+    await page.locator('.el-drawer__headerbtn').click()
+    await page.locator('.el-table__body tr').filter({hasText:'CI-NEW-SVC'}).getByRole('button',{name:'任务'}).click()
+    await expect(page.getByText(newKey,{exact:true})).toBeVisible()
+    await expect(page.getByText('CI-NEW-STATE')).toBeVisible()
+    await page.waitForTimeout(1600)
+    await expect(page.getByText(oldKey,{exact:true})).toHaveCount(0)
+    await expect(page.getByText('CI-OLD-STATE')).toHaveCount(0)
+  })
+
+  test('A5 notification ledger follows same-component alarm scope changes and clears old rows', async ({ page }) => {
+    const seen:string[]=[]
+    await page.route('**/api/admin/v1/long-monitor/notifications?*',route=>{
+      const uri=new URL(route.request().url())
+      const customer=uri.searchParams.get('customerId')||''
+      const monitor=uri.searchParams.get('monitorId')||''
+      seen.push(customer+':'+monitor)
+      const suffix=customer&&monitor?customer+'-'+monitor:'ALL'
+      return route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{total:1,items:[{
+          id:1,created_at:'2026-10-16T06:00:00Z',customer_name:'CI-CUST-'+suffix,
+          monitor_no:'CI-NOTIFY-'+suffix,send_status:'FAILED',channel:'DINGTALK',
+          notification_type:'ALARM',monitor_id:Number(monitor)||1
+        }]}})
+      })
+    })
+    await page.goto(base+'/long-monitor/notifications?customerId=11&monitorId=101')
+    await expect(page.getByText('CI-NOTIFY-11-101')).toBeVisible()
+    await page.evaluate(async ()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/long-monitor/notifications?customerId=22&monitorId=202')
+    })
+    await expect(page.getByText('CI-NOTIFY-22-202')).toBeVisible()
+    await expect(page.getByText('CI-NOTIFY-11-101')).toHaveCount(0)
+    await expect(page.getByText('客户 #22')).toBeVisible()
+    await expect(page.getByText('监控 #202')).toBeVisible()
+    await page.getByRole('button',{name:'查看全部通知'}).click()
+    await expect(page.getByText('CI-NOTIFY-ALL')).toBeVisible()
+    await expect(page.getByText('客户 #22')).toHaveCount(0)
+    expect(seen).toEqual(expect.arrayContaining(['11:101','22:202',':']))
+  })
+
+  test('A5 alarm archive cancellation never sends close and does not claim network recovery', async ({ page }) => {
+    const alarmId=900991
+    await page.route('**/api/admin/v1/long-monitor/alarms/'+alarmId,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        id:alarmId,alarm_no:'CI-ALARM-CANCEL-900991',status:'OPEN',
+        monitor_status:'ABNORMAL',customer_id:1,monitor_id:1,
+        opened_at:'2026-10-16T06:00:00Z'
+      }})
+    }))
+    const writes:string[]=[]
+    page.on('request',req=>{
+      if(req.method()==='POST'&&/\/long-monitor\/alarms\/900991\/close$/.test(new URL(req.url()).pathname))
+        writes.push(req.url())
+    })
+    await page.goto(base+'/long-monitor/alarms/'+alarmId)
+    await expect(page.getByRole('heading',{name:'CI-ALARM-CANCEL-900991'})).toBeVisible()
+    await page.getByRole('button',{name:'确认归档'}).click()
+    await expect(page.locator('.el-message-box')).toContainText('告警归档影响确认')
+    await page.locator('.el-message-box__btns .el-button:not(.el-button--primary)').click()
+    await expect(page.locator('.el-message-box')).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+    await expect(page.getByText('ABNORMAL',{exact:true})).toBeVisible()
+    await page.getByRole('button',{name:'确认归档'}).click()
+    await page.locator('.el-message-box__btns .el-button--primary').click()
+    await expect(page.locator('.el-message-box')).toContainText('关闭告警')
+    await page.locator('.el-message-box__btns .el-button:not(.el-button--primary)').click()
+    await expect(page.locator('.el-message-box')).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+    await expect(page.getByRole('button',{name:'确认归档'})).toBeEnabled()
+  })
 })
