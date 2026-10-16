@@ -646,6 +646,138 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button',{name:'保存',exact:true})).toBeDisabled()
   })
 
+  test('customer change to failed detail cannot retain previous order, identity or credential evidence', async ({page})=>{
+    expect(customerId).toBeTruthy()
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await page.route('**/api/admin/v1/customers/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_DOWN',message:'simulated outage'})
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/customers/900992')
+    })
+    await expect(page.getByText('客户详情读取失败，无法确认客户身份、订单权益或服务凭证。')).toBeVisible()
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'为该客户创建订单'})).toHaveCount(0)
+  })
+
+  test('customer credential API failure must not look like no authorized credentials', async ({page})=>{
+    expect(customerId).toBeTruthy()
+    await page.route('**/api/admin/v1/customers/'+customerId+'/credentials',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CREDENTIAL_DOWN',message:'unavailable'})
+    }))
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await page.getByRole('tab',{name:'服务凭证摘要'}).click()
+    await expect(page.getByText('服务凭证摘要查询失败，不能据此认定客户无有效凭证。')).toBeVisible()
+    await expect(page.getByText('凭证查询失败',{exact:true})).toBeVisible()
+  })
+
+  test('resource sync task list failure is not no work; detail failure separates primary and child', async ({page})=>{
+    const matcher='**/api/admin/v1/sync-tasks?*'
+    await page.route(matcher,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_SYNC_LIST_DOWN',message:'unavailable'})
+    }))
+    await page.goto(base+'/sync-tasks')
+    await expect(page.getByText('同步任务列表读取失败，不能认定没有失败任务或未同步资源。')).toBeVisible()
+    await page.unroute(matcher)
+    await page.route(matcher,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,task_no:'CI-TASK-900991',status:'FAILED'}],total:1}})
+    }))
+    await page.getByRole('button',{name:'重新查询同步任务'}).click()
+    await expect(page.getByText('CI-TASK-900991')).toBeVisible()
+    await page.route('**/api/admin/v1/sync-tasks/900991',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_SYNC_DETAIL_DOWN',message:'unavailable'})
+    }))
+    await page.route('**/api/admin/v1/sync-tasks/900991/details',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:[]})
+    }))
+    await page.getByRole('button',{name:'详情',exact:true}).click()
+    await expect(page.getByText('同步任务主记录读取失败，状态未知。')).toBeVisible()
+  })
+
+  test('sync task child fetch failure stays distinct from valid failed task status', async ({page})=>{
+    await page.route('**/api/admin/v1/sync-tasks?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900992,task_no:'CI-TASK-900992',status:'FAILED'}],total:1}})
+    }))
+    await page.route('**/api/admin/v1/sync-tasks/900992',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900992,task_no:'CI-TASK-900992',status:'FAILED',received_count:5}})
+    }))
+    await page.route('**/api/admin/v1/sync-tasks/900992/details',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_SYNC_CHILD_DOWN',message:'unavailable'})
+    }))
+    await page.goto(base+'/sync-tasks')
+    await page.getByRole('button',{name:'详情',exact:true}).click()
+    await expect(page.getByText('同步任务明细读取失败，不能认定所有记录均成功处理。')).toBeVisible()
+    await expect(page.getByText('CI-TASK-900992').last()).toBeVisible()
+  })
+
+  test('domain references failing must not prevent actual domain ledger recovery', async ({page})=>{
+    await page.route('**/api/admin/v1/resources/lines?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_LINES_DOWN',message:'unavailable'})
+    }))
+    await page.route('**/api/admin/v1/resources/ips?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_IPS_DOWN',message:'unavailable'})
+    }))
+    await page.route('**/api/admin/v1/domains?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,domain_name:'ci-example.internal',status:'PENDING_UPDATE'}],total:1}})
+    }))
+    await page.goto(base+'/domains')
+    await expect(page.getByText('线路或IP候选引用读取失败，不能据此判断没有可关联资源。')).toBeVisible()
+    await expect(page.getByText('ci-example.internal')).toBeVisible()
+  })
+
+  test('failed order provisioning precheck cannot reuse old paid or network eligibility snapshot', async ({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    await page.route('**/api/admin/v1/orders/'+multiOrderId+'/provision-preview',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PRECHECK_DOWN',message:'unavailable'})
+    }))
+    await page.goto(base+'/service-provision?orderId='+multiOrderId)
+    await expect(page.getByText('订单付款及资源预检失败或已失效，旧快照已清除，不能继续开通。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'确认开通'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'下一步'})).toHaveCount(0)
+  })
+
+  test('failed refresh invalidates previously paid order preview and blocks provisioning', async ({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    const matcher='**/api/admin/v1/orders/'+multiOrderId+'/provision-preview'
+    let calls=0
+    await page.route(matcher,route=>{
+      calls++
+      if(calls>1)return route.fulfill({
+        status:503,contentType:'application/json',
+        body:JSON.stringify({code:'CI_REFRESH_DOWN',message:'unavailable'})
+      })
+      return route.fulfill({
+        status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{order:{id:Number(multiOrderId),order_no:'CI-PROVISION-TEST'},
+          paymentReady:true,alreadyProvisioned:false,items:[{id:900991,service_count:1,
+           product_type:'SHORT_IP',product_name:'CI SHORT',delivery_mode:'SELF_OWNED'}],
+          availableReverseProxies:[]}})
+      })
+    })
+    await page.goto(base+'/service-provision?orderId='+multiOrderId)
+    await expect(page.getByText('CI-PROVISION-TEST')).toBeVisible()
+    await page.getByRole('button',{name:'刷新付款与资源状态'}).click()
+    await expect(page.getByText('订单付款及资源预检失败或已失效，旧快照已清除，不能继续开通。')).toBeVisible()
+    await expect(page.getByText('CI-PROVISION-TEST')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'确认开通'})).toHaveCount(0)
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
