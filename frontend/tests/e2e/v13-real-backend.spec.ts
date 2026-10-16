@@ -194,6 +194,23 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     }
   })
 
+  test('order ledger is readable when optional customer/product selectors fail and unpaid provision is not offered', async ({ page }) => {
+    await page.route('**/api/admin/v1/customers?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_CUSTOMER_LOOKUP_DOWN', message: 'synthetic failure' }),
+    }))
+    await page.route('**/api/admin/v1/products?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_PRODUCT_LOOKUP_DOWN', message: 'synthetic failure' }),
+    }))
+    await page.goto(base + '/orders')
+    await expect(page.getByText('客户或产品筛选选项读取失败；订单列表仍可独立查询。')).toBeVisible()
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+    // The unpaid order should have a detail link, not a misleading provision shortcut.
+    const row = page.locator('.el-table__body tr').filter({ hasText: '待核实' }).first()
+    if (await row.count()) await expect(row.getByRole('button', { name: '开通', exact: true })).toHaveCount(0)
+  })
+
   test('SPA order-to-order navigation refreshes the actual record and item children', async ({ page }) => {
     expect(multiOrderId).toBeTruthy()
     expect(unpaidOrderId).toBeTruthy()
