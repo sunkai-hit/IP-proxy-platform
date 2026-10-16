@@ -126,7 +126,8 @@ onMounted(load)
    </el-tab-pane>
    <el-tab-pane v-if="auth.hasPermission('customer:credential:read')" label="服务凭证摘要">
     <el-alert title="凭证不返回Token、私钥或密码明文。密钥只能在实际签发后经授权一次性展示。" type="info" :closable="false"/>
-    <el-table :data="credentials" stripe>
+    <el-alert v-if="credentialsError" type="error" :closable="false" title="服务凭证摘要查询失败，不能据此认定客户无有效凭证。"/>
+    <el-table :data="credentials" stripe :empty-text="credentialsError?'凭证查询失败':'暂无已授权凭证摘要'">
      <el-table-column prop="service_no" label="服务编号"/><el-table-column prop="product_name" label="产品"/>
      <el-table-column prop="credential_type" label="类型"/><el-table-column prop="account_name" label="账号"/>
      <el-table-column prop="secret_mask" label="掩码"/><el-table-column prop="status" label="状态"/>
