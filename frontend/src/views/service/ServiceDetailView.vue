@@ -1,15 +1,28 @@
 <script setup lang="ts">
-import { onMounted,ref,watch } from 'vue'
+import { computed,onMounted,ref,watch } from 'vue'
 import { useRoute,useRouter } from 'vue-router'
 import { ElMessage,ElMessageBox } from 'element-plus'
 import { orderServiceApi } from '@/api/orderService'
 import { http } from '@/api/http'
 import { businessRelationsApi } from '@/api/businessRelations'
 import { useAuthStore } from '@/stores/auth'
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),detail=ref<any>({}),credentials=ref<any[]>([]),bindingRows=ref<any[]>([]),bindingError=ref(false),bindingTruncated=ref(false),credentialError=ref(false),detailError=ref(false),loading=ref(false),requestVersion=ref(0),failoverPreview=ref<any>(null),previewBusy=ref(false),tab=ref('basic');let id=Number(route.params.id);const data=(r:any)=>r.data.data
+const route=useRoute(),router=useRouter(),auth=useAuthStore(),detail=ref<any>({}),credentials=ref<any[]>([]),bindingRows=ref<any[]>([]),bindingError=ref(false),bindingTruncated=ref(false),credentialError=ref(false),detailError=ref(false),loading=ref(false),requestVersion=ref(0),failoverPreview=ref<any>(null),previewBusy=ref(false),previewError=ref(false),sensitiveBusy=ref(false),tab=ref('basic');let id=Number(route.params.id),previewVersion=0
+const data=(r:any)=>r.data.data
+const ready=computed(()=>!loading.value&&!detailError.value&&Number(detail.value.id)===id&&id>0)
+const canReset=computed(()=>ready.value&&!credentialError.value&&auth.hasPermission('service:credential:read')&&auth.hasPermission('service:credential:reset')&&!sensitiveBusy.value)
+const canWhitelist=computed(()=>ready.value&&auth.hasPermission('service:whitelist')&&!sensitiveBusy.value)
+function sameService(serviceId:number,version:number){return ready.value&&id===serviceId&&requestVersion.value===version}
+function actionSnapshot(permission:string){
+ if(!ready.value||sensitiveBusy.value||!auth.hasPermission(permission)){
+  ElMessage.warning('当前服务或操作权限尚未核实，不能继续写入')
+  return null
+ }
+ return {serviceId:id,version:requestVersion.value,serviceNo:String(detail.value.service_no||id)}
+}
 async function load(){
  const version=++requestVersion.value,serviceId=id
  loading.value=true;detailError.value=false
+ ++previewVersion;previewBusy.value=false;previewError.value=false
  // Never leave the previous service's credentials, claim or actions on screen.
  detail.value={};credentials.value=[];bindingRows.value=[]
  bindingError.value=false;credentialError.value=false;bindingTruncated.value=false
@@ -33,17 +46,86 @@ async function load(){
  }finally{if(version===requestVersion.value)loading.value=false}
 }
 async function previewFailover(candidate:any){
- const serviceId=id,version=requestVersion.value
- previewBusy.value=true;failoverPreview.value=null
+ if(!ready.value||previewBusy.value)return
+ const serviceId=id,version=requestVersion.value,previewToken=++previewVersion
+ if(!candidate?.id||!(detail.value.backupCandidates||[]).some((x:any)=>Number(x.id)===Number(candidate.id)))return
+ previewBusy.value=true;previewError.value=false;failoverPreview.value=null
  try{
   const r=await http.post(`/v12/services/${serviceId}/failover-preview`,{backupCandidateId:candidate.id})
-  if(version===requestVersion.value)failoverPreview.value=r.data.data||{}
- }catch{ElMessage.error('人工切换预检失败；请核查候选归属和资源快照')}
- finally{previewBusy.value=false}
+  if(version===requestVersion.value&&serviceId===id&&previewToken===previewVersion&&ready.value){
+   failoverPreview.value=r.data.data||{}
+  }
+ }catch{
+  if(version===requestVersion.value&&serviceId===id&&previewToken===previewVersion){
+   previewError.value=true;failoverPreview.value=null
+   ElMessage.error('人工切换预检失败；当前候选状态未知，禁止执行真实切换')
+  }
+ }finally{if(previewToken===previewVersion)previewBusy.value=false}
 }
-async function reset(){const {value}=await ElMessageBox.prompt('请输入重置原因','重置服务凭证',{inputValidator:v=>!!String(v||'').trim()||'必须填写原因'});const c=data(await orderServiceApi.resetCredential(id,String(value)));await ElMessageBox.alert(`类型：${c.type}\n账号：${c.account||'-'}\n新密钥：${c.secret}\n\n该密钥只在本次操作返回，请立即妥善保存。`,'一次性凭证',{confirmButtonText:'已保存'});load()}
-async function addWhite(){const {value}=await ElMessageBox.prompt('请输入IPv4/IPv6地址','新增白名单');await orderServiceApi.addWhitelist(id,{ipAddress:String(value),remark:'后台添加'});ElMessage.success('已加入白名单');load()}
-async function removeWhite(w:any){await orderServiceApi.removeWhitelist(id,w.id,'后台移除白名单');ElMessage.success('已停用');load()}
+async function reset(){
+ const snapshot=actionSnapshot('service:credential:reset')
+ if(!snapshot||!canReset.value)return
+ sensitiveBusy.value=true
+ try{
+  const {value}=await ElMessageBox.prompt(`目标服务：${snapshot.serviceNo}。请输入重置原因；新密钥只在成功回执中显示一次。`,'重置服务凭证',{
+   inputValidator:v=>!!String(v||'').trim()||'必须填写原因'
+  })
+  if(!sameService(snapshot.serviceId,snapshot.version)||!auth.hasPermission('service:credential:reset')){
+   ElMessage.warning('确认期间服务已变化，凭证重置未提交，请重新核对')
+   return
+  }
+  const c=data(await orderServiceApi.resetCredential(snapshot.serviceId,String(value).trim()))
+  if(!sameService(snapshot.serviceId,snapshot.version)){
+   ElMessage.warning('凭证重置请求已返回，但服务已切换；请核查旧服务审计记录，密钥不在其他服务弹窗展示')
+   return
+  }
+  await ElMessageBox.alert(`服务：${snapshot.serviceNo}\n类型：${c.type}\n账号：${c.account||'-'}\n新密钥：${c.secret}\n\n该密钥只在本次操作返回，请立即妥善保存。`,'一次性凭证',{confirmButtonText:'已保存'})
+  if(sameService(snapshot.serviceId,snapshot.version))await load()
+ }catch(e:any){
+  if(e!=='cancel'&&e!=='close')ElMessage.error('凭证重置未确认成功，请查询审计后核对，不能依据失败提示重复执行')
+ }finally{sensitiveBusy.value=false}
+}
+async function addWhite(){
+ const snapshot=actionSnapshot('service:whitelist')
+ if(!snapshot||!canWhitelist.value)return
+ sensitiveBusy.value=true
+ try{
+  const {value}=await ElMessageBox.prompt(`为服务 ${snapshot.serviceNo} 新增白名单；请输入IPv4/IPv6地址`,'新增白名单',{
+   inputValidator:v=>!!String(v||'').trim()||'必须填写IP地址'
+  })
+  if(!sameService(snapshot.serviceId,snapshot.version)||!auth.hasPermission('service:whitelist')){
+   ElMessage.warning('确认期间服务已变化，白名单未提交，请重新核对')
+   return
+  }
+  await orderServiceApi.addWhitelist(snapshot.serviceId,{ipAddress:String(value).trim(),remark:'后台添加'})
+  if(sameService(snapshot.serviceId,snapshot.version)){ElMessage.success('白名单管理请求已返回');await load()}
+  else ElMessage.warning('原服务白名单请求已返回，请回到原服务核对')
+ }catch(e:any){
+  if(e!=='cancel'&&e!=='close')ElMessage.error('白名单新增未确认成功，请查询服务记录核对')
+ }finally{sensitiveBusy.value=false}
+}
+async function removeWhite(w:any){
+ const snapshot=actionSnapshot('service:whitelist')
+ if(!snapshot||!canWhitelist.value||!w?.id||w.status!=='ACTIVE'||
+    !(detail.value.whitelist||[]).some((x:any)=>Number(x.id)===Number(w.id)&&x.status==='ACTIVE'))return
+ const whitelistId=Number(w.id),ip=String(w.ip_address||'未知IP')
+ sensitiveBusy.value=true
+ try{
+  await ElMessageBox.confirm(`服务：${snapshot.serviceNo}；停用IP：${ip}。停用可能影响客户访问；请确认。`,'停用白名单',{
+   type:'warning',confirmButtonText:'确认停用',cancelButtonText:'返回修改'
+  })
+  if(!sameService(snapshot.serviceId,snapshot.version)||!auth.hasPermission('service:whitelist')||
+     !(detail.value.whitelist||[]).some((x:any)=>Number(x.id)===whitelistId&&x.status==='ACTIVE')){
+   ElMessage.warning('确认期间服务或白名单已变化，停用未提交')
+   return
+  }
+  await orderServiceApi.removeWhitelist(snapshot.serviceId,whitelistId,'后台移除白名单')
+  if(sameService(snapshot.serviceId,snapshot.version)){ElMessage.success('白名单停用管理请求已返回');await load()}
+  else ElMessage.warning('原服务白名单请求已返回，请回到原服务核对')
+ }catch(e:any){
+  if(e!=='cancel'&&e!=='close')ElMessage.error('白名单停用未确认成功，请查询服务记录核对')
+ }finally{sensitiveBusy.value=false}
+}
 watch(()=>route.params.id,()=>{id=Number(route.params.id);tab.value='basic';load()})
 onMounted(load)
 </script>
@@ -52,7 +134,7 @@ onMounted(load)
  <el-alert type="info" :closable="false" title="资源名称从真实业务表关联，不用动态当前IP反推固定出口；管理面绑定ACTIVE不代表网络执行已经验证。"/>
  <el-alert v-if="bindingError" type="warning" :closable="false" title="资源业务关联查询失败，暂不能据此判定此服务没有绑定。"/>
  <el-alert v-if="bindingTruncated" type="info" :closable="false" title="仅显示最近200条资源绑定记录。"/>
- <el-table :data="bindingError?(detail.resourceBindings||[]):bindingRows" style="margin-top:12px" border stripe>
+ <el-table :data="bindingError?[]:bindingRows" style="margin-top:12px" border stripe>
   <el-table-column prop="resource_type" label="资源类型" min-width="105"/>
   <el-table-column label="业务对象" min-width="210"><template #default="s">
    <el-button v-if="s.row.related_path" link type="primary" @click="router.push(s.row.related_path)">{{s.row.display_name||'关联对象'}}</el-button>
@@ -67,6 +149,7 @@ onMounted(load)
 <el-tab-pane label="出口IPv4授权" name="egress"><el-alert title="合同固定公网IPv4与线路当前IP不同；独享跨客户按公网IPv4排他。未验证的出口不能宣称已交付。" type="warning" :closable="false"/><el-table :data="detail.egressClaims||[]"><el-table-column prop="egress_ipv4" label="固定出口IPv4"/><el-table-column prop="claim_mode" label="共享/独享"/><el-table-column prop="claim_status" label="占用状态"/><el-table-column prop="source_line_id" label="来源线路"/><el-table-column prop="hold_until_at" label="保留截至"/><el-table-column prop="verified_at" label="真实验证"/></el-table></el-tab-pane><el-tab-pane label="人工备用候选" name="backups">
  <el-alert type="warning" :closable="false"
   title="仅服务级人工切换；当前真实资源API及产品切换/回退接口未签收，预检只读且任何候选都不可提交执行。"/>
+ <el-alert v-if="previewError" type="error" :closable="false" title="人工切换预检失败，不能使用之前的候选冲突或网络影响结论。"/>
  <el-table :data="detail.backupCandidates||[]" border stripe style="margin-top:12px">
   <el-table-column prop="resource_code" label="备用家宽/线路" min-width="160"/>
   <el-table-column prop="expected_ipv4" label="候选公网IPv4" min-width="145"/>
@@ -74,7 +157,7 @@ onMounted(load)
   <el-table-column prop="health_status" label="健康" width="90"/>
   <el-table-column prop="last_checked_at" label="最后检测" min-width="165"/>
   <el-table-column label="操作" width="155"><template #default="s">
-   <el-button :loading="previewBusy" link type="primary" @click="previewFailover(s.row)">预检影响与冲突</el-button>
+   <el-button :loading="previewBusy" :disabled="!ready||previewBusy" link type="primary" @click="previewFailover(s.row)">预检影响与冲突</el-button>
   </template></el-table-column>
  </el-table>
  <el-card v-if="failoverPreview" shadow="never" style="margin-top:16px">
@@ -99,8 +182,8 @@ onMounted(load)
   <el-text type="info">{{failoverPreview.monitoringImpact}}</el-text>
   <el-button disabled block style="margin-top:12px">真实切换不可用（等待技术组联调）</el-button>
  </el-card>
-</el-tab-pane><el-tab-pane label="执行任务" name="tasks"><el-table :data="detail.actionTasks||[]"><el-table-column prop="operation_key" label="操作ID" width="180"/><el-table-column prop="action_type" label="动作"/><el-table-column prop="task_status" label="任务状态"/><el-table-column prop="stage" label="真实阶段"/><el-table-column prop="attempt_count" label="尝试次数"/><el-table-column prop="last_error_message" label="异常原因"/></el-table></el-tab-pane><el-tab-pane v-if="auth.hasPermission('service:credential:read')" label="服务凭证" name="credential"><div class="actions"><el-button v-if="auth.hasPermission('service:credential:reset')" type="primary" @click="reset">重置凭证</el-button></div><el-alert type="info" :closable="false" title="历史页面只展示掩码；新密钥只在创建/重置成功时返回一次。"/><el-alert v-if="credentialError" type="error" :closable="false" title="凭证查询失败或权限已变化，不能据此认定没有服务凭证。"/><el-table :data="credentials" :empty-text="credentialError?'凭证读取失败':'暂无服务凭证'" style="margin-top:12px"><el-table-column prop="credential_type" label="类型"/><el-table-column prop="account_name" label="账号"/><el-table-column prop="secret_mask" label="密钥掩码"/><el-table-column prop="status" label="状态"/><el-table-column prop="expire_at" label="到期时间"/></el-table></el-tab-pane>
-<el-tab-pane label="白名单" name="whitelist"><div class="actions"><el-button v-if="auth.hasPermission('service:whitelist')" type="primary" @click="addWhite">新增白名单</el-button></div><el-table :data="detail.whitelist||[]"><el-table-column prop="ip_address" label="IP地址"/><el-table-column prop="status" label="状态"/><el-table-column prop="remark" label="备注"/><el-table-column label="操作"><template #default="s"><el-button v-if="auth.hasPermission('service:whitelist')&&s.row.status==='ACTIVE'" link type="danger" @click="removeWhite(s.row)">停用</el-button></template></el-table-column></el-table></el-tab-pane>
+</el-tab-pane><el-tab-pane label="执行任务" name="tasks"><el-table :data="detail.actionTasks||[]"><el-table-column prop="operation_key" label="操作ID" width="180"/><el-table-column prop="action_type" label="动作"/><el-table-column prop="task_status" label="任务状态"/><el-table-column prop="stage" label="真实阶段"/><el-table-column prop="attempt_count" label="尝试次数"/><el-table-column prop="last_error_message" label="异常原因"/></el-table></el-tab-pane><el-tab-pane v-if="auth.hasPermission('service:credential:read')" label="服务凭证" name="credential"><div class="actions"><el-button v-if="auth.hasPermission('service:credential:reset')" type="primary" :loading="sensitiveBusy" :disabled="!canReset" @click="reset">重置凭证</el-button></div><el-alert type="info" :closable="false" title="历史页面只展示掩码；新密钥只在创建/重置成功时返回一次。"/><el-alert v-if="credentialError" type="error" :closable="false" title="凭证查询失败或权限已变化，不能据此认定没有服务凭证。"/><el-table :data="credentials" :empty-text="credentialError?'凭证读取失败':'暂无服务凭证'" style="margin-top:12px"><el-table-column prop="credential_type" label="类型"/><el-table-column prop="account_name" label="账号"/><el-table-column prop="secret_mask" label="密钥掩码"/><el-table-column prop="status" label="状态"/><el-table-column prop="expire_at" label="到期时间"/></el-table></el-tab-pane>
+<el-tab-pane label="白名单" name="whitelist"><div class="actions"><el-button v-if="auth.hasPermission('service:whitelist')" type="primary" :loading="sensitiveBusy" :disabled="!canWhitelist" @click="addWhite">新增白名单</el-button></div><el-table :data="detail.whitelist||[]"><el-table-column prop="ip_address" label="IP地址"/><el-table-column prop="status" label="状态"/><el-table-column prop="remark" label="备注"/><el-table-column label="操作"><template #default="s"><el-button v-if="auth.hasPermission('service:whitelist')&&s.row.status==='ACTIVE'" link type="danger" :disabled="!canWhitelist" @click="removeWhite(s.row)">停用</el-button></template></el-table-column></el-table></el-tab-pane>
 <el-tab-pane v-if="auth.hasPermission('service:change:read')" label="变更记录" name="changes"><el-table :data="detail.changes||[]"><el-table-column prop="change_no" label="变更号"/><el-table-column prop="change_type" label="类型"/><el-table-column prop="status" label="状态"/><el-table-column prop="reason" label="原因"/><el-table-column prop="created_at" label="时间"/></el-table></el-tab-pane>
 <el-tab-pane v-if="auth.hasPermission('long-monitor:read')" label="长效监控" name="long"><el-alert v-if="detail.product_type!=='LONG_IP'" type="info" :closable="false" title="仅长效IP服务需要创建客户专项监控。"/><el-table v-else :data="detail.longMonitors||[]"><el-table-column prop="monitor_no" label="监控编号"/><el-table-column label="目标"><template #default="s">{{s.row.target_host}}:{{s.row.target_port}}</template></el-table-column><el-table-column prop="current_status" label="状态"/><el-table-column prop="last_checked_at" label="最近检测"/><el-table-column label="操作"><template #default="s"><el-button link type="primary" @click="router.push(`/long-monitor/monitors/${s.row.id}`)">查看</el-button></template></el-table-column></el-table></el-tab-pane>
 <el-tab-pane v-if="auth.hasPermission('service:release')" label="释放记录" name="release"><el-table :data="detail.releaseRecords||[]"><el-table-column prop="release_no" label="释放编号"/><el-table-column prop="trigger_type" label="触发方式"/><el-table-column prop="status" label="状态"/><el-table-column prop="created_at" label="时间"/><el-table-column prop="error_message" label="错误"/></el-table></el-tab-pane></el-tabs></el-card></div></template>
