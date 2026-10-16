@@ -1321,4 +1321,103 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('CI-OLD-POOL',{exact:true})).toHaveCount(0)
     await expect(page.locator('.metric-grid strong').first()).toHaveText('1')
   })
+
+  test('A service credential reset confirmation cannot retarget to a different service via SPA route', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'服务凭证'}).click()
+    const reset=page.getByRole('button',{name:'重置凭证'})
+    await expect(reset).toBeEnabled()
+    const posted:string[]=[]
+    page.on('request',req=>{
+      if(req.method()==='POST'&&/\/services\/\d+\/credentials\/reset$/.test(new URL(req.url()).pathname))
+        posted.push(req.url())
+    })
+    await reset.click()
+    const modal=page.locator('.el-message-box').last()
+    await expect(modal).toContainText('重置服务凭证')
+    await modal.locator('input').fill('CI cross-service credential safety')
+    await page.evaluate(async id=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/services/'+id)
+    },Number(serviceId)+900000)
+    await modal.locator('.el-message-box__btns .el-button--primary').click()
+    expect(posted).toHaveLength(0)
+    await expect(page.getByText('确认期间服务已变化，凭证重置未提交，请重新核对')).toBeVisible()
+    await expect(page.getByText('一次性凭证',{exact:true})).toHaveCount(0)
+  })
+
+  test('A whitelist add confirmation cannot write onto the newly navigated service', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'白名单'}).click()
+    const add=page.getByRole('button',{name:'新增白名单'})
+    await expect(add).toBeEnabled()
+    const posted:string[]=[]
+    page.on('request',req=>{
+      if(req.method()==='POST'&&/\/services\/\d+\/whitelist$/.test(new URL(req.url()).pathname))
+        posted.push(req.url())
+    })
+    await add.click()
+    const modal=page.locator('.el-message-box').last()
+    await expect(modal).toContainText('新增白名单')
+    await modal.locator('input').fill('203.0.113.77')
+    await page.evaluate(async id=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/services/'+id)
+    },Number(serviceId)+900000)
+    await modal.locator('.el-message-box__btns .el-button--primary').click()
+    expect(posted).toHaveLength(0)
+    await expect(page.getByText('确认期间服务已变化，白名单未提交，请重新核对')).toBeVisible()
+  })
+
+  test('A whitelist removal requires impact confirmation and cancel cannot write DELETE', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    const getApi='**/api/admin/v1/services/'+serviceId
+    await page.route(getApi,async route=>{
+      const response=await route.fetch()
+      const json=await response.json()
+      json.data.whitelist=[{id:900991,ip_address:'198.51.100.99',status:'ACTIVE',remark:'CI only'}]
+      await route.fulfill({response,json})
+    })
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'白名单'}).click()
+    await expect(page.getByText('198.51.100.99',{exact:true})).toBeVisible()
+    const deletes:string[]=[]
+    page.on('request',req=>{
+      if(req.method()==='DELETE'&&/\/services\/\d+\/whitelist\/\d+$/.test(new URL(req.url()).pathname))
+        deletes.push(req.url())
+    })
+    await page.getByRole('button',{name:'停用'}).click()
+    const modal=page.locator('.el-message-box').last()
+    await expect(modal).toContainText('停用白名单')
+    await expect(modal).toContainText('198.51.100.99')
+    await modal.getByRole('button',{name:'返回修改'}).click()
+    expect(deletes).toHaveLength(0)
+    await expect(page.getByText('198.51.100.99',{exact:true})).toBeVisible()
+  })
+
+  test('A manual failover precheck failure cannot show stale network impact or allow execution', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    const serviceUrl='**/api/admin/v1/services/'+serviceId
+    await page.route(serviceUrl,async route=>{
+      const response=await route.fetch()
+      const json=await response.json()
+      json.data.backupCandidates=[{
+        id:900991,resource_code:'CI-PREVIEW-ONLY-LINE',expected_ipv4:'203.0.113.88',
+        candidate_status:'PENDING',health_status:'UNKNOWN'
+      }]
+      await route.fulfill({response,json})
+    })
+    const previewUrl='**/api/admin/v1/v12/services/'+serviceId+'/failover-preview'
+    await page.route(previewUrl,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PREVIEW_DOWN',message:'offline preview refused'})
+    }))
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'人工备用候选'}).click()
+    await expect(page.getByText('CI-PREVIEW-ONLY-LINE')).toBeVisible()
+    await page.getByRole('button',{name:'预检影响与冲突'}).click()
+    await expect(page.getByText('人工切换预检失败，不能使用之前的候选冲突或网络影响结论。')).toBeVisible()
+    await expect(page.getByText('人工切换影响预检（禁止直接执行）')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:/真实切换不可用/})).toHaveCount(0)
+  })
 })
