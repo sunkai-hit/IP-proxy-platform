@@ -6,7 +6,7 @@ import { v12ResourceApi } from '@/api/v12Resource'
 import { businessRelationsApi } from '@/api/businessRelations'
 import { useAuthStore } from '@/stores/auth'
 const route=useRoute(),router=useRouter(),auth=useAuthStore(),id=Number(route.params.id)
-const detail=ref<any>({}),rows=ref<any[]>([]),total=ref(0),loading=ref(false),activeTab=ref('ALL'),selected=ref<any[]>([]),operations=ref<any[]>([]),poolServices=ref<any[]>([]),poolServicesTruncated=ref(false),usageLoadError=ref(false)
+const detail=ref<any>({}),rows=ref<any[]>([]),total=ref(0),loading=ref(false),activeTab=ref('ALL'),selected=ref<any[]>([]),operations=ref<any[]>([]),poolServices=ref<any[]>([]),poolServicesTruncated=ref(false),usageLoadError=ref(false),operationLoadError=ref(false),operationLoading=ref(false)
 const q=reactive({page:1,size:20,keyword:'',status:''})
 const addDialog=ref(false),candidateRows=ref<any[]>([]),candidateTotal=ref(0),candidateLoading=ref(false),candidateSelected=ref<any[]>([])
 const cq=reactive({page:1,size:20,keyword:'',type:''})
@@ -16,9 +16,14 @@ function lineTypeLabel(v:any){return v==='SHARED'?'共享':v==='LONG'?'长效':'
 function statusType(v:any){return v==='ONLINE'?'success':v==='ABNORMAL'?'warning':v==='OFFLINE'?'danger':'info'}
 async function loadDetail(){detail.value=data(await v12ResourceApi.pool(id))}
 async function loadLines(){if(!['ALL','SHARED','LONG'].includes(activeTab.value))return;loading.value=true;try{const type=activeTab.value==='ALL'?'':activeTab.value;const d=data(await v12ResourceApi.poolLines(id,{...q,type}));rows.value=d.items||[];total.value=d.total||0;selected.value=[]}finally{loading.value=false}}
-async function loadOperations(){try{operations.value=data(await v12ResourceApi.poolOperations(id,200))||[]}catch{operations.value=[]}}
+async function loadOperations(){
+ operationLoading.value=true;operationLoadError.value=false
+ try{operations.value=data(await v12ResourceApi.poolOperations(id,200))||[]}
+ catch{operations.value=[];operationLoadError.value=true}
+ finally{operationLoading.value=false}
+}
 async function loadPoolServices(){
- poolServices.value=[];usageLoadError.value=false
+ poolServices.value=[];usageLoadError.value=false;poolServicesTruncated.value=false
  if(!auth.hasPermission('service:read'))return
  try{
   const d=data(await businessRelationsApi.poolServices(id))
@@ -42,7 +47,7 @@ onMounted(loadAll)
 <template v-else-if="activeTab==='USAGE'"><el-descriptions :column="3" border><el-descriptions-item label="当前服务数">{{detail.usage?.service_count||0}}</el-descriptions-item><el-descriptions-item label="当前客户数">{{detail.usage?.customer_count||0}}</el-descriptions-item><el-descriptions-item label="使用产品类型">{{detail.usage?.product_types||'—'}}</el-descriptions-item></el-descriptions><el-alert class="mt" type="info" :closable="false" title="这里仅展示直接绑定此资源池的在用服务，不把成员线路历史、动态IP或其他资源池的服务归属猜测为本池的真实交付。"/>
  <el-alert v-if="usageLoadError" type="warning" :closable="false" title="服务关系查询失败，不能据此认为资源池没有在用服务。"/>
  <el-alert v-if="poolServicesTruncated" type="info" :closable="false" title="仅显示最近200条关联绑定；更多请进入服务管理筛选。"/>
- <el-table v-if="auth.hasPermission('service:read')" :data="poolServices" border stripe empty-text="当前没有直接ACTIVE资源池绑定">
+ <el-table v-if="auth.hasPermission('service:read')" :data="poolServices" border stripe :empty-text="usageLoadError?'关联数据读取失败，不能判定为空':'当前没有直接ACTIVE资源池绑定'">
   <el-table-column prop="service_no" label="服务编号" min-width="170"/>
   <el-table-column prop="customer_name" label="客户" min-width="140"/>
   <el-table-column prop="product_name" label="产品" min-width="130"/>
@@ -54,6 +59,6 @@ onMounted(loadAll)
   <el-table-column label="操作" width="105"><template #default="s"><el-button link type="primary" @click="router.push('/services/'+s.row.id)">服务详情</el-button></template></el-table-column>
  </el-table>
  <el-alert v-else type="info" :closable="false" title="当前账号没有服务查看权限，仅展示资源池使用汇总。"/></template>
-<template v-else><el-table :data="operations" stripe border><el-table-column prop="created_at" label="时间" min-width="165"/><el-table-column prop="operator_name" label="操作人" width="120"/><el-table-column prop="operation" label="操作" width="150"/><el-table-column prop="reason" label="原因" min-width="220"/><el-table-column prop="result" label="结果" width="90"/><el-table-column prop="error_message" label="错误信息" min-width="180"/></el-table></template></el-card>
+<template v-else><el-alert v-if="operationLoadError" class="mt" type="error" :closable="false" title="变更记录查询失败或无权限，不能据此认为没有变更记录。"/><el-button v-if="operationLoadError" class="mt" @click="loadOperations">重新加载变更记录</el-button><el-table :data="operations" v-loading="operationLoading" :empty-text="operationLoadError?'变更记录加载失败':'暂无变更记录'" stripe border><el-table-column prop="created_at" label="时间" min-width="165"/><el-table-column prop="operator_name" label="操作人" width="120"/><el-table-column prop="operation" label="操作" width="150"/><el-table-column prop="reason" label="原因" min-width="220"/><el-table-column prop="result" label="结果" width="90"/><el-table-column prop="error_message" label="错误信息" min-width="180"/></el-table></template></el-card>
 <el-dialog v-model="addDialog" title="添加线路成员" width="980px"><el-alert type="info" :closable="false" title="这里只显示共享/长效线路，并自动按当前资源池的省/市/运营商来源属性筛选。"/><div class="toolbar mt"><el-input v-model="cq.keyword" placeholder="线路编号/别名/IP" clearable style="width:240px"/><el-select v-model="cq.type" placeholder="线路类型" clearable style="width:140px"><el-option label="共享" value="SHARED"/><el-option label="长效" value="LONG"/></el-select><el-button type="primary" @click="cq.page=1;loadCandidates()">查询</el-button></div><el-table :data="candidateRows" v-loading="candidateLoading" stripe border @selection-change="candidateSelected=$event"><el-table-column type="selection" width="46"/><el-table-column prop="resource_code" label="线路编号" width="145"/><el-table-column prop="line_alias" label="线路别名"/><el-table-column prop="line_type" label="类型" width="90"><template #default="s">{{lineTypeLabel(s.row.line_type)}}</template></el-table-column><el-table-column prop="ros_code" label="ROS"/><el-table-column prop="current_public_ip" label="当前IP"/><el-table-column prop="province_code" label="省"/><el-table-column prop="city_code" label="市"/><el-table-column prop="carrier_code" label="运营商"/><el-table-column prop="online_status" label="状态"/></el-table><div class="pager"><el-pagination v-model:current-page="cq.page" v-model:page-size="cq.size" :total="candidateTotal" layout="total,prev,pager,next" @change="loadCandidates"/></div><template #footer><el-button @click="addDialog=false">取消</el-button><el-button type="primary" :disabled="!candidateSelected.length" @click="addLines">加入资源池</el-button></template></el-dialog></div></template>
 <style scoped>.page{display:grid;gap:16px}.head{display:flex;justify-content:space-between}.head h2{margin:8px 0 6px}.head p{margin:0;color:#7b8494;max-width:980px}.metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metric-grid span{display:block;color:#7b8494;font-size:13px}.metric-grid strong{display:block;margin-top:8px;font-size:24px;color:#1677ff}.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 14px}.spacer{flex:1}.pager{display:flex;justify-content:flex-end;margin-top:14px}.mt{margin-top:14px}@media(max-width:1200px){.metric-grid{grid-template-columns:repeat(2,1fr)}}</style>
