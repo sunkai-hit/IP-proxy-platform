@@ -70,6 +70,7 @@ async function refreshPreview(){
   if(version!==previewVersion.value)return
   if(!updated?.order?.id||Number(updated.order.id)!==id)throw new Error('PREVIEW_ORDER_MISMATCH')
   snapshot.value=updated;result.value=null;step.value=0
+  plans.value=(updated.items||[]).map((it:any)=>({orderItemId:Number(it.id),deliveryMode:'SELF_OWNED',reverseProxyIds:[] as (number|null)[]}))
   ElMessage.info('付款与资源预检已刷新，请重新核对交付配置；提交仍由后端最终重验')
  }catch{
   if(version===previewVersion.value){
