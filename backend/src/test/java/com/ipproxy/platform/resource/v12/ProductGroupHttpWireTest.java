@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ProductGroupHttpWireTest {
     private static final String TOKEN="product-group-ci-wire-key-012345678901234567";
     private static final ObjectMapper JSON=new ObjectMapper();
-    private static final String TIME="2026-10-15T02:00:00Z";
+    private static final String TIME=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).toString();
 
     @Test void actualHttpPauseAndTaskQueryPreserveAsyncBoundary() throws Exception {
         AtomicInteger postCount=new AtomicInteger();
