@@ -30,7 +30,8 @@ class OpenApiLegacyExtractionGateTest {
         var e=assertThrows(BusinessException.class,
                 ()->service(db,false,true).extract("",1,"HTTP","","","127.0.0.1"));
         assertEquals("OPEN_REAL_SHORT_POOL_NOT_CONNECTED",e.getCode());
-        verifyNoInteractions(db);
+        // Denied attempts still create a safe API audit row; only legacy resource reads must be absent.
+        verify(db,never()).selectIps(anyLong(),anyLong(),anyInt(),anyString(),anyString(),anyInt());
     }
 
     @Test void explicitOptInStillRequiresMockProfile() {
@@ -38,7 +39,8 @@ class OpenApiLegacyExtractionGateTest {
         var e=assertThrows(BusinessException.class,
                 ()->service(db,true,false).extract("",1,"HTTP","","","127.0.0.1"));
         assertEquals("OPEN_REAL_SHORT_POOL_NOT_CONNECTED",e.getCode());
-        verifyNoInteractions(db);
+        // Denied attempts still create a safe API audit row; only legacy resource reads must be absent.
+        verify(db,never()).selectIps(anyLong(),anyLong(),anyInt(),anyString(),anyString(),anyInt());
     }
 
     @Test void mockWithOptInRetainsNormalTokenValidation() {
@@ -46,6 +48,7 @@ class OpenApiLegacyExtractionGateTest {
         var e=assertThrows(BusinessException.class,
                 ()->service(db,true,true).extract("",1,"HTTP","","","127.0.0.1"));
         assertEquals("OPEN_TOKEN_REQUIRED",e.getCode());
-        verifyNoInteractions(db);
+        // Denied attempts still create a safe API audit row; only legacy resource reads must be absent.
+        verify(db,never()).selectIps(anyLong(),anyLong(),anyInt(),anyString(),anyString(),anyInt());
     }
 }
