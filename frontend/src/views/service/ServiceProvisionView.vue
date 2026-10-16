@@ -220,7 +220,7 @@ onMounted(()=>{void loadOrders();const next=routeOrderId();if(next>0)void openOr
     </template></el-table-column>
    </el-table>
   </el-card>
-  <div v-else class="footer"><el-button @click="router.push('/orders/'+order.id)">查看订单与收款凭证</el-button><el-button type="primary" @click="closeOrder">返回待开通订单</el-button></div>
+  <div v-if="step===4" class="footer"><el-button @click="router.push('/orders/'+order.id)">查看订单与收款凭证</el-button><el-button type="primary" @click="closeOrder">返回待开通订单</el-button></div>
  </template>
 </div>
 </template>
