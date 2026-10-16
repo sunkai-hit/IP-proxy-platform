@@ -63,6 +63,9 @@ app:
     product-api-token: ${PRODUCT_GROUP_API_TOKEN:}
     # Highly privileged: disabled until both teams approve the live contract.
     product-writes-enabled: ${PRODUCT_GROUP_WRITES_ENABLED:false}
+    # Legacy short-pool Open API is only allowed for explicit m6-mock synthetic tests.
+    # Production never serves res_ip snapshot addresses as verified proxies.
+    legacy-short-extract-enabled: ${LEGACY_SHORT_EXTRACT_ENABLED:false}
   statistics:
     scheduled-enabled: ${STATISTICS_SCHEDULED_ENABLED:true}
     cron: ${STATISTICS_CRON:0 5 * * * *}
