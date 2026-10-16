@@ -321,6 +321,114 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('到期队列读取失败', { exact: true })).toBeVisible()
   })
 
+  test('alarm detail HTTP503 hides the close action and navigation cannot retain prior alarm', async ({ page }) => {
+    const first='**/api/admin/v1/long-monitor/alarms/900991'
+    const next='**/api/admin/v1/long-monitor/alarms/900992'
+    await page.route(first, route => route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_ALARM_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base + '/long-monitor/alarms/900991')
+    await expect(page.getByText('告警详情读取失败，不能据此判断告警已恢复、已归档或可执行归档。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'确认归档'})).toHaveCount(0)
+    await page.unroute(first)
+    await page.route(first,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,alarm_no:'CI-ALARM-900991',status:'OPEN',monitor_status:'UNKNOWN'}}),
+    }))
+    await page.getByRole('button',{name:'重新加载告警详情'}).click()
+    await expect(page.getByRole('heading',{name:'CI-ALARM-900991'})).toBeVisible()
+    await expect(page.getByRole('button',{name:'确认归档'})).toBeVisible()
+    await page.route(next,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_ALARM_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/long-monitor/alarms/900992')
+    })
+    await expect(page.getByText('告警详情读取失败，不能据此判断告警已恢复、已归档或可执行归档。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'确认归档'})).toHaveCount(0)
+    await expect(page.getByRole('heading',{name:'CI-ALARM-900991'})).toHaveCount(0)
+  })
+
+  test('bot detail route changes never retain previous webhook mask or monitor children', async ({ page }) => {
+    const first='**/api/admin/v1/long-monitor/bots/900991'
+    await page.route(first,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        id:900991,bot_no:'CI-BOT-900991',bot_name:'ci-bot',webhook_mask:'CI-WEBHOOK-MASK',
+        accessTokenConfigured:true,secretConfigured:true,
+        monitorReferences:[{id:900991,monitor_no:'CI-REF-900991'}],
+      }}),
+    }))
+    await page.goto(base + '/long-monitor/bots/900991')
+    await expect(page.getByText('CI-WEBHOOK-MASK')).toBeVisible()
+    await expect(page.getByRole('button',{name:'CI-REF-900991'})).toBeVisible()
+    await page.route('**/api/admin/v1/long-monitor/bots/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_BOT_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/long-monitor/bots/900992')
+    })
+    await expect(page.getByText('机器人详情读取失败，不能据此认定凭证未配置或监控没有绑定。')).toBeVisible()
+    await expect(page.getByText('CI-WEBHOOK-MASK')).toHaveCount(0)
+    await expect(page.getByText('CI-REF-900991')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'重新加载机器人'})).toBeVisible()
+  })
+
+  test('long monitor detail route changes clear old checked history before failed new read', async ({ page }) => {
+    await page.route('**/api/admin/v1/long-monitor/monitors/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,monitor_no:'CI-MONITOR-900991',
+        customer_id:1,service_id:1,checkHistory:[{checked_at:'2026-10-16T00:00:00Z',response_code:'CI-CHECK-200'}]}}),
+    }))
+    await page.goto(base + '/long-monitor/monitors/900991')
+    await expect(page.getByText('CI-MONITOR-900991')).toBeVisible()
+    await expect(page.getByText('CI-CHECK-200')).toBeVisible()
+    await page.route('**/api/admin/v1/long-monitor/monitors/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_MONITOR_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/long-monitor/monitors/900992')
+    })
+    await expect(page.getByText('长效监控详情读取失败，不能据此认定目标健康或没有检测记录。')).toBeVisible()
+    await expect(page.getByText('CI-MONITOR-900991')).toHaveCount(0)
+    await expect(page.getByText('CI-CHECK-200')).toHaveCount(0)
+  })
+
+  test('CentOS-to-ROS monitor metric detail route reuse cannot show previous CPU samples', async ({ page }) => {
+    await page.route('**/api/admin/v1/monitor/objects/CENTOS/900991/metrics?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:[{collected_at:'2026-10-16T00:00:00Z',
+        metric_code:'CI-CENTOS-CPU',metric_value:99}]}),
+    }))
+    await page.goto(base + '/monitor/centos/900991')
+    await expect(page.getByText('CI-CENTOS-CPU')).toBeVisible()
+    await page.route('**/api/admin/v1/monitor/objects/ROS/900992/metrics?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_METRICS_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/monitor/ros/900992')
+    })
+    await expect(page.getByText('设备监控历史读取失败，不能据此认定设备正常或没有异常事件。')).toBeVisible()
+    await expect(page.getByText('CI-CENTOS-CPU')).toHaveCount(0)
+    await expect(page.getByRole('heading',{name:'ROS 监控详情'})).toBeVisible()
+  })
+
+  test('bot test permission is not implied by bot read: server still guards direct calls', async ({ page }) => {
+    const response=await page.request.post(base+'/api/admin/v1/long-monitor/bots/900991/test',{
+      data:{reason:'CI forged non-existent bot ID'},headers:{Authorization:'Bearer CI-INVALID-TOKEN'},
+    })
+    expect([401,403]).toContain(response.status())
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
