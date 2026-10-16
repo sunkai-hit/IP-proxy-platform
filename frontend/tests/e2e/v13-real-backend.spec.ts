@@ -422,11 +422,50 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('heading',{name:'ROS 监控详情'})).toBeVisible()
   })
 
-  test('bot test permission is not implied by bot read: server still guards direct calls', async ({ page }) => {
-    const response=await page.request.post(base+'/api/admin/v1/long-monitor/bots/900991/test',{
-      data:{reason:'CI forged non-existent bot ID'},headers:{Authorization:'Bearer CI-INVALID-TOKEN'},
-    })
-    expect([401,403]).toContain(response.status())
+  test('bot send test failing HTTP cannot appear as success, and bot list shows source errors', async ({ page }) => {
+    const listing='**/api/admin/v1/long-monitor/bots?*'
+    await page.route(listing,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{
+        id:900991,bot_no:'CI-BOT-900991',bot_name:'CI Bot',bot_type:'DINGTALK',
+        customer_name:'CI Customer',enabled:true,
+      }],total:1}}),
+    }))
+    await page.route('**/api/admin/v1/long-monitor/bots/900991/test',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_BOT_SEND_FAILURE',message:'not delivered'}),
+    }))
+    await page.goto(base + '/long-monitor/bots')
+    await expect(page.getByText('CI-BOT-900991')).toBeVisible()
+    await page.getByRole('button',{name:'测试',exact:true}).click()
+    await expect(page.getByText('机器人测试未确认成功，请检查发送回执')).toBeVisible()
+    await page.unroute(listing)
+    await page.route(listing,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_BOT_LIST_DOWN',message:'unavailable'}),
+    }))
+    await page.getByRole('button',{name:'查询',exact:true}).click()
+    await expect(page.getByText('机器人列表读取失败，不能据此认定没有客户机器人或凭证。')).toBeVisible()
+    await expect(page.getByText('CI-BOT-900991')).toHaveCount(0)
+  })
+
+  test('long monitor unknown adapter response does not claim real network detection success', async ({ page }) => {
+    await page.route('**/api/admin/v1/long-monitor/monitors?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{
+        id:900991,monitor_no:'CI-MON-900991',customer_name:'CI Customer',
+        service_no:'CI-SERVICE-900991',target_host:'127.0.0.1',target_port:8080,
+        current_status:'UNKNOWN',enabled:true,
+      }],total:1}}),
+    }))
+    await page.route('**/api/admin/v1/long-monitor/monitors/900991/check',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{adapterStatus:'UNKNOWN',after:'UNKNOWN'}}),
+    }))
+    await page.goto(base + '/long-monitor/monitors')
+    await expect(page.getByText('CI-MON-900991')).toBeVisible()
+    await page.getByRole('button',{name:'检测',exact:true}).click()
+    await expect(page.getByText('检测适配器未返回真实可验证结果，状态仍为 UNKNOWN')).toBeVisible()
   })
 
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
