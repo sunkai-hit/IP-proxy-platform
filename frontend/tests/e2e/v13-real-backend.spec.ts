@@ -116,6 +116,21 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('资源详情读取失败，无法确认当前设备或线路状态。请重新加载。')).toHaveCount(0)
   })
 
+  test('resource list HTTP failure cannot masquerade as an empty inventory and retry recovers', async ({ page }) => {
+    const matcher = '**/api/admin/v1/v12/resources/lines?*'
+    await page.route(matcher, async route => {
+      await route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ code: 'CI_RESOURCE_DOWN', message: 'synthetic read failure' }) })
+    })
+    await page.goto(base + '/resources/lines')
+    await expect(page.getByText('资源列表查询失败，不能据此认为没有设备或线路。')).toBeVisible()
+    await expect(page.getByText('资源查询失败', { exact: true })).toBeVisible()
+    await page.unroute(matcher)
+    await page.getByRole('button', { name: '重新查询资源' }).click()
+    await expect(page.getByText('资源列表查询失败，不能据此认为没有设备或线路。')).toHaveCount(0)
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
