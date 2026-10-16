@@ -164,6 +164,7 @@ onMounted(()=>{void loadOrders();const next=routeOrderId();if(next>0)void openOr
  <div class="page-head"><div><h1>服务开通</h1><p>订单已确认且付款已核实 → 交付配置 → 资源检查 → 确认开通 → 结果交付</p></div><el-button v-if="snapshot" @click="closeOrder">返回待开通订单</el-button></div>
  <template v-if="!snapshot">
   <el-alert v-if="previewError" type="error" :closable="false" title="订单付款及资源预检失败或已失效，旧快照已清除，不能继续开通。"/>
+  <el-button v-if="previewError&&routeOrderId()>0" @click="openOrder(routeOrderId())">重新核对当前订单的付款与资源</el-button>
   <el-alert v-if="listError" type="error" :closable="false" title="待开通订单查询失败，无法确认是否存在待处理订单。"/>
   <el-button v-if="listError" @click="loadOrders">重新查询待开通订单</el-button>
   <el-alert type="info" :closable="false" title="此处只处理待开通订单。管理员特殊手工开通不属于日常订单流程，需单独授权。"/>
