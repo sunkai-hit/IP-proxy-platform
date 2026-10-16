@@ -188,9 +188,17 @@ test.describe('V1.3 actual browser management-console smoke', () => {
       await page.goto(base + path)
       await expect(page.getByText(errorMessage)).toBeVisible()
       await page.unroute(matcher)
+      const recovery = page.waitForResponse(r =>
+        new URL(r.url()).pathname === '/api/admin/v1' + path &&
+        r.request().method() === 'GET')
       await page.getByRole('button', { name: buttonName }).click()
+      const response = await recovery
+      expect(response.status()).toBe(200)
+      const payload = (await response.json()).data
+      expect(Array.isArray(payload.items)).toBe(true)
       await expect(page.getByText(errorMessage)).toHaveCount(0)
-      await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+      await expect(page.locator('.el-table').first()).toBeVisible()
+      if (payload.items.length) await expect(page.locator('.el-table__body tr').first()).toBeVisible()
     }
   })
 
