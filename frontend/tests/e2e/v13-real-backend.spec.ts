@@ -646,6 +646,112 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button',{name:'保存',exact:true})).toBeDisabled()
   })
 
+  test('resource sync task list API outage never looks like no failed work', async ({ page }) => {
+    const matcher='**/api/admin/v1/sync-tasks?*'
+    await page.route(matcher,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_SYNC_LIST_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/sync-tasks')
+    await expect(page.getByText('资源同步列表读取失败，不能据此认定没有待处理或失败任务。')).toBeVisible()
+    await expect(page.getByText('同步列表读取失败',{exact:true})).toBeVisible()
+    await page.unroute(matcher)
+    const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/admin/v1/sync-tasks'&&r.request().method()==='GET')
+    await page.getByRole('button',{name:'重新查询同步任务'}).click()
+    expect((await response).status()).toBe(200)
+    await expect(page.getByText('资源同步列表读取失败，不能据此认定没有待处理或失败任务。')).toHaveCount(0)
+  })
+
+  test('resource sync task parent loads even if its per-record error detail query fails', async ({ page }) => {
+    await page.route('**/api/admin/v1/sync-tasks?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,task_no:'CI-SYNC-900991',
+        source_type:'ROS',status:'FAILED',received_count:2,normalized_count:0}],total:1}}),
+    }))
+    await page.route('**/api/admin/v1/sync-tasks/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,task_no:'CI-SYNC-900991',
+        source_type:'ROS',status:'FAILED',received_count:2,error_message:'synthetic import problem'}}),
+    }))
+    await page.route('**/api/admin/v1/sync-tasks/900991/details',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_SYNC_CHILD_FAILURE',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/sync-tasks')
+    await expect(page.getByText('CI-SYNC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'详情'}).click()
+    await expect(page.getByText('同步失败明细读取失败，不能据此推断没有错误记录。')).toBeVisible()
+    await expect(page.getByText('CI-SYNC-900991').last()).toBeVisible()
+    await expect(page.getByText('同步明细读取失败',{exact:true})).toBeVisible()
+  })
+
+  test('domain list survives failed line/IP option loaders, and association save is disabled', async ({ page }) => {
+    await page.route('**/api/admin/v1/resources/lines?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_LINE_OPTIONS_DOWN',message:'synthetic error'}),
+    }))
+    await page.route('**/api/admin/v1/resources/ips?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_IP_OPTIONS_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/domains')
+    await expect(page.getByText('线路或IP选项读取失败，域名列表可查询，但保存资源关联暂不可用。')).toBeVisible()
+    await expect(page.getByRole('heading',{name:'域名配置'})).toBeVisible()
+    await page.getByRole('button',{name:'新增域名'}).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await expect(page.getByRole('dialog').getByRole('button',{name:'保存'})).toBeDisabled()
+  })
+
+  test('customer detail failures cannot retain previous customer identity and credentials', async ({ page }) => {
+    expect(customerId).toBeTruthy()
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await page.route('**/api/admin/v1/customers/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/customers/900992')
+    })
+    await expect(page.getByText('客户详情读取失败，无法确认客户归属、合同、服务或认证状态。')).toBeVisible()
+    await expect(page.getByText('V12 CI Customer')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'为该客户创建订单'})).toHaveCount(0)
+  })
+
+  test('customer credentials API 503 is reported independently of existing customer and orders', async ({ page }) => {
+    expect(customerId).toBeTruthy()
+    await page.route('**/api/admin/v1/customers/'+customerId+'/credentials',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_CREDENTIALS_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await page.getByRole('tab',{name:'服务凭证摘要'}).click()
+    await expect(page.getByText('客户服务凭证摘要读取失败，不能据此认为该客户未配置凭证。')).toBeVisible()
+    await expect(page.getByText('凭证读取失败',{exact:true})).toBeVisible()
+  })
+
+  test('customer auth list outage does not report no pending applications', async ({ page }) => {
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_KYC_LIST_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('客户认证列表读取失败，不能据此认为没有待审核申请。')).toBeVisible()
+    await expect(page.getByText('认证列表读取失败',{exact:true})).toBeVisible()
+  })
+
+  test('customer list outage cannot hide customers or overdue work', async ({ page }) => {
+    await page.route('**/api/admin/v1/customers?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_CUSTOMER_LIST_DOWN',message:'synthetic error'}),
+    }))
+    await page.goto(base+'/customers')
+    await expect(page.getByText('客户列表读取失败，不能据此认定没有客户或没有未终止服务。')).toBeVisible()
+    await expect(page.getByText('客户列表读取失败',{exact:true})).toBeVisible()
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
