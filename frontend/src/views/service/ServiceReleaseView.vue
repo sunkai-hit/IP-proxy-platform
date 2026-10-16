@@ -7,7 +7,7 @@ import { http } from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 
 const router=useRouter(),auth=useAuthStore(),tab=ref('queue')
-const loading=ref(false),scanning=ref(false),queue=ref<any[]>([]),rows=ref<any[]>([]),total=ref(0),lastScan=ref<any>(null)
+const loading=ref(false),scanning=ref(false),queue=ref<any[]>([]),rows=ref<any[]>([]),total=ref(0),lastScan=ref<any>(null),queueError=ref(false),releaseError=ref(false),requestVersion=ref(0)
 const q=reactive<any>({page:1,size:20,status:'',phase:''})
 const taskDrawer=ref(false),taskLoading=ref(false),taskDetail=ref<any>(null),releasePlan=ref<any>(null)
 const data=(r:any)=>r.data.data
@@ -22,12 +22,21 @@ const reasons:Record<string,string>={
   RELEASE_NOT_VERIFIED:'需要真实产品与资源释放回执',
   CHECK_SERVICE_STATE:'需人工核对服务状态'}
 async function load(){
- loading.value=true
- try{
-  const [a,b]=await Promise.all([orderServiceApi.expiryQueue(q.phase),orderServiceApi.releases(q)])
-  queue.value=data(a)||[];const out=data(b)||{};rows.value=out.items||[];total.value=out.total||0
- }catch{ElMessage.error('到期任务或释放记录加载失败')}
- finally{loading.value=false}
+ const version=++requestVersion.value,phase=q.phase,params={...q}
+ loading.value=true;queueError.value=false;releaseError.value=false
+ queue.value=[];rows.value=[];total.value=0
+ const [pending,released]=await Promise.allSettled([
+  orderServiceApi.expiryQueue(phase),orderServiceApi.releases(params)
+ ])
+ if(version!==requestVersion.value)return
+ if(pending.status==='fulfilled')queue.value=data(pending.value)||[]
+ else queueError.value=true
+ if(released.status==='fulfilled'){
+  const result=data(released.value)||{}
+  rows.value=result.items||[];total.value=result.total||0
+ }else releaseError.value=true
+ if(queueError.value||releaseError.value)ElMessage.error('到期队列或释放结果读取失败，请核查对应错误；不得据此判断已停服或释放')
+ loading.value=false
 }
 async function reconcile(){
  const {value}=await ElMessageBox.prompt(
@@ -74,11 +83,11 @@ onMounted(load)
   </el-alert>
   <el-card shadow="never" v-loading="loading">
    <el-tabs v-model="tab">
-    <el-tab-pane name="queue" label="固定IP到期队列">
+    <el-tab-pane name="queue" label="固定IP到期队列"><el-alert v-if="queueError" type="error" :closable="false" title="到期任务队列读取失败，不能据此认定没有待停服或待释放任务。"/>
      <div class="filters"><el-select v-model="q.phase" clearable placeholder="到期阶段" style="width:230px">
       <el-option v-for="(title,code) in states" :key="code" :label="title" :value="code"/>
      </el-select><el-button @click="load">刷新队列</el-button><el-text type="info" size="small">仅显示最早到期的200条；正在处理的任务不会自动视为成功</el-text></div>
-     <el-table :data="queue" stripe>
+     <el-table :data="queue" :empty-text="queueError?'到期队列读取失败':'暂无已记录的到期任务'" stripe>
       <el-table-column prop="serviceNo" label="服务号" min-width="150"/>
       <el-table-column prop="productType" label="产品" width="105"/>
       <el-table-column prop="businessStatus" label="业务状态" width="115"/>
@@ -97,9 +106,9 @@ onMounted(load)
       </template></el-table-column>
      </el-table>
     </el-tab-pane>
-    <el-tab-pane name="release" label="释放结果记录">
+    <el-tab-pane name="release" label="释放结果记录"><el-alert v-if="releaseError" type="error" :closable="false" title="释放结果读取失败，不能据此认定出口已释放或记录为空。"/>
      <div class="filters"><el-select v-model="q.status" clearable placeholder="释放状态" style="width:200px"><el-option v-for="x in ['PENDING','PROCESSING','SUCCESS','PARTIAL_SUCCESS','FAILED']" :key="x" :label="x" :value="x"/></el-select><el-button @click="load">查询</el-button></div>
-     <el-table :data="rows"><el-table-column prop="release_no" label="释放单号" width="190"/><el-table-column prop="service_no" label="服务号" width="190"/><el-table-column prop="customer_name" label="客户"/><el-table-column prop="trigger_type" label="触发方式"/><el-table-column prop="status" label="状态"/><el-table-column prop="error_message" label="异常" min-width="220"/><el-table-column prop="created_at" label="时间" width="190"/></el-table>
+     <el-table :data="rows" :empty-text="releaseError?'释放记录读取失败':'暂无已记录的释放结果'"><el-table-column prop="release_no" label="释放单号" width="190"/><el-table-column prop="service_no" label="服务号" width="190"/><el-table-column prop="customer_name" label="客户"/><el-table-column prop="trigger_type" label="触发方式"/><el-table-column prop="status" label="状态"/><el-table-column prop="error_message" label="异常" min-width="220"/><el-table-column prop="created_at" label="时间" width="190"/></el-table>
      <div class="pager"><el-pagination v-model:current-page="q.page" v-model:page-size="q.size" :total="total" layout="total,prev,pager,next" @change="load"/></div>
     </el-tab-pane>
    </el-tabs>

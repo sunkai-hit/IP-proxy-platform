@@ -6,7 +6,7 @@ import {statisticsApi} from '@/api/runtimeOps'
 import {useAuthStore} from '@/stores/auth'
 
 type Group='centos'|'ros'|'lines'|'pools'|'customers'|'products'|'suppliers'
-const auth=useAuthStore(),active=ref<Group>('centos'),loading=ref(false),calculating=ref(false)
+const auth=useAuthStore(),active=ref<Group>('centos'),loading=ref(false),calculating=ref(false),loadError=ref(false),overviewError=ref(false),requestVersion=ref(0)
 const rows=ref<any[]>([]),overview=ref<any>({}),snapshotAt=ref(''),chartEl=ref<HTMLElement>(),chart=ref<echarts.ECharts>()
 const range=ref<[Date,Date]>([new Date(Date.now()-24*3600_000),new Date()])
 const tabs:{key:Group;label:string;meaning:string}[]=[
@@ -73,20 +73,29 @@ function draw(){
  })
 }
 async function load(){
- loading.value=true
- try{
-  const api=active.value==='pools'?statisticsApi.poolsCurrent:
-   (['centos','ros','lines'].includes(active.value)?()=>statisticsApi.resources(params()):
-     active.value==='customers'?()=>statisticsApi.customers(params()):
-     active.value==='products'?()=>statisticsApi.products(params()):
-     ()=>statisticsApi.suppliers(params()))
-  const [summary,result]=await Promise.all([statisticsApi.overview(),api()])
-  overview.value=summary.data.data||{}
-  rows.value=result.data.data||[]
-  snapshotAt.value=active.value==='pools'?new Date().toISOString():''
-  await nextTick();draw()
- }catch{rows.value=[];ElMessage.error('统计加载失败，请检查统计权限、数据库或采集任务')}
- finally{loading.value=false}
+ const version=++requestVersion.value,group=active.value
+ const dates=params()
+ loading.value=true;loadError.value=false;overviewError.value=false
+ rows.value=[];overview.value={};snapshotAt.value=''
+ chart.value?.dispose();chart.value=undefined
+ const api=group==='pools'?statisticsApi.poolsCurrent:
+  (['centos','ros','lines'].includes(group)?()=>statisticsApi.resources(dates):
+   group==='customers'?()=>statisticsApi.customers(dates):
+   group==='products'?()=>statisticsApi.products(dates):
+   ()=>statisticsApi.suppliers(dates))
+ const [summary,result]=await Promise.allSettled([statisticsApi.overview(),api()])
+ if(version!==requestVersion.value)return
+ if(summary.status==='fulfilled')overview.value=summary.value.data.data||{}
+ else overviewError.value=true
+ if(result.status==='fulfilled'){
+  rows.value=result.value.data.data||[]
+  snapshotAt.value=group==='pools'?new Date().toISOString():''
+ }else{
+  loadError.value=true
+  ElMessage.error('该统计分类加载失败，不能将读取失败当成零记录或零流量')
+ }
+ await nextTick()
+ if(version===requestVersion.value){draw();loading.value=false}
 }
 async function recalculate(){
  calculating.value=true
@@ -103,6 +112,8 @@ watch(active,load);onMounted(load);onBeforeUnmount(()=>chart.value?.dispose())
    <el-button v-if="auth.hasPermission('statistics:recalculate')" :loading="calculating" type="primary" @click="recalculate">重算管理面小时数据</el-button></div>
   <el-tabs v-model="active"><el-tab-pane v-for="t in tabs" :key="t.key" :label="t.label" :name="t.key"/></el-tabs>
   <el-alert :closable="false" type="info" :title="selected()?.meaning||''" show-icon/>
+  <el-alert v-if="overviewError" type="warning" :closable="false" title="统计总览读取失败：顶部指标均为未知，不代表真实数值为0。" style="margin-top:12px"/>
+  <el-alert v-if="loadError" type="error" :closable="false" title="当前分类统计读取失败，图表和记录均不可据此判断实际为0。" style="margin-top:12px"/>
   <div class="filter-row" style="margin-top:12px">
    <el-date-picker v-if="active!=='pools'" v-model="range" type="datetimerange" range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间"/>
    <el-text v-else type="warning">资源池为当前成员快照，尚无逐池历史小时序列，日期范围不适用</el-text>
@@ -124,7 +135,7 @@ watch(active,load);onMounted(load);onBeforeUnmount(()=>chart.value?.dispose())
   <div style="margin-bottom:12px;display:flex;justify-content:space-between;gap:8px;align-items:center">
    <b>{{selected()?.label}}</b><el-text size="small">记录 {{rows.length}} 条；{{active==='pools'?'当前成员快照 '+fmt(snapshotAt):'小时快照/日志聚合'}}</el-text>
   </div>
-  <el-table :data="rows" border stripe empty-text="该时段没有已生成的统计记录；不等于实际业务数值为0">
+  <el-table :data="rows" border stripe :empty-text="loadError?'统计读取失败':'该时段没有已生成的统计记录；不等于实际业务数值为0'">
    <template v-if="active==='centos'">
     <el-table-column label="快照小时" min-width="175"><template #default="s">{{fmt(s.row.stat_hour)}}</template></el-table-column>
     <el-table-column prop="centos_total" label="主机总数"/><el-table-column prop="centos_online" label="报在线主机"/>
