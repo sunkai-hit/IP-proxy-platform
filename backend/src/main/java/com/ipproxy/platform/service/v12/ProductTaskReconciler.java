@@ -85,7 +85,7 @@ public class ProductTaskReconciler {
                     String actualStatus=str(actual.get("actualStatus"));
                     boolean rightState=switch(str(task.get("action_type"))){
                         case "STOP_FOR_GRACE","TERMINATE" -> "STOPPED".equals(actualStatus);
-                        case "RELEASE" -> "STOPPED".equals(actualStatus) && releaseVerified(remote);
+                        case "RELEASE" -> "STOPPED".equals(actualStatus);
                         case "PROVISION","RENEW_RESTORE" -> "RUNNING".equals(actualStatus);
                         default -> false;
                     };
