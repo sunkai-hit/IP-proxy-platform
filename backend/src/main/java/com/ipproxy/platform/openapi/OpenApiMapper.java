@@ -40,7 +40,7 @@ public class OpenApiMapper {
     public void touchGrant(Long id){jdbc.update("UPDATE open_access_grant SET last_used_at=now(),updated_at=now() WHERE id=?",id);}
 
     public Map<String,Object> accessContext(Long grantId){
-        return one("SELECT g.id grant_id,g.account_id,g.customer_id,g.service_id,g.token_version,g.status grant_status,g.policy_snapshot::text policy_snapshot_json,a.status account_status,c.status customer_status,s.service_no,s.status service_status,s.effective_at,s.expire_at,s.product_id,s.package_id,s.product_type,p.product_code,p.product_name,p.access_mode_code FROM open_access_grant g JOIN customer_account a ON a.id=g.account_id AND a.deleted=FALSE JOIN customer c ON c.id=g.customer_id AND c.deleted=FALSE JOIN svc_instance s ON s.id=g.service_id AND s.deleted=FALSE JOIN prd_product p ON p.id=s.product_id AND p.deleted=FALSE WHERE g.id=?",grantId);
+        return one("SELECT g.id grant_id,g.account_id,g.customer_id,g.service_id,g.token_version,g.status grant_status,g.policy_snapshot::text policy_snapshot_json,a.status account_status,c.status customer_status,s.service_no,s.status service_status,s.effective_at,s.expire_at,s.product_id,s.package_id,s.product_type,p.product_code,p.product_name,p.access_mode_code FROM open_access_grant g JOIN customer_account a ON a.id=g.account_id AND a.customer_id=g.customer_id AND a.deleted=FALSE JOIN customer c ON c.id=g.customer_id AND c.deleted=FALSE JOIN svc_instance s ON s.id=g.service_id AND s.customer_id=g.customer_id AND s.deleted=FALSE JOIN prd_product p ON p.id=s.product_id AND p.deleted=FALSE WHERE g.id=?",grantId);
     }
 
     public Map<String,Object> primaryPool(Long serviceId){

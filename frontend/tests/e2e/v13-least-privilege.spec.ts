@@ -54,6 +54,12 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
   await expect(page).toHaveURL(/\/dashboard$/)
   await page.goto(base + '/customer-auth')
   await expect(page).toHaveURL(/\/dashboard$/)
+  await page.goto(base + '/resources/lines')
+  await expect(page).toHaveURL(/\/dashboard$/)
+  await page.goto(base + '/resource-pools')
+  await expect(page).toHaveURL(/\/dashboard$/)
+  await page.goto(base + '/resource-pools/1')
+  await expect(page).toHaveURL(/\/dashboard$/)
   const denied = await page.evaluate(async ({ customerId, serviceId }) => {
     const bearer = localStorage.getItem('ipproxy_access_token')
     const headers = { Authorization: 'Bearer ' + bearer }
@@ -70,7 +76,10 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
       check('/api/admin/v1/services/' + serviceId + '/suspend', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'CI read-only forbidden' })
-      })
+      }),
+      check('/api/admin/v1/v12/resources/lines'),
+      check('/api/admin/v1/v12/resource-pools'),
+      check('/api/admin/v1/v12/resource-pools/1/operations')
     ])
   }, { customerId, serviceId })
   for (const result of denied) {

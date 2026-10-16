@@ -68,6 +68,69 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('columnheader', { name: '操作ID' })).toBeVisible()
   })
 
+  test('CentOS/ROS/line detail route reuse shows the new resource rather than stale previous fields', async ({ page }) => {
+    await page.goto(base + '/resources/lines')
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+    await page.locator('.el-table__body tr').first().getByRole('button', { name: '详情' }).click()
+    await expect(page.getByRole('heading', { name: '家宽/线路详情' })).toBeVisible()
+    await expect(page.getByText('线路当前拨号公网IP（非固定出口）')).toBeVisible()
+    // Same Vue component is reused: without watching route.fullPath this kept
+    // displaying the previous line after navigating to its ROS and CentOS.
+    await page.locator('.el-descriptions').getByRole('button').first().click()
+    await expect(page).toHaveURL(/\/resources\/ros\/\d+$/)
+    await expect(page.getByRole('heading', { name: 'ROS详情' })).toBeVisible()
+    await expect(page.getByText('ROS拨号运行信息')).toBeVisible()
+    await expect(page.getByText('线路基础信息')).toHaveCount(0)
+    await page.locator('.el-descriptions').getByRole('button').first().click()
+    await expect(page).toHaveURL(/\/resources\/centos\/\d+$/)
+    await expect(page.getByRole('heading', { name: 'CentOS详情' })).toBeVisible()
+    await expect(page.getByText('基础与运行信息')).toBeVisible()
+    await expect(page.getByText('ROS拨号运行信息')).toHaveCount(0)
+  })
+
+  test('line IP history load failure is explicit rather than presenting an empty history', async ({ page }) => {
+    await page.route('**/api/admin/v1/v12/resources/lines/*/ip-history*', async route => {
+      await route.fulfill({ status: 500, contentType: 'application/json',
+        body: JSON.stringify({ code: 'TEST_UPSTREAM_FAILURE', message: 'synthetic failure' }) })
+    })
+    await page.goto(base + '/resources/lines')
+    await page.locator('.el-table__body tr').first().getByRole('button', { name: '详情' }).click()
+    await expect(page.getByRole('heading', { name: '家宽/线路详情' })).toBeVisible()
+    await expect(page.getByText('IP变化历史读取失败', { exact: false })).toBeVisible()
+    await expect(page.getByRole('tab', { name: 'IP变化历史' })).toBeVisible()
+  })
+
+  test('device detail request errors visibly and retry reloads actual PostgreSQL record', async ({ page }) => {
+    const matcher='**/api/admin/v1/v12/resources/centos/*'
+    await page.route(matcher, async route => {
+      await route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ code: 'CI_TEMPORARY_FAILURE', message: 'retry required' }) })
+    })
+    await page.goto(base + '/resources/centos')
+    await page.locator('.el-table__body tr').first().getByRole('button', { name: '详情' }).click()
+    await expect(page.getByText('资源详情读取失败，无法确认当前设备或线路状态。请重新加载。')).toBeVisible()
+    await expect(page.getByText('基础与运行信息')).toHaveCount(0)
+    await page.unroute(matcher)
+    await page.getByRole('button', { name: '重试加载详情' }).click()
+    await expect(page.getByText('基础与运行信息')).toBeVisible()
+    await expect(page.getByText('资源详情读取失败，无法确认当前设备或线路状态。请重新加载。')).toHaveCount(0)
+  })
+
+  test('resource list HTTP failure cannot masquerade as an empty inventory and retry recovers', async ({ page }) => {
+    const matcher = '**/api/admin/v1/v12/resources/lines?*'
+    await page.route(matcher, async route => {
+      await route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ code: 'CI_RESOURCE_DOWN', message: 'synthetic read failure' }) })
+    })
+    await page.goto(base + '/resources/lines')
+    await expect(page.getByText('资源列表查询失败，不能据此认为没有设备或线路。')).toBeVisible()
+    await expect(page.getByText('资源查询失败', { exact: true })).toBeVisible()
+    await page.unroute(matcher)
+    await page.getByRole('button', { name: '重新查询资源' }).click()
+    await expect(page.getByText('资源列表查询失败，不能据此认为没有设备或线路。')).toHaveCount(0)
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>

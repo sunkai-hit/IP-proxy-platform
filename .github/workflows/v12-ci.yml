@@ -63,7 +63,7 @@ jobs:
       - name: Verify V1.3 cross-page router, payment-selection and RBAC guards
         run: python3 scripts/ci_v13_ui_workflow_gate.py
       - name: Verify short-IP allocation guard
-        run: mvn -B -Dtest=OpenApiMapperGuardTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest test
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,OpenApiLegacyExtractionGateTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
@@ -115,6 +115,13 @@ jobs:
           # environment. The management UI must show that fact and fail closed.
           GATEWAY=$(curl -fsS -H "$H" http://localhost:8080/api/admin/v1/v12/product-integration/status)
           python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; assert d["configured"] is False and d["readOnly"] is True and d["writesEnabled"] is False' <<< "$GATEWAY"
+          # Production default: the legacy res_ip snapshot API must not distribute
+          # synthetic/possibly stale proxy IPs, even in a management Mock profile.
+          SHORT_EXTRACT_CODE=$(curl -s -o /tmp/legacy-short-extract-denied.json -w '%{http_code}' \
+            'http://localhost:8080/api/open/v1/proxy/extract?amount=1')
+          test "$SHORT_EXTRACT_CODE" = "400"
+          python3 -c 'import json; d=json.load(open("/tmp/legacy-short-extract-denied.json")); assert d["code"]=="OPEN_REAL_SHORT_POOL_NOT_CONNECTED", d'
+          echo 'Unverified legacy short-IP extract stays disabled even with CI mock business data'
           POOL_HTTP_CODE=$(curl -s -o /tmp/product-pool-unavailable.json -w '%{http_code}' -H "$H" http://localhost:8080/api/admin/v1/v12/product-integration/short-pool)
           test "$POOL_HTTP_CODE" = "400"
           python3 -c 'import json; d=json.load(open("/tmp/product-pool-unavailable.json")); assert d["code"]=="PRODUCT_INTEGRATION_NOT_CONFIGURED"'
