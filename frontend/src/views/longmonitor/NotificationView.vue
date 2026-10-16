@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {onMounted,reactive,ref} from 'vue'
+import {onMounted,reactive,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {longMonitorApi} from '@/api/longMonitor'
 import {useAuthStore} from '@/stores/auth'
@@ -7,6 +7,7 @@ const route=useRoute(),router=useRouter(),auth=useAuthStore()
 const rows=ref<any[]>([]),total=ref(0),loading=ref(false),loadError=ref(false),requestVersion=ref(0)
 const q=reactive<any>({page:1,size:20,status:'',customerId:route.query.customerId?Number(route.query.customerId):undefined,monitorId:route.query.monitorId?Number(route.query.monitorId):undefined})
 const data=(r:any)=>r.data.data
+const scopedId=(v:any)=>{const n=Number(v);return Number.isSafeInteger(n)&&n>0?n:undefined}
 async function load(){
  const version=++requestVersion.value,params={...q}
  loading.value=true;loadError.value=false;rows.value=[];total.value=0
@@ -14,7 +15,13 @@ async function load(){
  catch{if(version===requestVersion.value)loadError.value=true}
  finally{if(version===requestVersion.value)loading.value=false}
 }
-function clearScope(){q.customerId=undefined;q.monitorId=undefined;q.page=1;router.replace('/long-monitor/notifications');load()}
+function clearScope(){void router.replace({path:'/long-monitor/notifications',query:{}})}
+watch(()=>[route.query.customerId,route.query.monitorId],()=>{
+ q.customerId=scopedId(route.query.customerId)
+ q.monitorId=scopedId(route.query.monitorId)
+ q.page=1
+ void load()
+})
 onMounted(load)
 </script>
 <template>
