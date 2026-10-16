@@ -1966,4 +1966,119 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(drawer.getByText('CI-UNVERIFIED-SERVICE')).toHaveCount(0)
   })
 
+  test('A UI-34 role selection isolates slow old grants from newly selected role',async({page})=>{
+    await page.route('**/api/admin/v1/system/roles',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:[
+        {id:940101,role_code:'CI_ROLE_OLD',role_name:'CI-ROLE-OLD',built_in:false,permission_count:1},
+        {id:940102,role_code:'CI_ROLE_NEW',role_name:'CI-ROLE-NEW',built_in:false,permission_count:1}
+      ]})
+    }))
+    await page.route('**/api/admin/v1/system/permissions',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:[
+        {id:940201,permission_code:'ci:role:old',permission_name:'CI-PERMISSION-OLD'},
+        {id:940202,permission_code:'ci:role:new',permission_name:'CI-PERMISSION-NEW'}
+      ]})
+    }))
+    await page.route('**/api/admin/v1/system/roles/940101/permissions',async route=>{
+      await new Promise(resolve=>setTimeout(resolve,950))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:[{permission_id:940201}]})})
+    })
+    await page.route('**/api/admin/v1/system/roles/940102/permissions',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:[{permission_id:940202}]})
+    }))
+    await page.goto(base+'/system')
+    await page.getByRole('tab',{name:'角色与权限'}).click()
+    await expect(page.getByText('CI-ROLE-OLD',{exact:true})).toBeVisible()
+    await page.getByText('CI-ROLE-OLD',{exact:true}).click()
+    await expect(page.getByText('授权：CI-ROLE-OLD')).toBeVisible()
+    await page.getByText('CI-ROLE-NEW',{exact:true}).click()
+    await expect(page.getByText('授权：CI-ROLE-NEW')).toBeVisible()
+    const chosen=page.locator('.permission-panel')
+    await expect(chosen.getByText('CI-PERMISSION-NEW')).toBeVisible()
+    await expect(chosen.locator('.el-checkbox').filter({hasText:'CI-PERMISSION-NEW'})).toHaveClass(/is-checked/)
+    await page.waitForTimeout(1100)
+    await expect(chosen.getByText('授权：CI-ROLE-NEW')).toBeVisible()
+    await expect(chosen.locator('.el-checkbox').filter({hasText:'CI-PERMISSION-NEW'})).toHaveClass(/is-checked/)
+    await expect(chosen.locator('.el-checkbox').filter({hasText:'CI-PERMISSION-OLD'})).not.toHaveClass(/is-checked/)
+  })
+
+  test('A UI-34 failed role grant read never turns unknown permissions into empty-save',async({page})=>{
+    await page.route('**/api/admin/v1/system/roles',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:[
+        {id:940103,role_code:'CI_ROLE_UNREADABLE',role_name:'CI-ROLE-UNREADABLE',built_in:false}
+      ]})
+    }))
+    await page.route('**/api/admin/v1/system/roles/940103/permissions',route=>route.fulfill({
+      status:503,contentType:'application/json',body:JSON.stringify({
+        code:'CI_ROLE_GRANTS_DOWN',message:'synthetic failure'})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='PUT'&&new URL(r.url()).pathname.endsWith('/system/roles/940103/permissions'))writes.push(r.url())
+    })
+    await page.goto(base+'/system')
+    await page.getByRole('tab',{name:'角色与权限'}).click()
+    await page.getByText('CI-ROLE-UNREADABLE',{exact:true}).click()
+    await expect(page.getByText('权限目录、角色或授权记录读取失败，当前授权未知，不能依据空勾选保存。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'保存授权'})).toBeDisabled()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-34 cancel role authorization confirmation performs no PUT',async({page})=>{
+    await page.route('**/api/admin/v1/system/roles',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:[
+        {id:940104,role_code:'CI_ROLE_CANCEL',role_name:'CI-ROLE-CANCEL',built_in:false}
+      ]})
+    }))
+    await page.route('**/api/admin/v1/system/roles/940104/permissions',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:[]})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='PUT'&&new URL(r.url()).pathname.endsWith('/system/roles/940104/permissions'))writes.push(r.url())})
+    await page.goto(base+'/system')
+    await page.getByRole('tab',{name:'角色与权限'}).click()
+    await page.getByText('CI-ROLE-CANCEL',{exact:true}).click()
+    await expect(page.getByRole('button',{name:'保存授权'})).toBeEnabled()
+    await page.getByRole('button',{name:'保存授权'}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI-ROLE-CANCEL')
+    await expect(box).toContainText('0 项权限')
+    await box.locator('.el-message-box__btns .el-button').first().click()
+    await expect(box).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-35 audit tab is lazy, outage clears stale events and retry queries actual PostgreSQL',async({page})=>{
+    const api='**/api/admin/v1/system/operation-logs'
+    let unavailable=false
+    let reads=0
+    await page.route(api,route=>{
+      reads++
+      return route.fulfill({
+        status:unavailable?503:200,contentType:'application/json',
+        body:unavailable?JSON.stringify({code:'CI_SYSTEM_AUDIT_DOWN',message:'synthetic outage'}):
+          JSON.stringify({code:'OK',data:[{
+            id:940105,operator_name:'CI-AUDIT-EXISTING',module_code:'SYSTEM',
+            object_type:'SYS_ROLE',operation:'AUTHORIZE',reason:'CI permission review',occurred_at:'2026-10-16T10:00:00Z'
+          }]})
+      })
+    })
+    await page.goto(base+'/system')
+    await expect(page.getByRole('tab',{name:'操作审计'})).toBeVisible()
+    expect(reads).toBe(0)
+    await page.getByRole('tab',{name:'操作审计'}).click()
+    await expect(page.getByText('CI-AUDIT-EXISTING',{exact:true})).toBeVisible()
+    unavailable=true
+    await page.getByRole('button',{name:'刷新'}).click()
+    await expect(page.getByText('操作审计读取失败，不能据此推断没有变更、拒绝或失败事件。')).toBeVisible()
+    await expect(page.getByText('CI-AUDIT-EXISTING',{exact:true})).toHaveCount(0)
+    await page.unroute(api)
+    const restored=page.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname==='/api/admin/v1/system/operation-logs')
+    await page.getByRole('button',{name:'重新加载操作审计'}).click()
+    expect((await restored).status()).toBe(200)
+    await expect(page.getByText('操作审计读取失败，不能据此推断没有变更、拒绝或失败事件。')).toHaveCount(0)
+  })
+
 })
