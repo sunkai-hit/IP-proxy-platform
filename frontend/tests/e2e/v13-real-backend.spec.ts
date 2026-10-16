@@ -906,4 +906,44 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('heading', { name: '反向代理交付' })).toBeVisible()
     await expect(page.getByText('仅配置登记不代表真实交付。', { exact: false })).toBeVisible()
   })
+
+  test('A-stage paid purchase to proxy to originating order: links and offline delivery safety', async ({ page }) => {
+    // CI seeds a customer-paid purchase and a PENDING proxy in PostgreSQL.
+    // Check the actual UI chain; never enable a real product or upstream write.
+    await page.goto(base + '/supplier-purchases')
+    const purchaseRow = page.locator('.el-table__body tr').filter({ hasText: 'CI-PUR-R3' })
+    await expect(purchaseRow).toBeVisible()
+    await purchaseRow.getByRole('button', { name: '详情' }).click()
+    await expect(page.getByRole('heading', { name: 'CI-PUR-R3' })).toBeVisible()
+    await expect(page.getByText('PAID_CONFIRMED', { exact: true })).toBeVisible()
+    await expect(page.getByRole('tab', { name: /反向代理明细 \(1\)/ })).toBeVisible()
+
+    const proxyRow = page.locator('.el-table__body tr').filter({ hasText: 'CI-PROXY-R3' })
+    await expect(proxyRow).toBeVisible()
+    await proxyRow.getByRole('button', { name: '代理详情' }).click()
+    await expect(page.getByRole('heading', { name: 'CI-PROXY-R3' })).toBeVisible()
+    await expect(page.getByText('配置保存、状态ACTIVE或适配器收到传输ACK', { exact: false })).toBeVisible()
+
+    // Management-side "apply" must fail closed while the real gateway is absent.
+    await page.getByRole('button', { name: '应用配置' }).click()
+    const prompt = page.locator('.el-message-box')
+    await expect(prompt).toBeVisible()
+    await prompt.locator('input').fill('CI offline delivery rejection verification')
+    const denied = page.waitForResponse(response =>
+      response.request().method() === 'POST' &&
+      /\/v12\/external-delivery\/reverse-proxies\/\d+\/apply$/.test(new URL(response.url()).pathname))
+    await prompt.getByRole('button', { name: '确定' }).click()
+    const rejected = await denied
+    expect(rejected.status()).toBe(400)
+    expect((await rejected.json()).code).toBe('EXTERNAL_PROXY_DATA_PLANE_UNVERIFIED')
+    await expect(page.getByText('平台代理操作未确认成功，不能据此认定已应用或已停用')).toBeVisible()
+    await expect(page.getByText('PENDING', { exact: true })).toBeVisible()
+
+    // Navigate back to the source purchase then through its paid order link.
+    await page.getByRole('button', { name: 'CI-PUR-R3' }).click()
+    await expect(page.getByRole('heading', { name: 'CI-PUR-R3' })).toBeVisible()
+    await page.locator('.el-descriptions').getByRole('button').first().click()
+    await expect(page).toHaveURL(/\/orders\/\d+$/)
+    await expect(page.getByText('订单主记录')).toBeVisible()
+  })
 })
