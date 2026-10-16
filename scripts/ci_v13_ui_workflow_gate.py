@@ -45,7 +45,7 @@ REQUIRED_MARKERS={
   "deliveryStage","oneTimeCredential",
  ],
  "service/ServiceDetailView.vue":[
-  "resourceBindings","actionTasks","egressClaims","service:credential:read",
+  "bindingError?[]:bindingRows","bindingRows","actionTasks","egressClaims","service:credential:read",
   "service:change:read","service:release","long-monitor:read",
   "/service-changes",
  ],
