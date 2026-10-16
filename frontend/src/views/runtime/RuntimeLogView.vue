@@ -5,7 +5,7 @@ import {runtimeLogApi} from '@/api/runtimeLog'
 import {useAuthStore} from '@/stores/auth'
 import {ElMessage} from 'element-plus'
 
-const auth=useAuthStore(),router=useRouter(),active=ref('extract'),loading=ref(false)
+const auth=useAuthStore(),router=useRouter(),active=ref('extract'),loading=ref(false),loadError=ref(false),requestVersion=ref(0)
 const rows=ref<any[]>([]),total=ref(0),page=ref(1),size=ref(20),keyword=ref(''),sourceScope=ref('')
 const range=ref<[Date,Date]>([new Date(Date.now()-7*86400_000),new Date()])
 const tabs=[
@@ -26,32 +26,38 @@ const current=computed(()=>tabs.find(t=>t.name===active.value))
 const extended=computed(()=>!['extract','usage','api'].includes(active.value))
 function fmt(v:any){return v?new Date(v).toLocaleString():'—'}
 async function load(){
- loading.value=true
+ const version=++requestVersion.value,category=active.value
+ loading.value=true;loadError.value=false;rows.value=[];total.value=0;sourceScope.value=''
+ if(!visibleTabs.value.some(t=>t.name===category)){loadError.value=true;loading.value=false;return}
+ const params:any={page:page.value,size:size.value,keyword:keyword.value}
+ const isExtended=!['extract','usage','api'].includes(category)
  try{
-  const params:any={page:page.value,size:size.value,keyword:keyword.value}
   let result:any
-  if(extended.value){
+  if(isExtended){
    params.from=range.value?.[0]?.toISOString()
    params.to=range.value?.[1]?.toISOString()
-   result=await runtimeLogApi.extended(active.value,params)
+   result=await runtimeLogApi.extended(category,params)
   }else{
-   const fn=active.value==='extract'?runtimeLogApi.extracts:
-     active.value==='api'?runtimeLogApi.apis:runtimeLogApi.usage
+   const fn=category==='extract'?runtimeLogApi.extracts:
+    category==='api'?runtimeLogApi.apis:runtimeLogApi.usage
    result=await fn(params)
   }
-  const data=result.data.data||{}
-  rows.value=data.items||[];total.value=data.total||0
-  sourceScope.value=data.sourceScope||''
+  if(version!==requestVersion.value)return
+  const response=result.data.data||{}
+  rows.value=response.items||[];total.value=response.total||0
+  sourceScope.value=response.sourceScope||''
  }catch{
-  rows.value=[];total.value=0
-  ElMessage.error('日志读取失败：请检查角色权限、筛选条件或来源数据')
- }finally{loading.value=false}
+  if(version===requestVersion.value){
+   loadError.value=true;rows.value=[];total.value=0;sourceScope.value=''
+   ElMessage.error('日志读取失败：当前记录并非空列表或零事件的证明')
+  }
+ }finally{if(version===requestVersion.value)loading.value=false}
 }
 function search(){page.value=1;load()}
 function reset(){keyword.value='';range.value=[new Date(Date.now()-7*86400_000),new Date()];search()}
 function navigate(row:any){if(row.relatedPath)router.push(row.relatedPath)}
 watch(active,()=>{page.value=1;load()})
-onMounted(()=>{if(!auth.hasPermission('runtime-log:extract:read')&&visibleTabs.value.length)active.value=visibleTabs.value[0].name;load()})
+onMounted(()=>{if(!auth.hasPermission('runtime-log:extract:read')&&visibleTabs.value.length)active.value=visibleTabs.value[0].name;if(visibleTabs.value.length)load();else loadError.value=true})
 </script>
 
 <template>
@@ -64,6 +70,7 @@ onMounted(()=>{if(!auth.hasPermission('runtime-log:extract:read')&&visibleTabs.v
    <el-tab-pane v-for="t in visibleTabs" :key="t.name" :label="t.label" :name="t.name"/>
   </el-tabs>
   <el-alert :title="current?.help||''" type="info" :closable="false" show-icon/>
+  <el-alert v-if="loadError" type="error" :closable="false" title="日志分类读取失败或权限不足，不能据此认定没有日志事件。" style="margin-top:12px"/>
   <div class="filter-row" style="margin-top:12px;gap:10px">
    <el-input v-model="keyword" clearable placeholder="客户、服务号、对象编号、事件/请求标识" style="width:310px" @keyup.enter="search"/>
    <el-date-picker v-if="extended" v-model="range" type="datetimerange" range-separator="至"
@@ -76,7 +83,7 @@ onMounted(()=>{if(!auth.hasPermission('runtime-log:extract:read')&&visibleTabs.v
    记录来源：{{sourceScope}}。仅提供可验证的现有存储字段，未接入内容不是零事件的证明。
   </div>
   <el-table :data="rows" v-loading="loading" border stripe
-    empty-text="该分类与筛选条件下没有已采集的记录；不代表外部系统没有发生事件">
+    :empty-text="loadError?'日志数据读取失败':'该分类与筛选条件下没有已采集的记录；不代表外部系统没有发生事件'">
    <template v-if="extended">
     <el-table-column label="时间" min-width="165"><template #default="s">{{fmt(s.row.eventTime)}}</template></el-table-column>
     <el-table-column prop="objectType" label="对象类型" width="125"/>
