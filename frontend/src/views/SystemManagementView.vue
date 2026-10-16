@@ -9,7 +9,7 @@ const tab=ref('users'); const users=ref<any[]>([]); const roles=ref<any[]>([]); 
 const selectedDictType=ref<any>(null); const selectedRole=ref<any>(null); const checkedPermissionIds=ref<number[]>([])
 const userDialog=ref(false); const roleDialog=ref(false); const dictTypeDialog=ref(false); const dictItemDialog=ref(false); const paramDialog=ref(false)
 const editId=ref<number|null>(null)
-const usersError=ref(false),rolesError=ref(false),permissionsError=ref(false)
+const usersError=ref(false),rolesError=ref(false),permissionsError=ref(false),permissionsLoading=ref(false),rolesVersion=ref(0)
 const loginLogsError=ref(false),operationLogsError=ref(false)
 const userBusy=ref(false),rolePermissionBusy=ref(false),rolePermissionLoading=ref(false),rolePermissionError=ref(false)
 const userListVersion=ref(0),rolePermissionVersion=ref(0),loginLogVersion=ref(0),operationLogVersion=ref(0)
@@ -30,16 +30,18 @@ async function loadUsers(){
 }
 async function loadRoles(){
  if(!auth.hasPermission('system:role:read'))return
+ const version=++rolesVersion.value
  ++rolePermissionVersion.value;selectedRole.value=null;checkedPermissionIds.value=[];rolePermissionError.value=false;rolePermissionLoading.value=false
  rolesError.value=false;roles.value=[]
- try{const result=data(await systemApi.roles());roles.value=Array.isArray(result)?result:[]}
- catch{rolesError.value=true;roles.value=[]}
+ try{const result=data(await systemApi.roles());if(version===rolesVersion.value)roles.value=Array.isArray(result)?result:[]}
+ catch{if(version===rolesVersion.value){rolesError.value=true;roles.value=[]}}
 }
 async function loadPermissions(){
  if(!auth.hasPermission('system:permission:read')){permissions.value=[];permissionsError.value=true;return}
- permissionsError.value=false;permissions.value=[]
+ permissionsError.value=false;permissionsLoading.value=true;permissions.value=[]
  try{const result=data(await systemApi.permissions());permissions.value=Array.isArray(result)?result:[]}
  catch{permissionsError.value=true;permissions.value=[]}
+ finally{permissionsLoading.value=false}
 }
 async function loadDictTypes(){dictTypes.value=data(await systemApi.dictTypes());if(selectedDictType.value)selectedDictType.value=dictTypes.value.find(x=>x.id===selectedDictType.value.id)||null}
 async function loadDictItems(row?:any){if(row)selectedDictType.value=row;if(!selectedDictType.value){dictItems.value=[];return}dictItems.value=data(await systemApi.dictItems(selectedDictType.value.id))}
@@ -130,8 +132,8 @@ async function selectRole(row:any){
 }
 async function saveRolePermissions(){
  const role=selectedRole.value,version=rolePermissionVersion.value
- if(!role||role.built_in||rolePermissionBusy.value||rolePermissionLoading.value||
-  rolesError.value||permissionsError.value||rolePermissionError.value||
+ if(!role||role.built_in||rolePermissionBusy.value||rolePermissionLoading.value||permissionsLoading.value||
+  rolesError.value||permissionsError.value||permissionsLoading.value||rolePermissionError.value||
   !auth.hasPermission('system:role:write')||!auth.hasPermission('system:permission:read'))return
  const roleId=Number(role.id),roleCode=String(role.role_code||''),roleName=String(role.role_name||'')
  const ids=[...checkedPermissionIds.value].map(Number)
@@ -143,7 +145,7 @@ async function saveRolePermissions(){
   })
   if(tab.value!=='roles'||rolePermissionVersion.value!==version||
    Number(selectedRole.value?.id)!==roleId||String(selectedRole.value?.role_code)!==roleCode||
-   rolesError.value||permissionsError.value||rolePermissionError.value||
+   rolesError.value||permissionsError.value||permissionsLoading.value||rolePermissionError.value||
    !auth.hasPermission('system:role:write')||!auth.hasPermission('system:permission:read')){
    ElMessage.warning('确认期间目标角色或权限状态发生变化，未提交授权');return
   }
@@ -188,7 +190,7 @@ onMounted(()=>{
         <el-tab-pane v-if="auth.hasPermission('system:role:read')" label="角色与权限" name="roles">
           <div class="split">
             <div><div class="toolbar"><el-button v-if="auth.hasPermission('system:role:write')" type="primary" @click="newRole">新增角色</el-button><el-button @click="loadActiveTab">刷新角色与权限</el-button></div><el-alert v-if="rolesError" type="error" :closable="false" title="角色列表读取失败，不能核对或变更角色授权。"/><el-table :data="roles" highlight-current-row @current-change="selectRole"><el-table-column prop="role_code" label="编码"/><el-table-column prop="role_name" label="角色"><template #default="s"><span>{{ s.row.role_name }}</span><el-tag v-if="s.row.built_in" size="small" style="margin-left:6px">内置</el-tag></template></el-table-column><el-table-column prop="permission_count" label="权限数" width="90"/><el-table-column label="操作" width="80"><template #default="s"><el-button v-if="auth.hasPermission('system:role:write')" link :disabled="s.row.built_in||rolesError" @click.stop="editRole(s.row)">编辑</el-button></template></el-table-column></el-table></div>
-            <div class="permission-panel"><h3>{{ selectedRole ? `授权：${selectedRole.role_name}` : '选择左侧角色进行授权' }}</h3><el-alert v-if="selectedRole?.built_in" title="超级管理员为系统内置角色，默认拥有全部系统权限，不允许在管理端修改。" type="warning" :closable="false"/><el-alert v-if="permissionsError||rolePermissionError||rolesError" title="权限目录、角色或授权记录读取失败，当前授权未知，不能依据空勾选保存。" type="error" :closable="false"/><el-button v-if="rolePermissionError&&selectedRole" @click="selectRole(selectedRole)">重新加载当前角色权限</el-button><el-checkbox-group v-model="checkedPermissionIds" :disabled="!selectedRole||selectedRole.built_in||!auth.hasPermission('system:role:write')||rolePermissionLoading||rolePermissionBusy||rolePermissionError||permissionsError||rolesError"><el-checkbox v-for="p in permissions" :key="p.id" :value="p.id">{{ p.permission_name }} <small>{{ p.permission_code }}</small></el-checkbox></el-checkbox-group><el-button v-if="selectedRole&&!selectedRole.built_in&&auth.hasPermission('system:role:write')" type="primary" :loading="rolePermissionBusy" :disabled="rolePermissionLoading||rolePermissionError||permissionsError||rolesError||rolePermissionBusy" @click="saveRolePermissions">保存授权</el-button></div>
+            <div class="permission-panel"><h3>{{ selectedRole ? `授权：${selectedRole.role_name}` : '选择左侧角色进行授权' }}</h3><el-alert v-if="selectedRole?.built_in" title="超级管理员为系统内置角色，默认拥有全部系统权限，不允许在管理端修改。" type="warning" :closable="false"/><el-alert v-if="permissionsError||rolePermissionError||rolesError" title="权限目录、角色或授权记录读取失败，当前授权未知，不能依据空勾选保存。" type="error" :closable="false"/><el-button v-if="rolePermissionError&&selectedRole" @click="selectRole(selectedRole)">重新加载当前角色权限</el-button><el-checkbox-group v-model="checkedPermissionIds" :disabled="!selectedRole||selectedRole.built_in||!auth.hasPermission('system:role:write')||rolePermissionLoading||rolePermissionBusy||rolePermissionError||permissionsError||permissionsLoading||rolesError"><el-checkbox v-for="p in permissions" :key="p.id" :value="p.id">{{ p.permission_name }} <small>{{ p.permission_code }}</small></el-checkbox></el-checkbox-group><el-button v-if="selectedRole&&!selectedRole.built_in&&auth.hasPermission('system:role:write')" type="primary" :loading="rolePermissionBusy" :disabled="rolePermissionLoading||rolePermissionError||permissionsError||permissionsLoading||rolesError||rolePermissionBusy" @click="saveRolePermissions">保存授权</el-button></div>
           </div>
         </el-tab-pane>
         <el-tab-pane v-if="auth.hasPermission('system:permission:read')" label="权限目录" name="permissions"><el-alert title="权限编码由工程代码与数据库迁移脚本统一维护，管理端只负责角色授权。" type="info" :closable="false"/><el-table :data="permissions"><el-table-column prop="permission_code" label="权限编码"/><el-table-column prop="permission_name" label="名称"/><el-table-column prop="permission_type" label="类型"/><el-table-column prop="route_path" label="路由"/></el-table></el-tab-pane>
