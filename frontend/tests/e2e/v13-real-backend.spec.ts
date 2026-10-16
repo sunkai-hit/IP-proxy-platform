@@ -1154,7 +1154,8 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.locator('.el-table__body tr').filter({hasText:'CI-OLD-SVC'}).getByRole('button',{name:'任务'}).click()
     await expect(page.getByText('实际操作任务与交付核对')).toBeVisible()
     await page.locator('.el-drawer__close-btn').click()
-    await expect(page.locator('.el-drawer')).toHaveCount(0)
+    // Element Plus keeps the drawer node mounted after the close transition.
+    await expect(page.locator('.el-drawer')).toBeHidden()
     await page.locator('.el-table__body tr').filter({hasText:'CI-NEW-SVC'}).getByRole('button',{name:'任务'}).click()
     await expect(page.getByText(newKey,{exact:true})).toBeVisible()
     await expect(page.getByText('CI-NEW-STATE')).toBeVisible()
