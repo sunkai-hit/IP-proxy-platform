@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { onMounted,ref } from 'vue'
+import { onMounted,ref,watch } from 'vue'
 import { useRoute,useRouter } from 'vue-router'
 import { longMonitorApi } from '@/api/longMonitor'
 import { useAuthStore } from '@/stores/auth'
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),row=ref<any>({}),loading=ref(false)
+const route=useRoute(),router=useRouter(),auth=useAuthStore(),row=ref<any>({}),loading=ref(false),loadError=ref(false),requestVersion=ref(0)
 const data=(r:any)=>r.data.data
-async function load(){loading.value=true;try{row.value=data(await longMonitorApi.bot(Number(route.params.id)))||{}}finally{loading.value=false}}
+async function load(){
+ const version=++requestVersion.value,id=Number(route.params.id)
+ loading.value=true;loadError.value=false;row.value={}
+ try{const result=data(await longMonitorApi.bot(id))||{};if(version===requestVersion.value)row.value=result}
+ catch{if(version===requestVersion.value){loadError.value=true;row.value={}}}
+ finally{if(version===requestVersion.value)loading.value=false}
+}
+watch(()=>route.params.id,load)
 onMounted(load)
 </script>
 <template>
@@ -13,7 +20,8 @@ onMounted(load)
  <div class="head"><div><h2>客户机器人详情</h2><p>客户钉钉/飞书机器人与已绑定的长效代理监控；Webhook、Token与Secret不回显。</p></div>
   <div class="actions"><el-button @click="router.push('/long-monitor/bots')">返回机器人列表</el-button><el-button @click="load">刷新</el-button></div>
  </div>
- <el-card shadow="never" v-loading="loading">
+ <el-alert v-if="loadError" type="error" :closable="false" title="机器人详情读取失败，不能据此认定凭证未配置或监控没有绑定。"/><el-button v-if="loadError" @click="load">重新加载机器人</el-button>
+ <el-card v-if="!loadError&&row.bot_no" shadow="never" v-loading="loading">
   <el-descriptions :column="2" border>
    <el-descriptions-item label="机器人编号">{{row.bot_no||'—'}}</el-descriptions-item>
    <el-descriptions-item label="所属客户">{{row.customer_name||'—'}}</el-descriptions-item>
@@ -29,7 +37,7 @@ onMounted(load)
   <el-alert type="info" :closable="false" style="margin-top:12px"
    title="测试状态仅反映适配器或机器人发送回执，不表示服务的真实代理连接正常。"/>
  </el-card>
- <el-card v-if="auth.hasPermission('long-monitor:read')" shadow="never">
+ <el-card v-if="!loadError&&row.bot_no&&auth.hasPermission('long-monitor:read')" shadow="never">
   <template #header><b>引用此机器人的监控配置</b></template>
   <el-table :data="row.monitorReferences||[]" stripe border empty-text="目前没有已关联的监控配置">
    <el-table-column label="监控编号" min-width="160"><template #default="s">

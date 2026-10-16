@@ -1,18 +1,34 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessage,ElMessageBox} from 'element-plus'
 import {longMonitorApi} from '@/api/longMonitor'
 import {useAuthStore} from '@/stores/auth'
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),row=ref<any>({}),loading=ref(false),id=Number(route.params.id),data=(r:any)=>r.data.data
-async function load(){loading.value=true;try{row.value=data(await longMonitorApi.alarm(id))||{}}finally{loading.value=false}}
+const route=useRoute(),router=useRouter(),auth=useAuthStore(),row=ref<any>({}),loading=ref(false),loadError=ref(false),closing=ref(false),requestVersion=ref(0),data=(r:any)=>r.data.data
+let id=Number(route.params.id)
+async function load(){
+ const version=++requestVersion.value,alarmId=id
+ loading.value=true;loadError.value=false;row.value={}
+ try{const detail=data(await longMonitorApi.alarm(alarmId))||{};if(version===requestVersion.value)row.value=detail}
+ catch{if(version===requestVersion.value){loadError.value=true;row.value={}}}
+ finally{if(version===requestVersion.value)loading.value=false}
+}
 async function close(){
+ if(closing.value||loading.value||loadError.value||!row.value.alarm_no||row.value.status==='CLOSED'||!auth.hasPermission('long-monitor:alarm:close'))return
+ const alarmId=id,version=requestVersion.value
  await ElMessageBox.confirm('关闭只代表人工归档，不会改变代理网络状态或检测结果。请先核查监控及服务。','告警归档影响确认',{type:'warning'})
  const {value}=await ElMessageBox.prompt('请输入归档原因','关闭告警',{inputValidator:v=>!!String(v||'').trim()||'必须填写原因'})
- await longMonitorApi.closeAlarm(id,String(value).trim())
- ElMessage.success('已归档告警；真实网络恢复仍以检测结果为准')
- await load()
+ if(id!==alarmId||version!==requestVersion.value)return
+ closing.value=true
+ try{
+  await longMonitorApi.closeAlarm(alarmId,String(value).trim())
+  if(id!==alarmId||version!==requestVersion.value)return
+  ElMessage.success('已归档告警；真实网络恢复仍以检测结果为准')
+  await load()
+ }catch{ElMessage.error('告警归档未确认成功；请重新查询，不能按已关闭处理')}
+ finally{closing.value=false}
 }
+watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 onMounted(load)
 </script>
 <template>
@@ -23,13 +39,14 @@ onMounted(load)
     <p>异常 → 通知 → 检测恢复 → 人工归档。归档不能代替真实网络恢复。</p>
   </div>
   <div class="actions"><el-button @click="load">刷新</el-button>
-   <el-button v-if="auth.hasPermission('long-monitor:alarm:close')&&row.status!=='CLOSED'"
-     type="warning" @click="close">确认归档</el-button>
+   <el-button v-if="!loadError&&!loading&&!!row.alarm_no&&auth.hasPermission('long-monitor:alarm:close')&&row.status!=='CLOSED'"
+     type="warning" :loading="closing" @click="close">确认归档</el-button>
   </div>
  </div>
  <el-alert type="warning" :closable="false"
   title="告警状态和监控当前状态分别记录；人工关闭告警不会重新建立代理连接或清除真实故障。"/>
- <el-card v-loading="loading" shadow="never">
+ <el-alert v-if="loadError" type="error" :closable="false" title="告警详情读取失败，不能据此判断告警已恢复、已归档或可执行归档。"/><el-button v-if="loadError" @click="load">重新加载告警详情</el-button>
+ <el-card v-if="!loadError&&row.alarm_no" v-loading="loading" shadow="never">
   <template #header><b>告警主记录</b></template>
   <el-descriptions :column="2" border>
    <el-descriptions-item label="告警编号">{{row.alarm_no||'—'}}</el-descriptions-item>
@@ -61,7 +78,7 @@ onMounted(load)
    <el-descriptions-item label="归档原因" :span="2">{{row.close_reason||'—'}}</el-descriptions-item>
   </el-descriptions>
  </el-card>
- <el-card shadow="never">
+ <el-card v-if="!loadError&&row.alarm_no" shadow="never">
   <template #header><b>通知与回查</b></template>
   <p>通知结果可在通知记录中按客户、监控编号核对；服务真实网络状态需回到监控详情确认。</p>
   <div class="actions">
