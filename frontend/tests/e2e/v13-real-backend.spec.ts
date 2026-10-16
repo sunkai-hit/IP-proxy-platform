@@ -250,6 +250,77 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('tab', { name: '服务凭证' })).toHaveCount(0)
   })
 
+  test('monitor object outage is visible and never counted as healthy zero devices', async ({ page }) => {
+    await page.route('**/api/admin/v1/monitor/objects?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_MONITOR_DOWN', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/monitor')
+    await expect(page.getByText('监控对象查询失败，不能据此认定没有设备或线路。')).toBeVisible()
+    await expect(page.getByText('监控读取失败')).toBeVisible()
+    await page.getByRole('tab', { name: 'ROS监控' }).click()
+    await expect(page.getByText('监控对象查询失败，不能据此认定没有设备或线路。')).toBeVisible()
+  })
+
+  test('monitor summary outage reports unknown rather than healthy / abnormal zero', async ({ page }) => {
+    await page.route('**/api/admin/v1/monitor/overview', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_OVERVIEW_DOWN', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/monitor')
+    await expect(page.getByText('监控总览加载失败，健康/异常统计未知，不能按零显示。')).toBeVisible()
+    await expect(page.locator('.metrics strong')).toHaveCount(4)
+    await expect(page.locator('.metrics strong').first()).toHaveText('—')
+  })
+
+  test('statistics category outage keeps records unknown instead of reporting actual zero usage', async ({ page }) => {
+    await page.route('**/api/admin/v1/statistics/resources?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_STATS_DOWN', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/statistics')
+    await expect(page.getByText('当前分类统计读取失败，图表和记录均不可据此判断实际为0。')).toBeVisible()
+    await expect(page.getByText('统计读取失败', { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: '资源池统计' }).click()
+    await expect(page.getByText('当前分类统计读取失败，图表和记录均不可据此判断实际为0。')).toHaveCount(0)
+  })
+
+  test('eleven-category log center shows source read errors rather than a normal empty ledger', async ({ page }) => {
+    await page.route('**/api/admin/v1/runtime-logs/ip-extract?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_LOG_DOWN', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/logs')
+    await expect(page.getByText('日志分类读取失败或权限不足，不能据此认定没有日志事件。')).toBeVisible()
+    await expect(page.getByText('日志数据读取失败', { exact: true })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '02 使用日志' })).toBeVisible()
+  })
+
+  test('long monitor alert and notification API outages cannot imply recovery or delivery', async ({ page }) => {
+    await page.route('**/api/admin/v1/long-monitor/alarms?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_ALARM_DOWN', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/long-monitor/alarms')
+    await expect(page.getByText('长效告警查询失败，不能据此认定告警已经恢复或不存在。')).toBeVisible()
+    await page.route('**/api/admin/v1/long-monitor/notifications?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_NOTIFICATION_DOWN', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/long-monitor/notifications')
+    await expect(page.getByText('通知记录查询失败，不能据此认定消息发送成功或不存在。')).toBeVisible()
+  })
+
+  test('expiry queue failure never looks like no pending stop or release work', async ({ page }) => {
+    await page.route('**/api/admin/v1/v12/service-expiry/queue?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_EXPIRY_QUEUE_DOWN', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/service-releases')
+    await expect(page.getByText('到期任务队列读取失败，不能据此认定没有待停服或待释放任务。')).toBeVisible()
+    await expect(page.getByText('到期队列读取失败', { exact: true })).toBeVisible()
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
