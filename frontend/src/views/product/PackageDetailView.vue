@@ -1,30 +1,34 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessage} from 'element-plus'
 import {productApi} from '@/api/product'
 import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),id=Number(route.params.id)
-const row=ref<any>({}),services=ref<any[]>([]),loading=ref(false)
+const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
+const row=ref<any>({}),services=ref<any[]>([]),loading=ref(false),loadError=ref(false),requestVersion=ref(0)
 const serviceError=ref(false),truncated=ref(false)
 const data=(r:any)=>r.data.data
 const fmt=(x:any)=>x==null||x===''?'—':String(x)
 const fixed=()=>['LONG_IP','EXCLUSIVE_IP'].includes(row.value.product_type)
 async function load(){
- loading.value=true
+ const version=++requestVersion.value,packageId=id
+ loading.value=true;loadError.value=false;row.value={};services.value=[];serviceError.value=false;truncated.value=false
  try{
-  row.value=data(await productApi.pkg(id))||{}
-  services.value=[];serviceError.value=false;truncated.value=false
+  const result=data(await productApi.pkg(packageId))||{}
+  if(version!==requestVersion.value)return
+  row.value=result
   if(auth.hasPermission('service:read')){
    try{
-    const d=data(await businessRelationsApi.packageServices(id))
+    const d=data(await businessRelationsApi.packageServices(packageId))||{}
+    if(version!==requestVersion.value)return
     services.value=d.items||[];truncated.value=!!d.truncated
-   }catch{serviceError.value=true}
+   }catch{if(version===requestVersion.value){serviceError.value=true;services.value=[]}}
   }
- }catch{ElMessage.error('套餐详情加载失败，请检查权限与记录状态')}
- finally{loading.value=false}
+ }catch{if(version===requestVersion.value){loadError.value=true;row.value={};services.value=[]}}
+ finally{if(version===requestVersion.value)loading.value=false}
 }
+watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 onMounted(load)
 </script>
 <template>
@@ -38,14 +42,15 @@ onMounted(load)
   <div class="actions">
    <el-button v-if="row.product_id&&auth.hasPermission('product:read')"
     @click="router.push('/products/'+row.product_id)">所属产品</el-button>
-   <el-button v-if="auth.hasPermission('product:package:write')"
+   <el-button v-if="!loadError&&!loading&&row.package_code&&auth.hasPermission('product:package:write')"
     type="primary" @click="router.push({path:'/packages',query:{productId:String(row.product_id),editId:String(id)}})">在套餐管理中编辑</el-button>
    <el-button @click="load">刷新</el-button>
   </div>
  </div>
  <el-alert type="info" :closable="false" show-icon
   title="套餐定义未来销售条件，不是已经开通服务的实时合同。老服务期限、宽限和额度按下单/开通时的快照继续执行，修改套餐不回写存量。"/>
- <el-card v-loading="loading" shadow="never">
+ <el-alert v-if="loadError" type="error" :closable="false" title="套餐详情读取失败，不能核实原套餐期限、宽限规则或已售服务。"/><el-button v-if="loadError" @click="load">重新加载套餐详情</el-button>
+ <el-card v-if="!loadError&&row.package_code" v-loading="loading" shadow="never">
   <template #header><b>销售套餐主记录</b></template>
   <el-descriptions :column="3" border>
    <el-descriptions-item label="套餐编号">{{fmt(row.package_code)}}</el-descriptions-item>
@@ -75,7 +80,7 @@ onMounted(load)
    <el-descriptions-item label="记录版本">{{fmt(row.version)}}</el-descriptions-item>
   </el-descriptions>
  </el-card>
- <el-card shadow="never">
+ <el-card v-if="!loadError&&row.package_code" shadow="never">
   <template #header><b>历史与当前服务实例（显示 {{services.length}} 条）</b></template>
   <el-alert type="warning" :closable="false"
    title="关联服务的grace_days_snapshot才是对应客户当次约定，不使用当前套餐grace_days反推老合同；0天应视为到期立即停服并受控回收。"/>
