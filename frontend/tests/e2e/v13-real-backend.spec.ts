@@ -598,6 +598,54 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('CI-EXCLUSIVE-900991')).toHaveCount(0)
   })
 
+  test('supplier detail route failure clears previous supplier auth and purchase table', async ({ page }) => {
+    await page.route('**/api/admin/v1/suppliers/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,supplier_code:'CI-SUPPLIER-900991',
+        supplier_name:'CI Supplier A',secret_configured:true,interface_status:'UNVERIFIED'}}),
+    }))
+    await page.route('**/api/admin/v1/v12/external-delivery/purchases?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,purchase_no:'CI-SUPPLIER-CHILD-900991'}],total:1}}),
+    }))
+    await page.goto(base+'/suppliers/900991')
+    await expect(page.getByRole('heading',{name:'CI Supplier A'})).toBeVisible()
+    await expect(page.getByText('CI-SUPPLIER-CHILD-900991')).toBeVisible()
+    await page.route('**/api/admin/v1/suppliers/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_SUPPLIER_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/suppliers/900992')
+    })
+    await expect(page.getByText('供应商详情读取失败，无法核实接口状态、认证配置与下游采购。')).toBeVisible()
+    await expect(page.getByText('CI-SUPPLIER-CHILD-900991')).toHaveCount(0)
+    await expect(page.getByText('已加密配置（不可回显）')).toHaveCount(0)
+  })
+
+  test('product options and packages failure are distinct from product not configured', async ({ page }) => {
+    await page.route('**/api/admin/v1/products/900993',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900993,product_code:'CI-PROD-900993',
+        product_name:'CI PRODUCT OPTIONS',product_type:'SHORT_IP',access_mode_code:'HTTP',
+        protocol_codes:[],auth_mode_codes:[],type_config:{}}}),
+    }))
+    await page.route('**/api/admin/v1/products/options',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_OPTIONS_DOWN',message:'unavailable'}),
+    }))
+    await page.route('**/api/admin/v1/packages?*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PACKAGES_DOWN',message:'unavailable'}),
+    }))
+    await page.goto(base+'/products/900993')
+    await expect(page.getByRole('heading',{name:/CI PRODUCT OPTIONS/})).toBeVisible()
+    await expect(page.getByText('产品配置选项查询失败，保存前须核实协议和认证方式。')).toBeVisible()
+    await expect(page.getByText('关联套餐读取失败，不能认定该产品尚未配置销售套餐。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'保存',exact:true})).toBeDisabled()
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
