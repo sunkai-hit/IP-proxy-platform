@@ -932,7 +932,9 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     const denied = page.waitForResponse(response =>
       response.request().method() === 'POST' &&
       /\/v12\/external-delivery\/reverse-proxies\/\d+\/apply$/.test(new URL(response.url()).pathname))
-    await prompt.getByRole('button', { name: '确定' }).click()
+    // Element Plus may render its default confirm label in English; use the
+    // primary action in the prompt rather than assuming a localized button name.
+    await prompt.locator('.el-message-box__btns .el-button--primary').click()
     const rejected = await denied
     expect(rejected.status()).toBe(400)
     expect((await rejected.json()).code).toBe('EXTERNAL_PROXY_DATA_PLANE_UNVERIFIED')
