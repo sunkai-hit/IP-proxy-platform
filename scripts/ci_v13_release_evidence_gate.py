@@ -25,7 +25,7 @@ EXPECTED = {
     *(f"E{i:02}" for i in range(1, 5)),
     *(f"F{i:02}" for i in range(1, 7)),
 }
-ROW = re.compile(r"^\\|\\s*([A-F][0-9]{2})\\s*\\|\\s*([^|]+)\\|\\s*\\`(GET|POST|PUT|PATCH|DELETE)\\`\\s*\\|\\s*\\`(/(?:product|business)/v1/[^\\` ]+)\\`\\s*\\|")
+ROW = re.compile(r"^\|\s*([A-F][0-9]{2})\s*\|\s*([^|]+)\|\s*\x60(GET|POST|PUT|PATCH|DELETE)\x60\s*\|\s*\x60(/(?:product|business)/v1/[^\x60 ]+)\x60\s*\|")
 
 def version_markers(path: Path) -> set[str]:
     """Read OOXML text, including tables and the cover, without Word automation."""
@@ -33,7 +33,7 @@ def version_markers(path: Path) -> set[str]:
         root = ET.fromstring(archive.read("word/document.xml"))
     ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     text = " ".join((t.text or "") for t in root.findall(".//w:t", ns))
-    return set(re.findall(r"V1\\.[0-9]+(?:-R[0-9]+)?", text))
+    return set(re.findall(r"V1\.[0-9]+(?:-R[0-9]+)?", text))
 
 def main() -> int:
     if not MATRIX.is_file():
