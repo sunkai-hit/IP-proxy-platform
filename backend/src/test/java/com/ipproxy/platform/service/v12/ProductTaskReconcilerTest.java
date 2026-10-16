@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class ProductTaskReconcilerTest {
+    private static final String FRESH=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).toString();
+    private static final String VALID_REQUEST="{\"releaseMode\":\"RETURN_TO_SHORT_AFTER_VERIFICATION\",\"egressIpv4\":\"198.51.100.7\"}";
     static class StubJdbc extends JdbcTemplate {
         Map<String,Object> task;
         int updates;
@@ -38,6 +40,7 @@ class ProductTaskReconcilerTest {
         row.put("task_status",status);
         row.put("stage","WAITING_REAL_ADAPTER");
         row.put("remote_operation_id",remote);
+        row.put("request_json",VALID_REQUEST);
         return row;
     }
     private ProductTaskReconciler reconciler(StubJdbc jdbc,ProductGroupReadClient product) {
@@ -75,7 +78,7 @@ class ProductTaskReconcilerTest {
         when(product.taskStatus("op-52")).thenReturn(Map.of("status","SUCCEEDED","accepted",true));
         when(product.actualService("52")).thenReturn(Map.of(
                 "actualStatus","STOPPED","verificationStatus","VERIFIED",
-                "verifiedAt","2026-10-15T02:00:00Z"));
+                "verifiedAt",FRESH,"sampledAt",FRESH));
         var result=reconciler(db,product).reconcile("expiry-52-1");
         assertTrue(result.networkVerified());
         assertEquals("VERIFYING",result.taskStatus());
@@ -93,7 +96,7 @@ class ProductTaskReconcilerTest {
         when(product.taskStatus("op-52")).thenReturn(Map.of("status","SUCCEEDED","accepted",true));
         when(product.actualService("52")).thenReturn(Map.of(
                 "actualStatus","RUNNING","verificationStatus","VERIFIED",
-                "verifiedAt","2026-10-15T02:00:00Z"));
+                "verifiedAt",FRESH));
         var result=reconciler(db,product).reconcile("expiry-52-1");
         assertEquals("WAITING_NETWORK_VERIFICATION",result.stage());
         assertFalse(result.networkVerified());
@@ -139,7 +142,7 @@ class ProductTaskReconcilerTest {
         when(product.taskStatus("op-52")).thenReturn(Map.of("accepted",true,"status","SUCCEEDED"));
         when(product.actualService("52")).thenReturn(Map.of(
                 "actualStatus","STOPPED","verificationStatus","VERIFIED",
-                "verifiedAt","2026-10-15T02:00:00Z","sampledAt","2026-10-15T02:00:02Z"));
+                "verifiedAt",FRESH,"sampledAt",FRESH));
         var result=reconciler(db,product).reconcile("expiry-52-1");
         assertFalse(result.networkVerified());
         assertEquals("WAITING_NETWORK_VERIFICATION",result.stage());
@@ -155,10 +158,10 @@ class ProductTaskReconcilerTest {
                     "egressIpv4","198.51.100.7",
                     "serviceAccessRevoked",true,"allOldAccessRevoked",true,
                     "switchedToShort",true,"shortPoolHealthy",true,
-                    "resourceId","r-52","verifiedAt","2026-10-15T02:00:00Z")));
+                    "resourceId","r-52","verifiedAt",FRESH)));
         when(product.actualService("52")).thenReturn(Map.of(
                 "actualStatus","STOPPED","verificationStatus","VERIFIED",
-                "verifiedAt","2026-10-15T02:00:00Z","sampledAt","2026-10-15T02:00:02Z"));
+                "verifiedAt",FRESH,"sampledAt",FRESH));
         var result=reconciler(db,product).reconcile("expiry-52-1");
         assertTrue(result.networkVerified());
         assertEquals("NEEDS_BUSINESS_COMMIT",result.stage());
@@ -178,4 +181,61 @@ class ProductTaskReconcilerTest {
                 List.of("SUPER_ADMIN"),List.of()));
         verify(product).reconcile("expiry-52-1");
     }
+    @Test void releaseProofWithDifferentEgressIpv4NeverUnlocksCommit(){
+        StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");db.task.put("action_type","RELEASE");
+        ProductGroupReadClient product=mock(ProductGroupReadClient.class);
+        when(product.taskStatus("op-52")).thenReturn(Map.of("accepted",true,"status","SUCCEEDED",
+                "releaseVerification",proof("UNBIND_SERVICE_ONLY","198.51.100.99",FRESH)));
+        when(product.actualService("52")).thenReturn(actualStopped(FRESH,FRESH));
+        db.task.put("request_json","{\"releaseMode\":\"UNBIND_SERVICE_ONLY\",\"egressIpv4\":\"198.51.100.7\"}");
+        var result=reconciler(db,product).reconcile("expiry-52-1");
+        assertEquals("WAITING_NETWORK_VERIFICATION",result.stage());
+        assertFalse(result.networkVerified());
+        assertFalse(String.valueOf(db.updateArgs[2]).contains("releaseVerification"));
+    }
+
+    @Test void releaseProofWithWrongModeOrMissingRequestNeverUnlocksCommit(){
+        for(String request:List.of(
+                "{\"releaseMode\":\"RETURN_TO_SHORT_AFTER_VERIFICATION\",\"egressIpv4\":\"198.51.100.7\"}",
+                "{}","{bad json")){
+            StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");
+            db.task.put("action_type","RELEASE");
+            db.task.put("request_json",request);
+            ProductGroupReadClient product=mock(ProductGroupReadClient.class);
+            when(product.taskStatus("op-52")).thenReturn(Map.of("accepted",true,"status","SUCCEEDED",
+                    "releaseVerification",proof("UNBIND_SERVICE_ONLY","198.51.100.7",FRESH)));
+            when(product.actualService("52")).thenReturn(actualStopped(FRESH,FRESH));
+            var result=reconciler(db,product).reconcile("expiry-52-1");
+            assertFalse(result.networkVerified(),request);
+            assertEquals("WAITING_NETWORK_VERIFICATION",result.stage());
+        }
+    }
+
+    @Test void verifiedActualServiceTimestampMustBeFreshAndCoherent(){
+        String stale=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).minusHours(1).toString();
+        String future=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).plusHours(1).toString();
+        for(String[] times:List.of(new String[]{stale,stale},
+                new String[]{future,future},
+                new String[]{future,FRESH},
+                new String[]{ "not-a-time",FRESH},
+                new String[]{FRESH,"not-a-time"})){
+            StubJdbc db=new StubJdbc();db.task=task("RUNNING","op-52");
+            ProductGroupReadClient product=mock(ProductGroupReadClient.class);
+            when(product.taskStatus("op-52")).thenReturn(Map.of("accepted",true,"status","SUCCEEDED"));
+            when(product.actualService("52")).thenReturn(actualStopped(times[0],times[1]));
+            var result=reconciler(db,product).reconcile("expiry-52-1");
+            assertEquals("WAITING_NETWORK_VERIFICATION",result.stage());
+            assertFalse(result.networkVerified());
+        }
+    }
+
+    private static Map<String,Object> actualStopped(String verifiedAt,String sampledAt){
+        return Map.of("actualStatus","STOPPED","verificationStatus","VERIFIED",
+                "verifiedAt",verifiedAt,"sampledAt",sampledAt);
+    }
+    private static Map<String,Object> proof(String mode,String ipv4,String time){
+        return Map.of("releaseMode",mode,"egressIpv4",ipv4,"serviceAccessRevoked",true,
+                "verifiedAt",time);
+    }
+
 }
