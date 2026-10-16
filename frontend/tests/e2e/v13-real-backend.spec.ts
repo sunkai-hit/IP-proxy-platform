@@ -76,20 +76,12 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('线路当前拨号公网IP（非固定出口）')).toBeVisible()
     // Same Vue component is reused: without watching route.fullPath this kept
     // displaying the previous line after navigating to its ROS and CentOS.
-    await page.getByRole('button', { name: /所属ROS/ }).count().then(async count => {
-      if (count === 0) {
-        await page.locator('.el-descriptions-item__label').filter({ hasText: '所属ROS' }).first()
-          .locator('..').getByRole('button').click()
-      } else {
-        await page.getByRole('button', { name: /所属ROS/ }).first().click()
-      }
-    })
+    await page.locator('.el-descriptions').getByRole('button').first().click()
     await expect(page).toHaveURL(/\/resources\/ros\/\d+$/)
     await expect(page.getByRole('heading', { name: 'ROS详情' })).toBeVisible()
     await expect(page.getByText('ROS拨号运行信息')).toBeVisible()
     await expect(page.getByText('线路基础信息')).toHaveCount(0)
-    await page.locator('.el-descriptions-item__label').filter({ hasText: '对应CentOS' }).first()
-      .locator('..').getByRole('button').click()
+    await page.locator('.el-descriptions').getByRole('button').first().click()
     await expect(page).toHaveURL(/\/resources\/centos\/\d+$/)
     await expect(page.getByRole('heading', { name: 'CentOS详情' })).toBeVisible()
     await expect(page.getByText('基础与运行信息')).toBeVisible()
