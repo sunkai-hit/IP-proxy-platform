@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class ProductGroupReadClientTest {
     private static final String KEY="product-read-only-secret-of-at-least-32-characters";
-    private static final String TIME="2026-10-15T02:00:00Z";
+    private static final String TIME=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).toString();
 
     @Test void gatewayDisabledWithoutUrlOrCredentialsAndCannotIssueRequests() {
         AtomicInteger requests=new AtomicInteger();
@@ -113,4 +113,77 @@ class ProductGroupReadClientTest {
                 });
         assertEquals("UNKNOWN",gateway.taskStatus("op-9").get("status"));
     }
+    private ProductGroupReadClient bridge(String payload){
+        return new ProductGroupReadClient("https://product.test",KEY,
+                new ObjectMapper(),(uri,key,id)->new ProductGroupReadClient.Received(200,payload));
+    }
+
+    @Test void expiredPoolSamplesCannotBeUsedAsCurrentCapacity(){
+        String old=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).minusHours(2).toString();
+        String payload="""
+            {"resources":[{"resourceId":"r-1","lineId":"line-1","mode":"LONG",
+            "health":"ONLINE","shareSlotsRemaining":5,"sampledAt":"%s"}],
+            "sampledAt":"%s"}
+            """.formatted(old,old);
+        assertEquals("PRODUCT_INTEGRATION_STALE_SAMPLE",
+                assertThrows(BusinessException.class,()->bridge(payload).longPool()).getCode());
+    }
+
+    @Test void recentHeaderWithStaleNestedDeviceSampleIsRejected(){
+        String old=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).minusHours(1).toString();
+        String payload="""
+            {"resources":[{"resourceId":"r-1","lineId":"line-1","mode":"SHORT",
+            "health":"ONLINE","sampledAt":"%s"}],"sampledAt":"%s"}
+            """.formatted(old,TIME);
+        assertEquals("PRODUCT_INTEGRATION_STALE_SAMPLE",
+                assertThrows(BusinessException.class,()->bridge(payload).shortPool()).getCode());
+    }
+
+    @Test void futureDatedSamplesCannotClaimCurrentVerification(){
+        String future=java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).plusMinutes(10).toString();
+        String service="""
+            {"serviceId":"service-7","actualStatus":"RUNNING","verificationStatus":"VERIFIED",
+            "sampledAt":"%s"}
+            """.formatted(future);
+        assertEquals("PRODUCT_INTEGRATION_STALE_SAMPLE",
+                assertThrows(BusinessException.class,()->bridge(service).actualService("service-7")).getCode());
+        String capabilities="""
+            {"productTypes":["SHORT_IP","LONG_IP"],"supportsFixedEgress":true,"sampledAt":"%s"}
+            """.formatted(future);
+        assertEquals("PRODUCT_INTEGRATION_STALE_SAMPLE",
+                assertThrows(BusinessException.class,()->bridge(capabilities).capabilities()).getCode());
+    }
+
+    @Test void malformedCapacityCountsAndDuplicateResourceIdsFailClosed(){
+        for(String badCount:java.util.List.of("-1","1.5","\"many\"","true")){
+            String sample="""
+                {"resources":[{"resourceId":"r-1","lineId":"line-1","mode":"LONG",
+                "health":"ONLINE","activeUserCount":%s,"sampledAt":"%s"}],"sampledAt":"%s"}
+                """.formatted(badCount,TIME,TIME);
+            assertEquals("PRODUCT_INTEGRATION_INVALID_RESPONSE",
+                    assertThrows(BusinessException.class,()->bridge(sample).longPool()).getCode());
+        }
+        String duplicate="""
+            {"resources":[{"resourceId":"r-1","lineId":"l-1","mode":"SHORT",
+              "health":"ONLINE","sampledAt":"%s"},
+             {"resourceId":"r-1","lineId":"l-2","mode":"SHORT",
+              "health":"ONLINE","sampledAt":"%s"}],"sampledAt":"%s"}
+            """.formatted(TIME,TIME,TIME);
+        assertEquals("PRODUCT_INTEGRATION_INVALID_RESPONSE",
+                assertThrows(BusinessException.class,()->bridge(duplicate).shortPool()).getCode());
+    }
+
+    @Test void booleanCapabilityAndTerminalTaskAcceptanceMustMatchContract(){
+        String badCapabilities="""
+            {"productTypes":["SHORT_IP"],"supportsExclusiveIpv4":"true","sampledAt":"%s"}
+            """.formatted(TIME);
+        assertEquals("PRODUCT_INTEGRATION_INVALID_RESPONSE",
+                assertThrows(BusinessException.class,()->bridge(badCapabilities).capabilities()).getCode());
+        String contradiction="""
+            {"operationId":"op-7","accepted":false,"status":"SUCCEEDED"}
+            """;
+        assertEquals("PRODUCT_INTEGRATION_INVALID_RESPONSE",
+                assertThrows(BusinessException.class,()->bridge(contradiction).taskStatus("op-7")).getCode());
+    }
+
 }

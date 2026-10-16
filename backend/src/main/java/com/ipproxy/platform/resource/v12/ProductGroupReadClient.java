@@ -14,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -25,6 +26,13 @@ import java.util.regex.Pattern;
 @Service
 public class ProductGroupReadClient {
     private static final Pattern SAFE_ID=Pattern.compile("[A-Za-z0-9_-]{1,128}");
+    // Conservative pre-signoff safety window: old/future-dated snapshots must not
+    // be presented as current capacity, service verification or device health.
+    // Contract-specific TTL remains a three-team integration signoff item.
+    private static final Duration MAX_SAMPLE_AGE=Duration.ofMinutes(15);
+    private static final Duration MAX_FUTURE_SKEW=Duration.ofMinutes(2);
+    private static final List<String> NONNEGATIVE_CAPACITY_FIELDS=List.of(
+            "activeUserCount","activeConnectionCount","maxCapacity","shareSlotsRemaining");
     private static final Set<String> RESOURCE_FIELDS=Set.of(
             "resourceId","lineId","deviceId","rosId","centosId","publicIpv4","mode","health",
             "region","operator","activeUserCount","activeConnectionCount","utilization",
@@ -70,15 +78,23 @@ public class ProductGroupReadClient {
 
     public Map<String,Object> capabilities(){
         JsonNode root=fetch("/product/v1/capabilities");
-        if(!root.path("productTypes").isArray()||!validTime(root,"sampledAt"))
-            throw invalid();
+        if(!root.path("productTypes").isArray())throw invalid();
+        requireFreshSample(root,"sampledAt");
+        Set<String> seen=new HashSet<>();
+        for(JsonNode type:root.path("productTypes"))
+            if(!type.isTextual()||type.asText().isBlank()||!seen.add(type.asText()))throw invalid();
+        for(String flag:List.of("supportsModeConversion","supportsShortMigration",
+                "supportsFixedEgress","supportsExclusiveIpv4","supportsProxyAuth",
+                "supportsIdempotentTasks"))
+            if(root.hasNonNull(flag)&&!root.path(flag).isBoolean())throw invalid();
         return clean(root,CAPABILITY_FIELDS);
     }
     public Map<String,Object> shortPool(){return pool("/product/v1/short-pool");}
     public Map<String,Object> longPool(){return pool("/product/v1/long-pool");}
     public Map<String,Object> actualService(String id){
         JsonNode root=fetch("/product/v1/services/"+checkedId(id));
-        if(!id.equals(text(root,"serviceId"))||!validTime(root,"sampledAt")
+        requireFreshSample(root,"sampledAt");
+        if(!id.equals(text(root,"serviceId"))
                 ||!Set.of("RUNNING","STOPPED","PENDING","ERROR","UNKNOWN")
                         .contains(text(root,"actualStatus"))
                 ||!Set.of("VERIFIED","FAILED","NOT_VERIFIED","UNKNOWN")
@@ -93,19 +109,30 @@ public class ProductGroupReadClient {
         if(!operationId.equals(text(root,"operationId"))
                 ||!Set.of("ACCEPTED","PENDING","RUNNING","VERIFYING","SUCCEEDED",
                         "FAILED","COMPENSATION_REQUIRED","UNKNOWN").contains(text(root,"status"))
-                ||!root.path("accepted").isBoolean())
+                ||!root.path("accepted").isBoolean()
+                ||("SUCCEEDED".equals(text(root,"status"))&&!root.path("accepted").asBoolean()))
             throw invalid();
+        if(root.hasNonNull("verifiedAt")&&!validTime(root,"verifiedAt"))throw invalid();
         return clean(root,TASK_FIELDS);
     }
 
     private Map<String,Object> pool(String path){
         JsonNode root=fetch(path);
-        if(!root.path("resources").isArray()||!validTime(root,"sampledAt"))throw invalid();
+        if(!root.path("resources").isArray())throw invalid();
+        requireFreshSample(root,"sampledAt");
         List<Map<String,Object>> resources=new ArrayList<>();
+        Set<String> resourceIds=new HashSet<>();
         for(JsonNode item:root.path("resources")){
             if(!item.isObject()||text(item,"resourceId").isBlank()||text(item,"lineId").isBlank()
                     ||text(item,"mode").isBlank()||text(item,"health").isBlank()
-                    ||!validTime(item,"sampledAt"))throw invalid();
+                    ||!resourceIds.add(text(item,"resourceId")))throw invalid();
+            requireFreshSample(item,"sampledAt");
+            for(String field:NONNEGATIVE_CAPACITY_FIELDS){
+                JsonNode n=item.get(field);
+                if(n!=null&&!n.isNull()&&(!n.isIntegralNumber()||!n.canConvertToLong()||n.longValue()<0))
+                    throw invalid();
+            }
+            if(item.hasNonNull("convertible")&&!item.path("convertible").isBoolean())throw invalid();
             resources.add(clean(item,RESOURCE_FIELDS));
         }
         Map<String,Object> result=new LinkedHashMap<>();
@@ -171,6 +198,15 @@ public class ProductGroupReadClient {
     private static boolean validTime(JsonNode root,String field) {
         try{OffsetDateTime.parse(text(root,field));return true;}
         catch(Exception e){return false;}
+    }
+    private static void requireFreshSample(JsonNode root,String field){
+        if(!validTime(root,field))throw invalid();
+        OffsetDateTime sampled=OffsetDateTime.parse(text(root,field));
+        OffsetDateTime now=OffsetDateTime.now(ZoneOffset.UTC);
+        if(sampled.isBefore(now.minus(MAX_SAMPLE_AGE))
+                ||sampled.isAfter(now.plus(MAX_FUTURE_SKEW)))
+            throw new BusinessException("PRODUCT_INTEGRATION_STALE_SAMPLE",
+                    "产品组样本已过期或时间异常，不能当作当前容量、服务或健康状态");
     }
     private Map<String,Object> clean(JsonNode root,Set<String> allowed){
         Map<String,Object> values=new LinkedHashMap<>();
