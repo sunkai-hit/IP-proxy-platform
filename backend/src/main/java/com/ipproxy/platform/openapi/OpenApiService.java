@@ -7,6 +7,10 @@ import com.ipproxy.platform.security.JwtProperties;
 import org.slf4j.MDC;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.crypto.Mac;
@@ -23,6 +27,12 @@ public class OpenApiService {
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper json;
     private final JwtProperties jwt;
+    // Old res_pool_ip / res_ip are management snapshots, not verified product capacity.
+    // Allow legacy synthetic extraction only with an explicit opt-in AND the mock profile.
+    @Value("${app.integration.legacy-short-extract-enabled:false}")
+    private boolean legacyShortExtractEnabled;
+    @Autowired(required=false)
+    private Environment environment;
 
     public OpenApiService(OpenApiMapper db,PasswordEncoder passwordEncoder,ObjectMapper json,JwtProperties jwt){this.db=db;this.passwordEncoder=passwordEncoder;this.json=json;this.jwt=jwt;}
 
@@ -85,6 +95,8 @@ public class OpenApiService {
         long start=System.nanoTime(); Access a=null; int returned=0; String result="FAILURE",errorCode=null,errorMessage=null; List<Map<String,Object>> items=new ArrayList<>(); Map<String,Object> resourceSummary=new LinkedHashMap<>();
         protocol=blank(protocol)?"HTTP":protocol.trim().toUpperCase(); region=n(region); carrier=n(carrier);
         try{
+            if(!legacyShortExtractEnabled||environment==null||!environment.acceptsProfiles(Profiles.of("m6-mock")))
+                throw err("OPEN_REAL_SHORT_POOL_NOT_CONNECTED","真实短效代理池尚未接入，旧IP快照禁止作为可交付代理地址");
             a=authenticate(rawToken);
             int single=intv(a.policy().get("singleExtractLimit"),100);
             if(amount<1||amount>single)throw err("OPEN_EXTRACT_AMOUNT_INVALID","提取数量必须在1到"+single+"之间");
