@@ -42,7 +42,7 @@ public class V12ServiceMapper {
     public long countServices(String keyword,String status,Long customerId,String productType,String deliveryMode){return jdbc.queryForObject("""
       SELECT count(*) FROM svc_instance s JOIN customer c ON c.id=s.customer_id WHERE s.deleted=FALSE
       AND (?='' OR s.service_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%') AND (?='' OR s.status=?)
-      AND (? IS NULL OR s.customer_id=?) AND (?='' OR s.product_type=?) AND (?='' OR s.delivery_mode=?)
+      AND (CAST(? AS BIGINT) IS NULL OR s.customer_id=CAST(? AS BIGINT)) AND (?='' OR s.product_type=?) AND (?='' OR s.delivery_mode=?)
       """,Long.class,keyword,keyword,keyword,status,status,customerId,customerId,productType,productType,deliveryMode,deliveryMode);}
     public List<Map<String,Object>> services(String keyword,String status,Long customerId,String productType,String deliveryMode,int size,int offset){return jdbc.queryForList("""
       SELECT s.id,s.service_no,s.customer_id,c.customer_code,c.customer_name,s.order_id,o.order_no,s.product_id,p.product_name,s.package_id,k.package_name,
@@ -52,7 +52,7 @@ public class V12ServiceMapper {
       FROM svc_instance s JOIN customer c ON c.id=s.customer_id LEFT JOIN biz_order o ON o.id=s.order_id JOIN prd_product p ON p.id=s.product_id LEFT JOIN prd_package k ON k.id=s.package_id
       LEFT JOIN res_supplier_purchase sp ON sp.id=s.supplier_purchase_id LEFT JOIN res_reverse_proxy rp ON rp.id=s.reverse_proxy_id
       WHERE s.deleted=FALSE AND (?='' OR s.service_no ILIKE '%'||?||'%' OR c.customer_name ILIKE '%'||?||'%') AND (?='' OR s.status=?)
-      AND (? IS NULL OR s.customer_id=?) AND (?='' OR s.product_type=?) AND (?='' OR s.delivery_mode=?) ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?
+      AND (CAST(? AS BIGINT) IS NULL OR s.customer_id=CAST(? AS BIGINT)) AND (?='' OR s.product_type=?) AND (?='' OR s.delivery_mode=?) ORDER BY s.created_at DESC,s.id DESC LIMIT ? OFFSET ?
       """,keyword,keyword,keyword,status,status,customerId,customerId,productType,productType,deliveryMode,deliveryMode,size,offset);}
     public Map<String,Object> service(Long id){return one("""
       SELECT s.*,c.customer_code,c.customer_name,o.order_no,p.product_code,p.product_name,k.package_code,k.package_name,sp.purchase_no,sp.supplier_package_name,rp.proxy_no,rp.platform_host,rp.platform_port,rp.status reverse_proxy_status
