@@ -4,10 +4,16 @@ import {useRoute,useRouter} from 'vue-router'
 import {longMonitorApi} from '@/api/longMonitor'
 import {useAuthStore} from '@/stores/auth'
 const route=useRoute(),router=useRouter(),auth=useAuthStore()
-const rows=ref<any[]>([]),total=ref(0),loading=ref(false)
+const rows=ref<any[]>([]),total=ref(0),loading=ref(false),loadError=ref(false),requestVersion=ref(0)
 const q=reactive<any>({page:1,size:20,status:'',customerId:route.query.customerId?Number(route.query.customerId):undefined,monitorId:route.query.monitorId?Number(route.query.monitorId):undefined})
 const data=(r:any)=>r.data.data
-async function load(){loading.value=true;try{const d=data(await longMonitorApi.notifications(q));rows.value=d.items||[];total.value=d.total||0}finally{loading.value=false}}
+async function load(){
+ const version=++requestVersion.value,params={...q}
+ loading.value=true;loadError.value=false;rows.value=[];total.value=0
+ try{const d=data(await longMonitorApi.notifications(params));if(version!==requestVersion.value)return;rows.value=d.items||[];total.value=d.total||0}
+ catch{if(version===requestVersion.value)loadError.value=true}
+ finally{if(version===requestVersion.value)loading.value=false}
+}
 function clearScope(){q.customerId=undefined;q.monitorId=undefined;q.page=1;router.replace('/long-monitor/notifications');load()}
 onMounted(load)
 </script>
@@ -16,7 +22,7 @@ onMounted(load)
  <h2>通知记录</h2>
  <p>按长效监控、告警及客户查看钉钉/飞书发送结果。发送成功不代表代理目标已恢复。</p>
 </div>
-<el-card shadow="never">
+<el-alert v-if="loadError" type="error" :closable="false" title="通知记录查询失败，不能据此认定消息发送成功或不存在。"/><el-button v-if="loadError" @click="load">重新查询通知记录</el-button><el-card shadow="never">
  <div class="filters">
   <el-select v-model="q.status" placeholder="发送状态" clearable>
    <el-option v-for="x in ['SUCCESS','FAILED']" :key="x" :label="x" :value="x"/>
@@ -27,7 +33,7 @@ onMounted(load)
   <el-button v-if="q.customerId||q.monitorId" @click="clearScope">查看全部通知</el-button>
  </div>
  <el-alert type="info" :closable="false" title="此处是发送结果记录，未上报不代表发送成功；如需确认网络恢复，必须检查关联监控的实际检测记录。"/>
- <el-table :data="rows" v-loading="loading" stripe style="margin-top:12px">
+ <el-table :data="rows" v-loading="loading" :empty-text="loadError?'通知查询失败':'暂无已记录的通知'" stripe style="margin-top:12px">
   <el-table-column prop="created_at" label="创建时间" min-width="168"/>
   <el-table-column prop="customer_name" label="客户" min-width="130"/>
   <el-table-column label="监控编号" min-width="172"><template #default="s">
