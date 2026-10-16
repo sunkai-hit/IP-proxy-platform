@@ -26,6 +26,18 @@ EXPECTED = {
     *(f"F{i:02}" for i in range(1, 7)),
 }
 ROW = re.compile(r"^\|\s*([A-F][0-9]{2})\s*\|\s*([^|]+)\|\s*\x60(GET|POST|PUT|PATCH|DELETE)\x60\s*\|\s*\x60(/(?:product|business)/v1/[^\x60 ]+)\x60\s*\|")
+# V1.0 66-page / 31-item agreed CANDIDATE, not yet signed remotely.
+# V1.1 97-page / 33-item editorial draft reassigns F01-F06 meanings and
+# introduces F07/F08. A count-only check would silently accept the wrong API.
+CANONICAL_F = {
+    "F01": ("查询线路拨号与公网 IP 变化日志", "GET", "/product/v1/lines/{lineId}/events"),
+    "F02": ("查询与执行域名解析变更", "POST", "/product/v1/dns/actions"),
+    "F03": ("配置和检测外部反向代理", "POST", "/product/v1/reverse-proxies/actions"),
+    "F04": ("执行已授权短效 IP 提取", "POST", "/product/v1/short-ip/extract"),
+    "F05": ("执行设备及线路受控操作", "POST", "/product/v1/device-actions"),
+    "F06": ("查询产品真实日志与专项探测", "GET", "/product/v1/observability/logs"),
+}
+
 
 def version_markers(path: Path) -> set[str]:
     """Read OOXML text, including tables and the cover, without Word automation."""
@@ -52,7 +64,13 @@ def main() -> int:
     assert all(x.startswith(("/product/v1/", "/business/v1/")) for *_, x in rows)
     assert all("待双方签收" in line for line in lines if ROW.match(line)), (
         "a candidate row changed signoff state without a separate evidence review")
-    print("PASS: 31 distinct candidate methods/paths from 66-page interface signoff index")
+    by_id = {identifier: (name, method, path) for identifier, name, method, path in rows}
+    for identifier, canonical in CANONICAL_F.items():
+        assert by_id[identifier] == canonical, (
+            f"F-series contract meaning changed for {identifier}: got {by_id[identifier]!r}, "
+            f"expected {canonical!r}. V1.1 33-item draft uses F01-F08 with shifted "
+            "meanings; do not silently import its IDs into the 31-item V1.0 baseline.")
+    print("PASS: 31 distinct candidate methods/paths; F01-F06 meanings pinned against incompatible 33-item V1.1 renumbering")
     for filename, expected in [
         ("IP代理管理平台需求说明书 V1.3.docx", "V1.3"),
         ("IP代理管理平台需求说明书 V1.3 概要版.docx", "V1.3"),
