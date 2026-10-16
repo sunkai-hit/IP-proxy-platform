@@ -1,0 +1,29 @@
+name: One-time cleanup merged PR33
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/v13-cleanup-pr33-once.yml'
+permissions:
+  contents: write
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Delete exact fully merged branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='fix/v13-a2-lifecycle-review-safety-20261016'
+          expected='68212bccace886cc13dd5f1ca66e9cbf17251f84'
+          current="$(git ls-remote origin "refs/heads/${branch}" | cut -f1)"
+          if [[ -z "${current}" ]]; then echo 'Already absent'; exit 0; fi
+          if [[ "${current}" != "${expected}" ]]; then echo "::error::Branch moved"; exit 1; fi
+          git fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+          if ! git merge-base --is-ancestor "${current}" "${GITHUB_SHA}"; then echo "::error::Not merged"; exit 1; fi
+          git push --force-with-lease="refs/heads/${branch}:${current}" origin ":refs/heads/${branch}"
+          echo 'Removed merged PR33 branch'
