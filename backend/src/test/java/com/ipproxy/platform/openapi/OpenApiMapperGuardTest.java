@@ -16,6 +16,18 @@ import static org.mockito.Mockito.mock;
  */
 class OpenApiMapperGuardTest {
     @Test
+    void existingGrantCannotReadOtherCustomersAccountOrService() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        new OpenApiMapper(jdbc).accessContext(42L);
+        String sql = (String) Mockito.mockingDetails(jdbc)
+                .getInvocations().iterator().next().getArgument(0);
+        assertTrue(sql.contains("a.customer_id=g.customer_id"),
+                "legacy grant account must still belong to the current customer");
+        assertTrue(sql.contains("s.customer_id=g.customer_id"),
+                "legacy grant service must still belong to the current customer");
+    }
+
+    @Test
     void occupiedLongAndExclusiveIpv4MustNotBeSelectedFromLegacyShortPool() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         new OpenApiMapper(jdbc).selectIps(1L, 2L, 3, "", "", 0);
