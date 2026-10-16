@@ -1227,4 +1227,98 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     expect(writes).toHaveLength(0)
     await expect(page.getByRole('button',{name:'确认归档'})).toBeEnabled()
   })
+
+  test('A3 pool ledger API failure never presents stale source pools as empty or valid', async ({ page }) => {
+    expect(poolId).toBeTruthy()
+    await page.goto(base+'/resource-pools')
+    await expect(page.getByText('V12 Shared Pool')).toBeVisible()
+    const url='**/api/admin/v1/v12/resource-pools?*'
+    await page.route(url,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_POOL_LEDGER_DOWN',message:'offline synthetic outage'})
+    }))
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('资源池列表查询失败，不能据此认为没有资源池或来源线路。')).toBeVisible()
+    await expect(page.getByText('V12 Shared Pool')).toHaveCount(0)
+    await page.unroute(url)
+    const retry=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/resource-pools')
+    await page.getByRole('button',{name:'重新加载资源池列表'}).click()
+    expect((await retry).status()).toBe(200)
+    await expect(page.getByText('V12 Shared Pool')).toBeVisible()
+  })
+
+  test('A3 pool master failure displays unknown metrics and disables line mutations until retry', async ({ page }) => {
+    expect(poolId).toBeTruthy()
+    const url='**/api/admin/v1/v12/resource-pools/'+poolId
+    await page.goto(base+'/resource-pools/'+poolId)
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toBeVisible()
+    await page.route(url,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_POOL_MASTER_DOWN',message:'offline synthetic outage'})
+    }))
+    await page.getByRole('button',{name:'刷新'}).click()
+    await expect(page.getByText('资源池详情读取失败，来源、线路数和服务占用均未知，不能依据旧池资料操作。')).toBeVisible()
+    await expect(page.locator('.metric-grid strong').first()).toHaveText('—')
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toHaveCount(0)
+    const add=page.getByRole('button',{name:'添加线路'})
+    await expect(add).toBeDisabled()
+    await page.unroute(url)
+    await page.getByRole('button',{name:'重新加载资源池详情'}).click()
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toBeVisible()
+    await expect(page.getByText('资源池详情读取失败，来源、线路数和服务占用均未知，不能依据旧池资料操作。')).toHaveCount(0)
+    await expect(add).toBeEnabled()
+  })
+
+  test('A3 pool member list outage explicitly blocks source member removal and can retry', async ({ page }) => {
+    expect(poolId).toBeTruthy()
+    await page.goto(base+'/resource-pools/'+poolId)
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toBeVisible()
+    const url='**/api/admin/v1/v12/resource-pools/'+poolId+'/lines?*'
+    await page.route(url,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_POOL_MEMBER_DOWN',message:'offline synthetic outage'})
+    }))
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('资源池线路成员读取失败，不能据此认为没有可用线路或在用成员。')).toBeVisible()
+    await expect(page.locator('.el-table__body tr').filter({hasText:'CI-'})).toHaveCount(0)
+    await page.unroute(url)
+    await page.getByRole('button',{name:'重新加载线路成员'}).click()
+    await expect(page.getByText('资源池线路成员读取失败，不能据此认为没有可用线路或在用成员。')).toHaveCount(0)
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+  })
+
+  test('A3 SPA pool identity change ignores delayed old pool response', async ({ page }) => {
+    expect(poolId).toBeTruthy()
+    await page.goto(base+'/resource-pools/'+poolId)
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toBeVisible()
+    const oldId=900992,newId=900993
+    await page.route('**/api/admin/v1/v12/resource-pools/'+oldId,async route=>{
+      await new Promise(r=>setTimeout(r,1000))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{
+          id:oldId,pool_code:'CI-OLD-POOL',pool_name:'CI OLD Pool',ros_count:99,line_count:99
+        }})})
+    })
+    await page.route('**/api/admin/v1/v12/resource-pools/'+newId,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        id:newId,pool_code:'CI-NEW-POOL',pool_name:'CI NEW Pool',ros_count:1,line_count:2
+      }})
+    }))
+    await page.evaluate(async()=>{
+      const router=(document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router
+      await router.push('/resource-pools/900992')
+    })
+    await page.evaluate(async()=>{
+      const router=(document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router
+      await router.push('/resource-pools/900993')
+    })
+    await expect(page.getByRole('heading',{name:'CI NEW Pool'})).toBeVisible()
+    await expect(page.getByText('CI-NEW-POOL',{exact:true})).toBeVisible()
+    await page.waitForTimeout(1300)
+    await expect(page.getByRole('heading',{name:'CI OLD Pool'})).toHaveCount(0)
+    await expect(page.getByText('CI-OLD-POOL',{exact:true})).toHaveCount(0)
+    await expect(page.locator('.metric-grid strong').first()).toHaveText('1')
+  })
 })
