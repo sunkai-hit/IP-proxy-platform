@@ -92,6 +92,30 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.locator('.el-table__body tr').first()).toBeVisible()
   })
 
+  test('resource pool audit HTTP error must be visible and recoverable, not a false empty table', async ({ page }) => {
+    expect(poolId).toBeTruthy()
+    const auditUrl = '**/api/admin/v1/v12/resource-pools/' + poolId + '/operations*'
+    await page.route(auditUrl, async route => {
+      await route.fulfill({
+        status: 500, contentType: 'application/json',
+        body: JSON.stringify({ code: 'CI_FORCED_AUDIT_FAILURE', message: 'forced audit failure' }),
+      })
+    })
+    await page.goto(base + '/resource-pools/' + poolId)
+    await page.getByRole('tab', { name: '变更记录' }).click()
+    await expect(page.getByText('变更记录查询失败或无权限，不能据此认为没有变更记录。')).toBeVisible()
+    await expect(page.getByText('变更记录加载失败')).toBeVisible()
+
+    await page.unroute(auditUrl)
+    const recovered = page.waitForResponse(r =>
+      r.url().includes('/v12/resource-pools/' + poolId + '/operations') &&
+      r.request().method() === 'GET')
+    await page.getByRole('button', { name: '重新加载变更记录' }).click()
+    expect((await recovered).status()).toBe(200)
+    await expect(page.getByText('变更记录查询失败或无权限，不能据此认为没有变更记录。')).toHaveCount(0)
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+  })
+
   test('eight primary business lists render through one authenticated session', async ({ page }) => {
     const paths = [
       '/customers', '/orders', '/services', '/resource-pools',
