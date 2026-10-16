@@ -1021,4 +1021,63 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(proxy.getByText('PENDING', { exact:true })).toBeVisible()
     await expect(page.getByText('真实网关验证通过')).toHaveCount(0)
   })
+
+  test('A2 service change fails closed if service state cannot be queried, then recovers from PostgreSQL', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    const api='**/api/admin/v1/services?*'
+    await page.route(api, route => route.fulfill({
+      status:503, contentType:'application/json',
+      body:JSON.stringify({code:'CI_SERVICE_CHOICES_DOWN',message:'synthetic outage'})
+    }))
+    await page.goto(base+'/service-changes?serviceId='+serviceId+'&action=suspend')
+    await expect(page.getByText('服务清单或目标服务读取失败，不能确认当前服务、到期与宽限状态；禁止执行生命周期变更。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'预览并确认暂停'})).toBeDisabled()
+    await expect(page.getByText('业务状态',{exact:true})).toHaveCount(0)
+    await page.unroute(api)
+    const reloaded=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/services')
+    await page.getByRole('button',{name:'重新加载服务清单'}).click()
+    expect((await reloaded).status()).toBe(200)
+    await expect(page.getByText('服务清单或目标服务读取失败，不能确认当前服务、到期与宽限状态；禁止执行生命周期变更。')).toHaveCount(0)
+    await expect(page.getByText('业务状态',{exact:true})).toBeVisible()
+  })
+
+  test('A2 canceling the confirmed change cannot submit a network or management write', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    await page.goto(base+'/service-changes?serviceId='+serviceId+'&action=suspend')
+    await expect(page.getByText('业务状态',{exact:true})).toBeVisible()
+    const attempts:string[]=[]
+    page.on('request',request=>{
+      if(request.method()==='POST' && /\/api\/admin\/v1\/services\/\d+\/(suspend|resume|renew|terminate)$/.test(new URL(request.url()).pathname))
+        attempts.push(request.url())
+    })
+    await page.getByPlaceholder('填写可审计的业务原因').fill('CI A2 preview cancellation test')
+    await page.getByRole('button',{name:'预览并确认暂停'}).click()
+    const prompt=page.locator('.el-message-box')
+    await expect(prompt).toContainText('核对服务与影响后确认')
+    await prompt.getByRole('button',{name:'返回修改'}).click()
+    await expect(prompt).toHaveCount(0)
+    expect(attempts).toHaveLength(0)
+  })
+
+  test('A5 monitor overview outage shows unknown not healthy zero and retries real backend', async ({ page }) => {
+    await page.goto(base+'/long-monitor')
+    await expect(page.getByText('监控总数',{exact:true})).toBeVisible()
+    const api='**/api/admin/v1/long-monitor/overview'
+    await page.route(api,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_MONITOR_OVERVIEW_DOWN',message:'synthetic outage'})
+    }))
+    await page.getByRole('button',{name:'刷新总览'}).click()
+    await expect(page.getByText('长效监控总览读取失败，统计值未知，不能据此认定没有异常代理、开放告警或失败通知。')).toBeVisible()
+    await expect(page.locator('.cards .el-card strong')).toHaveCount(6)
+    for(const item of await page.locator('.cards .el-card strong').all())await expect(item).toHaveText('—')
+    await page.unroute(api)
+    const reloaded=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/long-monitor/overview')
+    await page.getByRole('button',{name:'重新加载监控总览'}).click()
+    expect((await reloaded).status()).toBe(200)
+    await expect(page.getByText('长效监控总览读取失败，统计值未知，不能据此认定没有异常代理、开放告警或失败通知。')).toHaveCount(0)
+    await expect(page.locator('.cards .el-card strong').first()).toHaveText(/^\\d+$/)
+  })
 })
