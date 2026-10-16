@@ -1,37 +1,48 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
-import {ElMessage} from 'element-plus'
 import {customerApi} from '@/api/customer'
 import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),id=Number(route.params.id)
+const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
 const detail=ref<any>(null),credentials=ref<any[]>([]),orders=ref<any[]>([])
-const ordersTruncated=ref(false),loading=ref(false),ordersError=ref(false)
+const ordersTruncated=ref(false),loading=ref(false),ordersError=ref(false),credentialsError=ref(false),detailError=ref(false),requestVersion=ref(0)
 const fmt=(v:any)=>v===null||v===undefined||v===''?'—':String(v)
 async function load(){
- loading.value=true;ordersError.value=false
+ const version=++requestVersion.value,customerId=id
+ loading.value=true;detailError.value=false;ordersError.value=false;credentialsError.value=false
+ detail.value=null;orders.value=[];credentials.value=[];ordersTruncated.value=false
  try{
-  detail.value=(await customerApi.detail(id)).data.data
+  const response=await customerApi.detail(customerId)
+  if(version!==requestVersion.value)return
+  const record=response.data.data
+  if(!record?.customer?.customer_code){detailError.value=true;return}
+  detail.value=record
   const extra=await Promise.allSettled([
-   auth.hasPermission('customer:credential:read')?customerApi.credentials(id):Promise.resolve(null),
-   auth.hasPermission('order:read')?businessRelationsApi.customerOrders(id):Promise.resolve(null)
+   auth.hasPermission('customer:credential:read')?customerApi.credentials(customerId):Promise.resolve(null),
+   auth.hasPermission('order:read')?businessRelationsApi.customerOrders(customerId):Promise.resolve(null)
   ])
+  if(version!==requestVersion.value)return
   if(extra[0].status==='fulfilled')credentials.value=extra[0].value?.data?.data||[]
-  else{credentials.value=[];ElMessage.warning('服务凭证关联查询未完成')}
+  else credentialsError.value=true
   if(extra[1].status==='fulfilled'){
    orders.value=extra[1].value?.data?.data?.items||[]
    ordersTruncated.value=!!extra[1].value?.data?.data?.truncated
-  }else{orders.value=[];ordersError.value=true}
- }finally{loading.value=false}
+  }else ordersError.value=true
+ }catch{if(version===requestVersion.value){detailError.value=true;detail.value=null}}
+ finally{if(version===requestVersion.value)loading.value=false}
 }
+watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 function openOrder(newOrder=false){router.push({path:'/orders',query:{customerId:String(id),...(newOrder?{newOrder:'1'}:{})}})}
 function openService(serviceId:number){router.push('/services/'+serviceId)}
 function metric(v:any){return v==null?'—':v}
 onMounted(load)
 </script>
 <template>
-<div v-if="detail" v-loading="loading" class="page">
+<div class="page" v-loading="loading">
+ <el-alert v-if="detailError" type="error" :closable="false" title="客户详情读取失败，无法确认客户身份、订单权益或服务凭证。"/>
+ <el-button v-if="detailError" @click="load">重新加载客户详情</el-button>
+ <template v-if="detail">
  <div class="head">
   <div><el-button link @click="router.push('/customers')">← 返回客户列表</el-button>
    <h2>{{detail.customer.customer_name}}</h2><p>{{detail.customer.customer_code}}</p></div>
@@ -124,6 +135,7 @@ onMounted(load)
    </el-tab-pane>
   </el-tabs>
  </el-card>
+</template>
 </div>
 </template>
 <style scoped>
