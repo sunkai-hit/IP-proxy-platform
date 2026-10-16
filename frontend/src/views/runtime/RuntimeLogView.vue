@@ -59,8 +59,8 @@ function canNavigate(row:any){
  const path=String(row?.relatedPath||'')
  if(/^\/orders\/[0-9]+$/.test(path))return auth.hasPermission('order:read')
  if(/^\/services\/[0-9]+$/.test(path))return auth.hasPermission('service:read')
- if(/^\/resources\/lines\/[0-9]+$/.test(path))return auth.hasPermission('resource:line:read')
- if(/^\/resources\/(centos|ros)\/[0-9]+$/.test(path))return auth.hasPermission('resource:device:read')
+ if(/^\/resources\/lines\/[0-9]+$/.test(path))return auth.hasPermission('resource:read')
+ if(/^\/resources\/(centos|ros)\/[0-9]+$/.test(path))return auth.hasPermission('resource:read')
  if(/^\/domains\/[0-9]+$/.test(path))return auth.hasPermission('resource:domain:read')
  if(/^\/reverse-proxies\/[0-9]+$/.test(path))return auth.hasPermission('resource:reverse-proxy:read')
  return false
