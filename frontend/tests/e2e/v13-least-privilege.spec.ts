@@ -79,7 +79,8 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
       }),
       check('/api/admin/v1/v12/resources/lines'),
       check('/api/admin/v1/v12/resource-pools'),
-      check('/api/admin/v1/v12/resource-pools/1/operations')
+      check('/api/admin/v1/v12/resource-pools/1/operations'),
+      check('/api/admin/v1/runtime-logs/v12/operation')
     ])
   }, { customerId, serviceId })
   for (const result of denied) {
