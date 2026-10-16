@@ -1698,4 +1698,82 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.getByRole('tab',{name:/实际关联服务 \(3\)/}).click()
     await expect(page.locator('.el-tab-pane:visible .el-table__body tr')).toHaveCount(3)
   })
+
+  test('A2 backend business FAILED release is never presented as completed service termination',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const sid=Number(serviceId)
+    await page.route('**/api/admin/v1/services?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({
+        code:'OK',data:{items:[{id:sid,service_no:'CI-A2-FAILED-LIFECYCLE',customer_name:'CI Customer',
+          customer_id:Number(customerId),product_name:'CI Long Product',product_type:'LONG_IP',
+          status:'ACTIVE',delivery_stage:'MOCK_ONLY',expire_at:'2026-10-20T00:00:00Z'}],total:1}
+      })
+    }))
+    let submitted=0
+    await page.route('**/api/admin/v1/services/'+sid+'/terminate',route=>{
+      submitted++
+      return route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{status:'FAILED',message:'EXTERNAL_RELEASE_NOT_VERIFIED'}})})
+    })
+    await page.goto(base+'/service-changes?serviceId='+sid+'&action=terminate')
+    await expect(page.getByText('CI-A2-FAILED-LIFECYCLE').first()).toBeVisible()
+    await page.getByPlaceholder('填写可审计的业务原因').fill('CI A2 mock product release not verified')
+    await page.getByRole('button',{name:'预览并确认终止'}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('核对服务与影响后确认')
+    await box.locator('.el-message-box__btns .el-button--primary').click()
+    await expect(page.getByText('后端返回未完成状态，不能认定已停服、恢复或释放')).toBeVisible()
+    await expect(page.getByText('EXTERNAL_RELEASE_NOT_VERIFIED')).toBeVisible()
+    await expect(page.getByText('操作未确认成功',{exact:true})).toBeVisible()
+    expect(submitted).toBe(1)
+    await expect(page.getByText(/管理面结果已返回（并非真实交付验收）/)).toHaveCount(0)
+  })
+
+  test('A2 lifecycle result cannot leak into a different selected service while backend response is delayed',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const sid=Number(serviceId),other=sid+900000
+    await page.route('**/api/admin/v1/services?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({
+        code:'OK',data:{items:[
+          {id:sid,service_no:'CI-A2-OLD-SERVICE',customer_name:'CI Customer',customer_id:Number(customerId),
+            product_name:'CI Long',status:'ACTIVE',delivery_stage:'MOCK_ONLY'},
+          {id:other,service_no:'CI-A2-NEW-SERVICE',customer_name:'CI Customer',customer_id:Number(customerId),
+            product_name:'CI Long',status:'ACTIVE',delivery_stage:'MOCK_ONLY'}
+        ],total:2}
+      })
+    }))
+    await page.route('**/api/admin/v1/services/'+sid+'/terminate',async route=>{
+      await new Promise(resolve=>setTimeout(resolve,900))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{status:'FAILED',message:'OLD_SERVICE_NOT_RELEASED'}})})
+    })
+    await page.goto(base+'/service-changes?serviceId='+sid+'&action=terminate')
+    await page.getByPlaceholder('填写可审计的业务原因').fill('CI A2 delayed old service')
+    await page.getByRole('button',{name:'预览并确认终止'}).click()
+    await page.locator('.el-message-box').last().locator('.el-message-box__btns .el-button--primary').click()
+    await page.locator('.el-select').first().click()
+    await page.getByRole('option',{name:/CI-A2-NEW-SERVICE/}).click()
+    await expect(page.getByText('CI-A2-NEW-SERVICE').first()).toBeVisible()
+    await page.waitForTimeout(1200)
+    await expect(page.getByText('OLD_SERVICE_NOT_RELEASED')).toHaveCount(0)
+    await expect(page.getByText('操作未确认成功',{exact:true})).toHaveCount(0)
+    await expect(page.getByText(/管理面结果已返回（并非真实交付验收）/)).toHaveCount(0)
+  })
+
+  test('A2 expiry scan confirmation is serialized; cancellation has no database write',async({page})=>{
+    await page.goto(base+'/service-releases')
+    const sent:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&new URL(r.url()).pathname.includes('/service-expiry/reconcile'))sent.push(r.url())
+    })
+    const trigger=page.getByRole('button',{name:'扫描到期任务'})
+    await trigger.click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('受控扫描到期任务')
+    await expect(trigger).toBeDisabled()
+    await box.locator('.el-message-box__btns .el-button').first().click()
+    expect(sent).toHaveLength(0)
+    await expect(trigger).toBeEnabled()
+    await expect(page.getByText('任务扫描已完成',{exact:false})).toHaveCount(0)
+  })
 })

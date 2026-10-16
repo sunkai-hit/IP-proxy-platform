@@ -154,16 +154,35 @@ async function submit(){
     else if(frozen.action==='suspend')r=await orderServiceApi.suspend(frozen.serviceId,frozen.reason)
     else if(frozen.action==='resume')r=await orderServiceApi.resume(frozen.serviceId,frozen.reason)
     else r=await orderServiceApi.terminate(frozen.serviceId,frozen.reason)
-    result.value={action:actionLabels[frozen.action],service:frozen.serviceNo,managementResult:r?.data?.data?.status||'操作已受理',verified:false}
-    ElMessage.success('管理面请求已返回；请核查真实交付/访问状态')
+    if(beforeVersion!==serviceLoadVersion.value||Number(form.serviceId)!==frozen.serviceId||
+       form.action!==frozen.action){
+      ElMessage.warning('原服务管理请求已返回，但页面已切换服务或操作；请到原服务回查结果')
+      return
+    }
+    const returned=r?.data?.data||{}
+    if(['FAILED','PARTIAL_SUCCESS','RELEASE_BLOCKED'].includes(String(returned.status||''))){
+      result.value={action:actionLabels[frozen.action],service:frozen.serviceNo,failed:true,
+        message:returned.message||returned.errorMessage||'产品/资源动作未完成或未核验，请查询原服务任务'}
+      ElMessage.error('后端返回未完成状态，不能认定已停服、恢复或释放')
+      await load()
+      return
+    }
+    result.value={action:actionLabels[frozen.action],service:frozen.serviceNo,
+       managementResult:returned.status||'管理请求已返回',verified:false}
+    ElMessage.warning('管理面请求已返回；实际网络状态和合同期限请独立回查')
     await load()
-  }catch(err:any){result.value={action:actionLabels[frozen.action],failed:true,message:err?.response?.data?.message||err?.message||'请求失败'};ElMessage.error('变更未确认成功，请查询任务与服务状态')}
-  finally{saving.value=false}
+  }catch(err:any){
+    if(beforeVersion===serviceLoadVersion.value&&Number(form.serviceId)===frozen.serviceId&&form.action===frozen.action){
+      result.value={action:actionLabels[frozen.action],service:frozen.serviceNo,failed:true,
+        message:err?.response?.data?.message||err?.message||'请求失败'}
+      ElMessage.error('变更未确认成功，请查询任务与服务状态，不要盲目重复执行')
+    }else ElMessage.warning('原服务变更请求未确认；页面已切换，请回原服务查阅任务及审计')
+  }finally{saving.value=false}
 }
 watch(()=>route.query.serviceId,v=>{if(v)form.serviceId=Number(v)})
 watch(()=>route.query.action,v=>{const a=String(v||'');if(['renew','suspend','resume','terminate'].includes(a))form.action=a})
-watch(()=>form.serviceId,loadRenewalOrders)
-watch(()=>form.action,loadRenewalOrders)
+watch(()=>form.serviceId,()=>{result.value=null;void loadRenewalOrders()})
+watch(()=>form.action,()=>{result.value=null;void loadRenewalOrders()})
 onMounted(reloadServices)
 </script>
 <template>

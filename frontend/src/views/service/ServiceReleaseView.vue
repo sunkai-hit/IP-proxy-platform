@@ -41,18 +41,29 @@ async function load(){
  loading.value=false
 }
 async function reconcile(){
- const {value}=await ElMessageBox.prompt(
-  '只会扫描到期并登记待处理任务，不会假装停服、释放出口或自动向供应商采购。请填写操作原因。',
-  '受控扫描到期任务',
-  {type:'warning',inputValidator:v=>!!String(v||'').trim()||'需要审计原因'}
- )
+ if(scanning.value||!auth.hasPermission('service:release')){
+  ElMessage.warning('扫描正在执行或当前无到期/释放管理权限')
+  return
+ }
  scanning.value=true
+ lastScan.value=null
  try{
-  lastScan.value=data(await orderServiceApi.reconcileExpiry(String(value).trim()))
-  ElMessage.success('任务扫描已完成；真实停服与回收仍需要执行回执')
+  const {value}=await ElMessageBox.prompt(
+   '只会扫描到期并登记待处理任务，不会假装停服、释放出口或自动向供应商采购。请填写操作原因。',
+   '受控扫描到期任务',
+   {type:'warning',inputValidator:v=>!!String(v||'').trim()||'需要审计原因'}
+  )
+  if(!auth.hasPermission('service:release')){
+   ElMessage.error('确认期间权限已变化，未提交到期扫描')
+   return
+  }
+  const response=data(await orderServiceApi.reconcileExpiry(String(value).trim()))
+  lastScan.value=response||null
+  ElMessage.warning('任务扫描请求已返回；请回查队列与实际执行回执，不能认定已经停服或释放')
   await load()
- }catch{ElMessage.error('扫描未完成，请核查权限及后端日志')}
- finally{scanning.value=false}
+ }catch(e:any){
+  if(e!=='cancel'&&e!=='close')ElMessage.error('扫描结果未确认，请核查任务记录与后端审计，避免重复发起')
+ }finally{scanning.value=false}
 }
 async function reloadTask(){
  const key=selectedOperationKey.value,version=++taskRequestVersion
