@@ -91,4 +91,31 @@ class ProductGroupStopClientTest {
             (uri,key,id,body)->{fail("Must not call unsafe URL");return null;});
         assertFalse(unsafe.ready());
     }
+    @Test void releaseInvalidIpv4NeverReachesTheProductGateway(){
+        AtomicInteger calls=new AtomicInteger();
+        ProductGroupStopClient client=new ProductGroupStopClient(
+                "https://proxy.example.test",TOKEN,true,new ObjectMapper(),
+                (uri,key,id,body)->{calls.incrementAndGet();return new ProductGroupStopClient.Response(202,"{}");});
+        for(String invalid:java.util.List.of("999.999.999.999","192.168.001.1",
+                "198.51.100","198.51.100.7.8","198..100.7","abc.51.100.7")){
+            assertEquals("PRODUCT_RELEASE_INVALID",assertThrows(BusinessException.class,
+                    ()->client.releaseAfterGrace(21L,OP,"UNBIND_SERVICE_ONLY",invalid)).getCode(),invalid);
+        }
+        assertEquals(0,calls.get());
+    }
+
+    @Test void emptyOrMalformedStopEffectiveTimeNeverReachesRemoteNetwork(){
+        AtomicInteger calls=new AtomicInteger();
+        ProductGroupStopClient client=new ProductGroupStopClient(
+                "https://proxy.example.test",TOKEN,true,new ObjectMapper(),
+                (uri,key,id,body)->{calls.incrementAndGet();return new ProductGroupStopClient.Response(202,"{}");});
+        for(String invalid:java.util.List.of("","2026-10-15","2026-13-45T00:00:00Z","not-a-time")){
+            assertEquals("PRODUCT_TASK_EFFECTIVE_AT_INVALID",assertThrows(BusinessException.class,
+                    ()->client.pauseForExpiry(21L,OP,invalid)).getCode());
+        }
+        assertEquals("PRODUCT_TASK_EFFECTIVE_AT_INVALID",assertThrows(BusinessException.class,
+                ()->client.pauseForExpiry(21L,OP,null)).getCode());
+        assertEquals(0,calls.get());
+    }
+
 }
