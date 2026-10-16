@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import {computed,onMounted,ref} from 'vue'
+import {computed,onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessage,ElMessageBox} from 'element-plus'
 import {orderServiceApi} from '@/api/orderService'
 import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
 
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),id=Number(route.params.id)
+const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
 const row=ref<any>({}),relatedServices=ref<any[]>([]),relatedError=ref(false),truncated=ref(false)
-const loading=ref(false),working=ref(false),tab=ref('items')
+const loading=ref(false),working=ref(false),tab=ref('items'),detailError=ref(false),requestVersion=ref(0)
 const data=(r:any)=>r.data.data
 const renewalTarget=computed(()=>relatedServices.value.find(s=>s.relation_type==='RENEWAL_TARGET'))
 const isPaid=computed(()=>row.value.payment_status==='PAID_CONFIRMED')
@@ -19,16 +19,25 @@ const canRenew=computed(()=>auth.hasPermission('service:renew')&&auth.hasPermiss
 const fmt=(v:any)=>v==null||v===''?'—':String(v)
 
 async function load(){
- loading.value=true;relatedError.value=false
+ const version=++requestVersion.value,orderId=id
+ loading.value=true;detailError.value=false;relatedError.value=false;truncated.value=false
+ row.value={};relatedServices.value=[]
  try{
-  row.value=data(await orderServiceApi.order(id))||{}
+  const detail=data(await orderServiceApi.order(orderId))||{}
+  if(version!==requestVersion.value)return
+  row.value=detail
   if(auth.hasPermission('service:read')){
    try{
-    const sub=data(await businessRelationsApi.orderServices(id))
+    const sub=data(await businessRelationsApi.orderServices(orderId))
+    if(version!==requestVersion.value)return
     relatedServices.value=sub.items||[];truncated.value=!!sub.truncated
-   }catch{relatedError.value=true;relatedServices.value=[]}
+   }catch{
+    if(version===requestVersion.value){relatedError.value=true;relatedServices.value=[]}
+   }
   }
- }finally{loading.value=false}
+ }catch{
+  if(version===requestVersion.value){detailError.value=true;row.value={};relatedServices.value=[]}
+ }finally{if(version===requestVersion.value)loading.value=false}
 }
 async function act(type:'confirm'|'cancel'|'provision'){
  if(type==='provision'){router.push({path:'/service-provision',query:{orderId:String(id)}});return}
@@ -60,6 +69,7 @@ function goRenew(){
  if(!target)return ElMessage.warning('续费订单缺少合法的原服务引用')
  router.push({path:'/service-changes',query:{serviceId:String(target),renewalOrderId:String(id)}})
 }
+watch(()=>route.params.id,()=>{id=Number(route.params.id);tab.value='items';load()})
 onMounted(load)
 </script>
 <template>
@@ -71,18 +81,20 @@ onMounted(load)
   </div>
   <div class="actions">
    <el-button @click="load">刷新</el-button>
-   <el-button v-if="canChange&&['DRAFT','PENDING_CONFIRM'].includes(row.status)" :loading="working" @click="act('confirm')">确认订单</el-button>
-   <el-button v-if="canPay&&!isPaid&&row.status==='PENDING_PROVISION'" :loading="working" type="primary" @click="paymentConfirm">核实客户付款</el-button>
-   <el-button v-if="canProvision&&row.order_type==='NEW'&&row.status==='PENDING_PROVISION'"
+   <el-button v-if="!detailError&&canChange&&['DRAFT','PENDING_CONFIRM'].includes(row.status)" :loading="working" @click="act('confirm')">确认订单</el-button>
+   <el-button v-if="!detailError&&canPay&&!isPaid&&row.status==='PENDING_PROVISION'" :loading="working" type="primary" @click="paymentConfirm">核实客户付款</el-button>
+   <el-button v-if="!detailError&&canProvision&&row.order_type==='NEW'&&row.status==='PENDING_PROVISION'"
      :disabled="!isPaid" type="success" @click="act('provision')">进入服务开通向导</el-button>
-   <el-button v-if="canRenew&&row.order_type==='RENEW'&&row.status==='PENDING_PROVISION'"
+   <el-button v-if="!detailError&&canRenew&&row.order_type==='RENEW'&&row.status==='PENDING_PROVISION'"
      :disabled="!isPaid||!row.renewal_service_id" type="success" @click="goRenew">对原服务执行续费</el-button>
-   <el-button v-if="canChange&&!['PROVISIONED','COMPLETED','CANCELLED'].includes(row.status)"
+   <el-button v-if="!detailError&&canChange&&row.status&&!['PROVISIONED','COMPLETED','CANCELLED'].includes(row.status)"
      type="danger" plain :loading="working" @click="act('cancel')">取消订单</el-button>
   </div>
  </div>
- <el-alert type="warning" :closable="false" show-icon title="订单确认不等于已到账；付款核实也不等于已向供应商采购、已延长服务或已真实交付。"/>
- <el-card v-loading="loading" shadow="never">
+ <el-alert v-if="detailError" type="error" :closable="false" title="订单详情读取失败，无法核实付款、订单项和实际服务。"/>
+ <el-button v-if="detailError" @click="load">重新加载订单</el-button>
+ <el-alert v-if="!detailError" type="warning" :closable="false" show-icon title="订单确认不等于已到账；付款核实也不等于已向供应商采购、已延长服务或已真实交付。"/>
+ <el-card v-if="!detailError" v-loading="loading" shadow="never">
   <template #header><b>订单主记录</b></template>
   <el-descriptions :column="3" border>
    <el-descriptions-item label="订单编号">{{fmt(row.order_no)}}</el-descriptions-item>
@@ -108,7 +120,7 @@ onMounted(load)
    <el-descriptions-item label="备注" :span="3">{{fmt(row.remark)}}</el-descriptions-item>
   </el-descriptions>
  </el-card>
- <el-card shadow="never">
+ <el-card v-if="!detailError" shadow="never">
   <el-tabs v-model="tab">
    <el-tab-pane name="items" label="订单项明细">
     <el-table :data="row.items||[]" stripe border>
