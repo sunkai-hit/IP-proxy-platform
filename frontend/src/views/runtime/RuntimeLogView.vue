@@ -55,7 +55,17 @@ async function load(){
 }
 function search(){page.value=1;load()}
 function reset(){keyword.value='';range.value=[new Date(Date.now()-7*86400_000),new Date()];search()}
-function navigate(row:any){if(row.relatedPath)router.push(row.relatedPath)}
+function canNavigate(row:any){
+ const path=String(row?.relatedPath||'')
+ if(/^\/orders\/[0-9]+$/.test(path))return auth.hasPermission('order:read')
+ if(/^\/services\/[0-9]+$/.test(path))return auth.hasPermission('service:read')
+ if(/^\/resources\/lines\/[0-9]+$/.test(path))return auth.hasPermission('resource:line:read')
+ if(/^\/resources\/(centos|ros)\/[0-9]+$/.test(path))return auth.hasPermission('resource:device:read')
+ if(/^\/domains\/[0-9]+$/.test(path))return auth.hasPermission('resource:domain:read')
+ if(/^\/reverse-proxies\/[0-9]+$/.test(path))return auth.hasPermission('resource:reverse-proxy:read')
+ return false
+}
+function navigate(row:any){if(canNavigate(row))void router.push(row.relatedPath)}
 watch(active,()=>{page.value=1;load()})
 onMounted(()=>{if(!auth.hasPermission('runtime-log:extract:read')&&visibleTabs.value.length)active.value=visibleTabs.value[0].name;if(visibleTabs.value.length)load();else loadError.value=true})
 </script>
@@ -94,7 +104,7 @@ onMounted(()=>{if(!auth.hasPermission('runtime-log:extract:read')&&visibleTabs.v
     <el-table-column prop="operationKey" label="远端/请求编号" min-width="165"/>
     <el-table-column label="来源类别" min-width="210"><template #default="s">{{s.row.source}}</template></el-table-column>
     <el-table-column label="关联业务" width="100"><template #default="s">
-     <el-button v-if="s.row.relatedPath" link type="primary" @click="navigate(s.row)">查看</el-button>
+     <el-button v-if="canNavigate(s.row)" link type="primary" @click="navigate(s.row)">查看</el-button>
      <span v-else>—</span></template></el-table-column>
    </template>
    <template v-else-if="active==='extract'">
