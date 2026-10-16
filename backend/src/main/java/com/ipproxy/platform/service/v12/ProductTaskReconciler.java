@@ -3,10 +3,13 @@ package com.ipproxy.platform.service.v12;
 import com.ipproxy.platform.common.exception.BusinessException;
 import com.ipproxy.platform.resource.v12.ProductGroupReadClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
+import java.time.Instant;
+import java.time.Duration;
 import java.util.*;
 
 /**
@@ -39,7 +42,7 @@ public class ProductTaskReconciler {
             throw new BusinessException("TASK_OPERATION_INVALID","任务标识不能为空且不得超过128字符");
         List<Map<String,Object>> found=jdbc.queryForList("""
             SELECT id,operation_key,service_id,action_type,task_status,stage,
-                   remote_operation_id,attempt_count
+                   remote_operation_id,attempt_count,request_summary::text request_json
             FROM svc_action_task WHERE operation_key=?
             """,operationKey);
         if(found.isEmpty())throw new BusinessException("TASK_NOT_FOUND","任务不存在");
@@ -88,7 +91,9 @@ public class ProductTaskReconciler {
                     };
                     verified=rightState
                           &&"VERIFIED".equals(str(actual.get("verificationStatus")))
-                          &&!str(actual.get("verifiedAt")).isBlank();
+                          &&validActualProof(actual)
+                          &&(!"RELEASE".equals(str(task.get("action_type")))
+                              ||releaseVerified(remote,str(task.get("request_json"))));
                     if(verified){
                         stage="NEEDS_BUSINESS_COMMIT";
                         networkEvidence.put("actualStatus",actualStatus);
@@ -140,19 +145,50 @@ public class ProductTaskReconciler {
     /** A remote task SUCCESS alone never certifies an IPv4 has been unbound or
      * restored to the short pool. Proof is checked again at business commit.
      */
-    private boolean releaseVerified(Map<String,Object> remote){
+    private boolean validActualProof(Map<String,Object> actual){
+        Instant verifiedAt=parseTime(actual.get("verifiedAt"));
+        Instant sampledAt=parseTime(actual.get("sampledAt"));
+        Instant now=Instant.now();
+        // A verified state without temporally coherent source evidence must
+        // NEVER unlock business-commit review.
+        return verifiedAt!=null&&sampledAt!=null
+                &&!verifiedAt.isAfter(sampledAt)
+                &&!sampledAt.isBefore(now.minus(Duration.ofMinutes(15)))
+                &&!sampledAt.isAfter(now.plus(Duration.ofMinutes(2)));
+    }
+
+    private static Instant parseTime(Object raw){
+        try{return OffsetDateTime.parse(String.valueOf(raw)).toInstant();}
+        catch(Exception ignored){return null;}
+    }
+
+    private JsonNode parseRequest(String data){
+        try{return json.readTree(data);}
+        catch(Exception ignored){return null;}
+    }
+
+    private boolean releaseVerified(Map<String,Object> remote,String requestJson){
         Object raw=remote.get("releaseVerification");
         if(!(raw instanceof Map<?,?> proof))return false;
-        String mode=String.valueOf(proof.get("releaseMode"));
-        if(!Boolean.TRUE.equals(proof.get("serviceAccessRevoked"))
-                ||proof.get("egressIpv4")==null||proof.get("verifiedAt")==null)
+        JsonNode request=parseRequest(requestJson);
+        if(request==null||!request.isObject())return false;
+        String expectedMode=request.path("releaseMode").asText("");
+        String expectedIpv4=request.path("egressIpv4").asText("");
+        if(!Set.of("UNBIND_SERVICE_ONLY","RETURN_TO_SHORT_AFTER_VERIFICATION").contains(expectedMode)
+                ||expectedIpv4.isBlank()
+                ||!expectedMode.equals(str(proof.get("releaseMode")))
+                ||!expectedIpv4.equals(str(proof.get("egressIpv4")))
+                ||!Boolean.TRUE.equals(proof.get("serviceAccessRevoked")))
             return false;
-        if("UNBIND_SERVICE_ONLY".equals(mode))return true;
-        return "RETURN_TO_SHORT_AFTER_VERIFICATION".equals(mode)
-                &&Boolean.TRUE.equals(proof.get("allOldAccessRevoked"))
+        Instant proofAt=parseTime(proof.get("verifiedAt"));
+        Instant now=Instant.now();
+        if(proofAt==null||proofAt.isAfter(now.plus(Duration.ofMinutes(2))))
+            return false;
+        if("UNBIND_SERVICE_ONLY".equals(expectedMode))return true;
+        return Boolean.TRUE.equals(proof.get("allOldAccessRevoked"))
                 &&Boolean.TRUE.equals(proof.get("switchedToShort"))
                 &&Boolean.TRUE.equals(proof.get("shortPoolHealthy"))
-                &&proof.get("resourceId")!=null;
+                &&proof.get("resourceId") instanceof String id &&!id.isBlank();
     }
 
     private ReconcileResult result(String key,Long serviceId,String status,String stage,
