@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {onMounted,ref} from 'vue'
+import {onMounted,ref,watch} from 'vue'
 import {useRoute,useRouter} from 'vue-router'
 import {ElMessage} from 'element-plus'
 import {externalDeliveryApi} from '@/api/externalDelivery'
@@ -7,28 +7,35 @@ import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
 
 const route=useRoute(),router=useRouter(),auth=useAuthStore()
-const id=Number(route.params.id),row=ref<any>({}),loading=ref(false),tab=ref('proxies')
+let id=Number(route.params.id);const row=ref<any>({}),loading=ref(false),loadError=ref(false),requestVersion=ref(0),tab=ref('proxies')
 const proxies=ref<any[]>([]),services=ref<any[]>([])
 const proxyWarning=ref(false),serviceWarning=ref(false),proxyTruncated=ref(false),serviceTruncated=ref(false)
 const data=(r:any)=>r.data.data
 const fmt=(v:any)=>v==null||v===''?'—':String(v)
 const mask=(v:any)=>v?('••••'+String(v).slice(-4)):'—'
 async function load(){
- loading.value=true
+ const version=++requestVersion.value,purchaseId=id
+ loading.value=true;loadError.value=false
+ row.value={};proxies.value=[];services.value=[]
+ proxyWarning.value=false;serviceWarning.value=false;proxyTruncated.value=false;serviceTruncated.value=false
  try{
-  row.value=data(await externalDeliveryApi.purchase(id))||{}
+  const detail=data(await externalDeliveryApi.purchase(purchaseId))||{}
+  if(version!==requestVersion.value)return
+  row.value=detail
   const [p,s]=await Promise.allSettled([
-   auth.hasPermission('resource:reverse-proxy:read')?businessRelationsApi.purchaseProxies(id):Promise.resolve(null),
-   auth.hasPermission('service:read')?businessRelationsApi.purchaseServices(id):Promise.resolve(null)
+   auth.hasPermission('resource:reverse-proxy:read')?businessRelationsApi.purchaseProxies(purchaseId):Promise.resolve(null),
+   auth.hasPermission('service:read')?businessRelationsApi.purchaseServices(purchaseId):Promise.resolve(null)
   ])
+  if(version!==requestVersion.value)return
   proxyWarning.value=p.status==='rejected';serviceWarning.value=s.status==='rejected'
   proxies.value=p.status==='fulfilled'?(p.value?.data?.data?.items||[]):[]
   services.value=s.status==='fulfilled'?(s.value?.data?.data?.items||[]):[]
   proxyTruncated.value=p.status==='fulfilled'?!!p.value?.data?.data?.truncated:false
   serviceTruncated.value=s.status==='fulfilled'?!!s.value?.data?.data?.truncated:false
- }catch{ElMessage.error('采购详情读取失败，暂不能推断该采购无下游服务')}
- finally{loading.value=false}
+ }catch{if(version===requestVersion.value){loadError.value=true;row.value={};proxies.value=[];services.value=[]}}
+ finally{if(version===requestVersion.value)loading.value=false}
 }
+watch(()=>route.params.id,()=>{id=Number(route.params.id);tab.value='proxies';load()})
 onMounted(load)
 </script>
 <template>
@@ -38,12 +45,13 @@ onMounted(load)
    <h2>{{row.purchase_no||'外部采购详情'}}</h2>
    <p>供应商采购 → 平台反向代理 → 客户服务。上游资源是否真实可用，以供应商和网关验证为准。</p></div>
   <div class="actions"><el-button @click="load">刷新</el-button>
- <el-button v-if="row.customer_id&&row.source_customer_order_id&&auth.hasPermission('resource:reverse-proxy:write')"
+ <el-button v-if="!loadError&&!loading&&row.customer_id&&row.source_customer_order_id&&auth.hasPermission('resource:reverse-proxy:write')"
  type="primary" @click="router.push({path:'/reverse-proxies',query:{newProxy:'1',purchaseId:String(id)}})">基于此采购登记代理</el-button>
  <el-button v-if="auth.hasPermission('resource:reverse-proxy:read')" @click="router.push('/reverse-proxies')">代理列表</el-button></div>
  </div>
  <el-alert type="warning" :closable="false" title="采购登记与平台代理ACTIVE只是平台记录；没有供应商真实有效期和代理通断回执时，不能据此认定客户服务已交付。" show-icon/>
- <el-card shadow="never" v-loading="loading">
+ <el-alert v-if="loadError" type="error" :closable="false" title="采购详情读取失败，不能据此认定已付款、无关联服务或已可实际交付。"/><el-button v-if="loadError" @click="load">重新加载采购详情</el-button>
+ <el-card v-if="!loadError&&row.purchase_no" shadow="never" v-loading="loading">
   <template #header><b>采购主记录</b></template>
   <el-descriptions :column="3" border>
    <el-descriptions-item label="采购编号">{{fmt(row.purchase_no)}}</el-descriptions-item>
