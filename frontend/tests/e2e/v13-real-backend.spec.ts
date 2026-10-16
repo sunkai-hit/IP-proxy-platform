@@ -1078,6 +1078,6 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.getByRole('button',{name:'重新加载监控总览'}).click()
     expect((await reloaded).status()).toBe(200)
     await expect(page.getByText('长效监控总览读取失败，统计值未知，不能据此认定没有异常代理、开放告警或失败通知。')).toHaveCount(0)
-    await expect(page.locator('.cards .el-card strong').first()).toHaveText(/^\\d+$/)
+    await expect(page.locator('.cards .el-card strong').first()).toHaveText(/^\d+$/)
   })
 })
