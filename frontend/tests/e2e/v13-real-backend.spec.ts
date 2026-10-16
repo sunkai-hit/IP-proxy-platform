@@ -468,6 +468,136 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('检测适配器未返回真实可验证结果，状态仍为 UNKNOWN')).toBeVisible()
   })
 
+  test('reverse proxy details fail closed and cannot expose apply or disable buttons', async ({ page }) => {
+    const first='**/api/admin/v1/v12/external-delivery/reverse-proxies/900991'
+    await page.route(first,route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PROXY_DOWN',message:'synthetic network error'}),
+    }))
+    await page.goto(base+'/reverse-proxies/900991')
+    await expect(page.getByText('反向代理详情读取失败，禁止推断配置已生效或网关可连接。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'应用配置'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'受控停用'})).toHaveCount(0)
+    await page.unroute(first)
+    await page.route(first,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,proxy_no:'CI-PROXY-900991',status:'PENDING'}}),
+    }))
+    await page.getByRole('button',{name:'重新加载反向代理'}).click()
+    await expect(page.getByRole('heading',{name:'CI-PROXY-900991'})).toBeVisible()
+    await expect(page.getByRole('button',{name:'应用配置'})).toBeVisible()
+    await page.route('**/api/admin/v1/v12/external-delivery/reverse-proxies/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PROXY_DOWN',message:'synthetic network error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/reverse-proxies/900992')
+    })
+    await expect(page.getByText('反向代理详情读取失败，禁止推断配置已生效或网关可连接。')).toBeVisible()
+    await expect(page.getByText('CI-PROXY-900991')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'应用配置'})).toHaveCount(0)
+  })
+
+  test('supplier purchase route reuse drops previous paid-order and proxy associations', async ({ page }) => {
+    await page.route('**/api/admin/v1/v12/external-delivery/purchases/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,purchase_no:'CI-PURCHASE-900991',
+        customer_id:1,source_customer_order_id:10,customer_name:'CI Customer'}}),
+    }))
+    await page.route('**/api/admin/v1/relations/supplier-purchases/900991/proxies',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,proxy_no:'CI-CHILD-PROXY-900991'}],total:1}}),
+    }))
+    await page.route('**/api/admin/v1/relations/supplier-purchases/900991/services',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[],total:0}}),
+    }))
+    await page.goto(base+'/supplier-purchases/900991')
+    await expect(page.getByRole('heading',{name:'CI-PURCHASE-900991'})).toBeVisible()
+    await expect(page.getByText('CI-CHILD-PROXY-900991')).toBeVisible()
+    await page.route('**/api/admin/v1/v12/external-delivery/purchases/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PURCHASE_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/supplier-purchases/900992')
+    })
+    await expect(page.getByText('采购详情读取失败，不能据此认定已付款、无关联服务或已可实际交付。')).toBeVisible()
+    await expect(page.getByText('CI-CHILD-PROXY-900991')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'基于此采购登记代理'})).toHaveCount(0)
+  })
+
+  test('package detail stale linked services do not survive a failed new package read', async ({ page }) => {
+    await page.route('**/api/admin/v1/packages/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,package_code:'CI-PKG-900991',
+        package_name:'CI PACKAGE A',product_type:'LONG_IP',product_id:1}}),
+    }))
+    await page.route('**/api/admin/v1/relations/packages/900991/services',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,service_no:'CI-PKG-SVC-900991'}]}}),
+    }))
+    await page.goto(base+'/packages/900991')
+    await expect(page.getByRole('heading',{name:'CI PACKAGE A'})).toBeVisible()
+    await expect(page.getByText('CI-PKG-SVC-900991')).toBeVisible()
+    await page.route('**/api/admin/v1/packages/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PACKAGE_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/packages/900992')
+    })
+    await expect(page.getByText('套餐详情读取失败，不能核实原套餐期限、宽限规则或已售服务。')).toBeVisible()
+    await expect(page.getByText('CI-PKG-SVC-900991')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'在套餐管理中编辑'})).toHaveCount(0)
+  })
+
+  test('product detail failed read prevents writes and shows no previous configurable fields', async ({ page }) => {
+    await page.route('**/api/admin/v1/products/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,product_code:'CI-PROD-900991',
+        product_name:'CI PRODUCT A',product_type:'SHORT_IP',access_mode_code:'HTTP',
+        protocol_codes:['HTTP'],auth_mode_codes:['TOKEN'],type_config:{}}}),
+    }))
+    await page.goto(base+'/products/900991')
+    await expect(page.getByRole('heading',{name:/CI PRODUCT A/})).toBeVisible()
+    await expect(page.getByText('CI-PROD-900991').first()).toBeVisible()
+    await page.route('**/api/admin/v1/products/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PRODUCT_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/products/900992')
+    })
+    await expect(page.getByText('产品详情读取失败，不能确认当前类型、专项参数或可售状态。')).toBeVisible()
+    await expect(page.getByText('CI-PROD-900991')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'保存',exact:true})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'保存专项参数'})).toHaveCount(0)
+  })
+
+  test('legacy resource details re-fetch when switching domain or exclusive route', async ({ page }) => {
+    await page.route('**/api/admin/v1/exclusive-allocations/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:900991,allocation_no:'CI-EXCLUSIVE-900991',status:'HELD'}}),
+    }))
+    await page.goto(base+'/exclusive-allocations/900991')
+    await expect(page.getByText('CI-EXCLUSIVE-900991')).toBeVisible()
+    await page.route('**/api/admin/v1/domains/900992',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_DOMAIN_DOWN',message:'synthetic error'}),
+    }))
+    await page.evaluate(async()=>{
+      const app=(document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/domains/900992')
+    })
+    await expect(page.getByText('资源详情读取失败，无法核实当前配置与关联资源。')).toBeVisible()
+    await expect(page.getByText('CI-EXCLUSIVE-900991')).toHaveCount(0)
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
