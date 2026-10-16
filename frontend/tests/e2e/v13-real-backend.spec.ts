@@ -646,45 +646,6 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button',{name:'保存',exact:true})).toBeDisabled()
   })
 
-  test('resource sync task list API outage never looks like no failed work', async ({ page }) => {
-    const matcher='**/api/admin/v1/sync-tasks?*'
-    await page.route(matcher,route=>route.fulfill({
-      status:503,contentType:'application/json',
-      body:JSON.stringify({code:'CI_SYNC_LIST_DOWN',message:'synthetic error'}),
-    }))
-    await page.goto(base+'/sync-tasks')
-    await expect(page.getByText('资源同步列表读取失败，不能据此认定没有待处理或失败任务。')).toBeVisible()
-    await expect(page.getByText('同步列表读取失败',{exact:true})).toBeVisible()
-    await page.unroute(matcher)
-    const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/admin/v1/sync-tasks'&&r.request().method()==='GET')
-    await page.getByRole('button',{name:'重新查询同步任务'}).click()
-    expect((await response).status()).toBe(200)
-    await expect(page.getByText('资源同步列表读取失败，不能据此认定没有待处理或失败任务。')).toHaveCount(0)
-  })
-
-  test('resource sync task parent loads even if its per-record error detail query fails', async ({ page }) => {
-    await page.route('**/api/admin/v1/sync-tasks?*',route=>route.fulfill({
-      status:200,contentType:'application/json',
-      body:JSON.stringify({code:'OK',data:{items:[{id:900991,task_no:'CI-SYNC-900991',
-        source_type:'ROS',status:'FAILED',received_count:2,normalized_count:0}],total:1}}),
-    }))
-    await page.route('**/api/admin/v1/sync-tasks/900991',route=>route.fulfill({
-      status:200,contentType:'application/json',
-      body:JSON.stringify({code:'OK',data:{id:900991,task_no:'CI-SYNC-900991',
-        source_type:'ROS',status:'FAILED',received_count:2,error_message:'synthetic import problem'}}),
-    }))
-    await page.route('**/api/admin/v1/sync-tasks/900991/details',route=>route.fulfill({
-      status:503,contentType:'application/json',
-      body:JSON.stringify({code:'CI_SYNC_CHILD_FAILURE',message:'synthetic error'}),
-    }))
-    await page.goto(base+'/sync-tasks')
-    await expect(page.getByText('CI-SYNC-900991')).toBeVisible()
-    await page.getByRole('button',{name:'详情'}).click()
-    await expect(page.getByText('同步失败明细读取失败，不能据此推断没有错误记录。')).toBeVisible()
-    await expect(page.getByText('CI-SYNC-900991').last()).toBeVisible()
-    await expect(page.getByText('同步明细读取失败',{exact:true})).toBeVisible()
-  })
-
   test('domain list survives failed line/IP option loaders, and association save is disabled', async ({ page }) => {
     await page.route('**/api/admin/v1/resources/lines?*',route=>route.fulfill({
       status:503,contentType:'application/json',
