@@ -948,4 +948,74 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page).toHaveURL(/\/orders\/\d+$/)
     await expect(page.getByText('订单主记录')).toBeVisible()
   })
+
+  test('A purchase ledger failure clears stale rows and offers PostgreSQL-backed retry', async ({ page }) => {
+    await page.goto(base + '/supplier-purchases')
+    await expect(page.getByText('CI-PUR-R3', { exact: true })).toBeVisible()
+    const url = '**/api/admin/v1/v12/external-delivery/purchases*'
+    await page.route(url, route => route.fulfill({
+      status:503, contentType:'application/json',
+      body:JSON.stringify({code:'CI_PURCHASE_LIST_DOWN',message:'synthetic outage'})
+    }))
+    await page.getByRole('button', { name: '查询' }).click()
+    await expect(page.getByText('采购列表查询失败，不能据此判断没有采购记录或客户资源。')).toBeVisible()
+    await expect(page.getByText('CI-PUR-R3', { exact: true })).toHaveCount(0)
+    await page.unroute(url)
+    await page.getByRole('button', { name: '重新加载采购列表' }).click()
+    await expect(page.getByText('采购列表查询失败，不能据此判断没有采购记录或客户资源。')).toHaveCount(0)
+    await expect(page.getByText('CI-PUR-R3', { exact: true })).toBeVisible()
+  })
+
+  test('A purchase option failure disables new registration without hiding existing ledger', async ({ page }) => {
+    const url = '**/api/admin/v1/v12/external-delivery/options*'
+    await page.route(url, route => route.fulfill({
+      status:503, contentType:'application/json',
+      body:JSON.stringify({code:'CI_PURCHASE_OPTIONS_DOWN',message:'synthetic outage'})
+    }))
+    await page.goto(base + '/supplier-purchases')
+    await expect(page.getByText('供应商或客户选项读取失败，暂不能登记采购；已有采购记录仍可查询。')).toBeVisible()
+    await expect(page.getByRole('button', { name: '登记采购' })).toBeDisabled()
+    await expect(page.getByText('CI-PUR-R3', { exact: true })).toBeVisible()
+    await page.unroute(url)
+    await page.getByRole('button', { name: '重新加载采购选项' }).click()
+    await expect(page.getByRole('button', { name: '登记采购' })).toBeEnabled()
+  })
+
+  test('A proxy ledger failure clears stale records and recovers after real backend retry', async ({ page }) => {
+    await page.goto(base + '/reverse-proxies')
+    await expect(page.getByText('CI-PROXY-R3', { exact: true })).toBeVisible()
+    const url = '**/api/admin/v1/v12/external-delivery/reverse-proxies*'
+    await page.route(url, route => route.fulfill({
+      status:503, contentType:'application/json',
+      body:JSON.stringify({code:'CI_PROXY_LIST_DOWN',message:'synthetic outage'})
+    }))
+    await page.getByRole('button', { name: '查询' }).click()
+    await expect(page.getByText('平台代理列表查询失败，不能据此判断没有代理或客户服务。')).toBeVisible()
+    await expect(page.getByText('CI-PROXY-R3', { exact: true })).toHaveCount(0)
+    await page.unroute(url)
+    await page.getByRole('button', { name: '重新加载平台代理列表' }).click()
+    await expect(page.getByText('平台代理列表查询失败，不能据此判断没有代理或客户服务。')).toHaveCount(0)
+    await expect(page.getByText('CI-PROXY-R3', { exact: true })).toBeVisible()
+  })
+
+  test('A proxy list apply cannot show network success on actual backend refusal', async ({ page }) => {
+    await page.goto(base + '/reverse-proxies')
+    const proxy = page.locator('.el-table__body tr').filter({hasText:'CI-PROXY-R3'})
+    await expect(proxy).toBeVisible()
+    await expect(proxy.getByText('PENDING', { exact:true })).toBeVisible()
+    await proxy.getByRole('button',{name:'应用',exact:true}).click()
+    const prompt=page.locator('.el-message-box')
+    await expect(prompt).toBeVisible()
+    await prompt.locator('input').fill('CI safe offline list action')
+    const refused=page.waitForResponse(r=>
+      r.request().method()==='POST' &&
+      /\/v12\/external-delivery\/reverse-proxies\/\d+\/apply$/.test(new URL(r.url()).pathname))
+    await prompt.locator('.el-message-box__btns .el-button--primary').click()
+    const response=await refused
+    expect(response.status()).toBe(400)
+    expect((await response.json()).code).toBe('EXTERNAL_PROXY_DATA_PLANE_UNVERIFIED')
+    await expect(page.getByText('平台代理操作未确认成功，不能据此认定已应用、已停用或连通')).toBeVisible()
+    await expect(proxy.getByText('PENDING', { exact:true })).toBeVisible()
+    await expect(page.getByText('真实网关验证通过')).toHaveCount(0)
+  })
 })
