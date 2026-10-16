@@ -1661,4 +1661,41 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('订单关联服务回查失败或权限不足，不能据此认为没有生成服务。')).toHaveCount(0)
     await expect(page.getByText('管理面记录一致不代表外部代理可连接或数据面已交付。',{exact:false})).toBeVisible()
   })
+
+  test('A1 audited payment and provisioning resolve back to exact PostgreSQL order with redacted fields',async({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    const id=Number(multiOrderId)
+    await page.goto(base+'/logs')
+    await page.getByRole('tab',{name:/11 操作审计/}).click()
+    await page.getByPlaceholder('客户、服务号、对象编号、事件/请求标识').fill(String(id))
+    const auditResponse=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/runtime-logs/v12/operation'&&
+      new URL(r.url()).searchParams.get('keyword')===String(id))
+    await page.getByRole('button',{name:'查询'}).click()
+    const response=await auditResponse
+    expect(response.status()).toBe(200)
+    const data=(await response.json()).data
+    expect(data.sourceScope).toBe('REDACTED_OPERATION_AUDIT_NO_RAW_JSON')
+    const payment=data.items.find((x:any)=>x.eventType==='PAYMENT_RECEIPT_CONFIRMED'&&x.objectType==='BIZ_ORDER')
+    const provision=data.items.find((x:any)=>x.eventType==='PROVISION_V12'&&x.objectType==='ORDER')
+    for(const entry of [payment,provision]){
+      expect(entry).toBeTruthy()
+      expect(entry.objectCode).toBe(String(id))
+      expect(entry.relatedPath).toBe('/orders/'+id)
+      expect(entry.result).toBe('SUCCESS')
+      expect(entry).not.toHaveProperty('reason')
+      expect(entry).not.toHaveProperty('before_data')
+      expect(entry).not.toHaveProperty('after_data')
+      expect(entry).not.toHaveProperty('payment_reference')
+    }
+    const rows=page.locator('.el-table__body tr')
+    const paidRow=rows.filter({hasText:'PAYMENT_RECEIPT_CONFIRMED'})
+    await expect(paidRow).toBeVisible()
+    await expect(rows.filter({hasText:'PROVISION_V12'})).toBeVisible()
+    await paidRow.getByRole('button',{name:'查看'}).click()
+    await expect(page).toHaveURL(base+'/orders/'+id)
+    await expect(page.getByText('订单主记录')).toBeVisible()
+    await page.getByRole('tab',{name:/实际关联服务 \(3\)/}).click()
+    await expect(page.locator('.el-tab-pane:visible .el-table__body tr')).toHaveCount(3)
+  })
 })
