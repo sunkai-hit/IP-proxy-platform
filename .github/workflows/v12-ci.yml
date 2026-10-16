@@ -56,6 +56,8 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Verify V1.3 uploaded baseline and cross-artifact file coverage
         run: python3 scripts/ci_v13_baseline_gate.py
+      - name: Verify 31-item cross-team interface index and report DOCX internal version drift
+        run: python3 scripts/ci_v13_release_evidence_gate.py
       - name: Verify V1.3 frontend/backend API routes and lifecycle RBAC
         run: python3 scripts/ci_v13_api_contract_gate.py
       - name: Verify V1.3 cross-page router, payment-selection and RBAC guards
