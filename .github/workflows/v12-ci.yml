@@ -166,7 +166,7 @@ jobs:
 
           # R3 synthetic fixed-service fixtures exercise the safe planner ONLY.
           # They do not represent true LONG_IP network delivery or real entitlement migration.
-          PGID=$(docker ps --filter "ancestor=postgres:17-alpine" --format '{{.ID}}' | head -n1)
+          PGID=$(docker ps --filter "ancestor=postgres:17-alpine" --format '{{.ID}}' | sed -n '1p')
           test -n "$PGID"
           # Original resource chain UI acceptance: a line belongs to one ROS and
           # through it one CentOS; source pools are N:M, not current-IP ownership.
@@ -277,7 +277,7 @@ jobs:
 
           # The legacy exclusive-release API must never mark an allocation recycled
           # merely because a management operator submitted a reason.
-          LEGACY_EXCLUSIVE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_exclusive_allocation(allocation_no,resource_type,line_id,customer_id,service_id,status) VALUES('CI-R3-LEGACY-HOLD','LINE',$L1,$CID,$EXP0,'ALLOCATED') RETURNING id" | head -n1)
+          LEGACY_EXCLUSIVE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_exclusive_allocation(allocation_no,resource_type,line_id,customer_id,service_id,status) VALUES('CI-R3-LEGACY-HOLD','LINE',$L1,$CID,$EXP0,'ALLOCATED') RETURNING id" | sed -n '1p')
           DIRECT_RELEASE=$(curl -s -o /tmp/r3-direct-exclusive-release.json -w '%{http_code}' -H "$H" -H "$J" -d '{"reason":"CI require real IPv4 reclamation"}' "http://localhost:8080/api/admin/v1/exclusive-allocations/$LEGACY_EXCLUSIVE/release")
           test "$DIRECT_RELEASE" -eq 400
           python3 -c 'import json; assert json.load(open("/tmp/r3-direct-exclusive-release.json"))["code"]=="EXCLUSIVE_RELEASE_REQUIRES_VERIFIED_LIFECYCLE"'
@@ -286,7 +286,7 @@ jobs:
           PACKAGE_SERVICES=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/packages/$PKGID/services")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]["items"]; assert any(v["grace_days_snapshot"]==0 for v in x) and any(v["grace_days_snapshot"]==3 for v in x)' <<< "$PACKAGE_SERVICES"
           # Human-only failover inspection never touches line/egress allocation state.
-          CANDIDATE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO svc_backup_candidate(service_id,line_id,expected_ipv4,health_status,created_by) SELECT $EXP0,id,current_public_ip,'UNKNOWN',1 FROM res_line WHERE id=$L2 RETURNING id" | head -n1)
+          CANDIDATE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO svc_backup_candidate(service_id,line_id,expected_ipv4,health_status,created_by) SELECT $EXP0,id,current_public_ip,'UNKNOWN',1 FROM res_line WHERE id=$L2 RETURNING id" | sed -n '1p')
           CAND_BODY=$(printf '{"backupCandidateId":%s}' "$CANDIDATE")
           IMPACT=$(curl -fsS -H "$H" -H "$J" -d "$CAND_BODY" "http://localhost:8080/api/admin/v1/v12/services/$EXP0/failover-preview")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["allowed"] is False and x["adapterReady"] is False and x["customerConsentVerified"] is False and len(x["blockers"])>0' <<< "$IMPACT"
@@ -343,7 +343,7 @@ jobs:
                    now()-interval '3 days',now()+interval '30 days',
                    'ACTIVE',0,now()+interval '30 days','NONE','MOCK_ONLY'
             FROM prd_product p JOIN prd_package k ON k.product_id=p.id
-            WHERE p.id=$LPID AND k.id=$ZPKGID RETURNING id" | head -n1)
+            WHERE p.id=$LPID AND k.id=$ZPKGID RETURNING id" | sed -n '1p')
           curl -fsS -H "$H" -H "$J" -X PUT -d '{"graceDays":3,"reason":"CI new sales term, not historical entitlement"}' "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace" >/dev/null
           PACKAGE_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/packages/$ZPKGID/grace")
           HIST_TERM=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/services/$HIST_SERVICE")
@@ -433,9 +433,9 @@ jobs:
 
           # Synthetic supplier -> purchase -> proxy -> service drill-down only.
           # No upstream payment, access credential or network adapter is invoked.
-          SUPID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier(supplier_code,supplier_name,api_endpoint,auth_type_code) VALUES('CI-SUPPLIER-R3','CI Supplier','https://supplier.invalid','TOKEN') RETURNING id" | head -n 1)
-          PURID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,customer_id,source_customer_order_id,supplier_package_name,expire_at) VALUES('CI-PUR-R3',$SUPID,$CID,$OID,'CI synthetic purchase',now()+interval '30 days') RETURNING id" | head -n 1)
-          PROXYID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_reverse_proxy(proxy_no,purchase_id,customer_id,service_id,protocol_code,upstream_host,upstream_port,platform_host,platform_port,status) VALUES('CI-PROXY-R3',$PURID,$CID,NULL,'HTTP','upstream.invalid',18080,'platform.invalid',18081,'PENDING') RETURNING id" | head -n 1)
+          SUPID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier(supplier_code,supplier_name,api_endpoint,auth_type_code) VALUES('CI-SUPPLIER-R3','CI Supplier','https://supplier.invalid','TOKEN') RETURNING id" | sed -n '1p')
+          PURID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,customer_id,source_customer_order_id,supplier_package_name,expire_at) VALUES('CI-PUR-R3',$SUPID,$CID,$OID,'CI synthetic purchase',now()+interval '30 days') RETURNING id" | sed -n '1p')
+          PROXYID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_reverse_proxy(proxy_no,purchase_id,customer_id,service_id,protocol_code,upstream_host,upstream_port,platform_host,platform_port,status) VALUES('CI-PROXY-R3',$PURID,$CID,NULL,'HTTP','upstream.invalid',18080,'platform.invalid',18081,'PENDING') RETURNING id" | sed -n '1p')
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$PURID/proxies" >/tmp/r3-purchase-proxies.json
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/relations/supplier-purchases/$PURID/services" >/tmp/r3-purchase-services.json
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases/$PURID" >/tmp/r3-purchase-detail.json
@@ -460,7 +460,7 @@ jobs:
           DEDICATED_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["id"])' <<< "$DEDICATED")
           DEDICATED_DETAIL=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/v12/external-delivery/purchases/$DEDICATED_ID")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["source_customer_payment_status"]=="PAID_CONFIRMED" and x["purchase_cost"] is None and x["package_quota"] is None' <<< "$DEDICATED_DETAIL"
-          STOCK_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,supplier_package_name,expire_at) VALUES('CI-UNASSIGNED-INVENTORY',$SUPID,'unassigned stock',now()+interval '50 days') RETURNING id" | head -n1)
+          STOCK_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,supplier_package_name,expire_at) VALUES('CI-UNASSIGNED-INVENTORY',$SUPID,'unassigned stock',now()+interval '50 days') RETURNING id" | sed -n '1p')
           STOCK_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$STOCK_ID" "$CID")
           STOCK_HTTP=$(curl -s -o /tmp/r3-stock-proxy.json -w '%{http_code}' -H "$H" -H "$J" -d "$STOCK_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
           if [ "$STOCK_HTTP" -ne 400 ]; then echo "Unexpected STOCK_HTTP: $STOCK_HTTP"; cat /tmp/r3-stock-proxy.json; exit 1; fi
@@ -471,7 +471,7 @@ jobs:
           python3 -c 'import json; assert json.load(open("/tmp/r3-cross-customer-proxy.json"))["code"]=="PROXY_PURCHASE_CUSTOMER_MISMATCH"'
           OTHER_SERVICE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
             INSERT INTO svc_instance(service_no,customer_id,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,effective_at,expire_at,status,delivery_stage)
-            SELECT 'CI-OTHER-SERVICE',$CID_TWO,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,now(),now()+interval '28 days','ACTIVE','MOCK_ONLY' FROM svc_instance WHERE id=$SID RETURNING id" | head -n1)
+            SELECT 'CI-OTHER-SERVICE',$CID_TWO,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,now(),now()+interval '28 days','ACTIVE','MOCK_ONLY' FROM svc_instance WHERE id=$SID RETURNING id" | sed -n '1p')
           WRONG_SERVICE_PROXY=$(printf '{"purchaseId":%s,"customerId":%s,"serviceId":%s,"protocolCode":"HTTP","upstreamHost":"upstream.invalid","upstreamPort":8080,"platformHost":"platform.invalid","platformPort":18080}' "$DEDICATED_ID" "$CID" "$OTHER_SERVICE")
           WRONG_SERVICE_HTTP=$(curl -s -o /tmp/r3-wrong-proxy-service.json -w '%{http_code}' -H "$H" -H "$J" -d "$WRONG_SERVICE_PROXY" http://localhost:8080/api/admin/v1/v12/external-delivery/reverse-proxies)
           if [ "$WRONG_SERVICE_HTTP" -ne 400 ]; then echo "Unexpected WRONG_SERVICE_HTTP: $WRONG_SERVICE_HTTP"; cat /tmp/r3-wrong-proxy-service.json; exit 1; fi
@@ -508,7 +508,7 @@ jobs:
           echo 'V1.2 customer/line/pool/service master-child relationship smoke passed'
           # UI-31 existing bot management: Webhook and adapter secrets must not
           # leak from list/detail responses, even if stored in historical records.
-          BOT_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO lm_bot(bot_no,customer_id,bot_name,bot_type,webhook_url,last_test_message) VALUES('CI-BOT-MASK-R3',$CID,'CI bot','DINGTALK','https://example.invalid/secret-webhook-key','raw secret adapter diagnostic') RETURNING id" | head -n1)
+          BOT_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO lm_bot(bot_no,customer_id,bot_name,bot_type,webhook_url,last_test_message) VALUES('CI-BOT-MASK-R3',$CID,'CI bot','DINGTALK','https://example.invalid/secret-webhook-key','raw secret adapter diagnostic') RETURNING id" | sed -n '1p')
           BOT_LIST=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/bots?page=1&size=20")
           python3 -c 'import json,sys; rows=json.load(sys.stdin)["data"]["items"]; x=next(v for v in rows if v["bot_no"]=="CI-BOT-MASK-R3"); assert "webhook_url" not in x and "last_test_message" not in x and x["webhook_configured"] is True' <<< "$BOT_LIST"
           BOT_DETAIL=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/bots/$BOT_ID")

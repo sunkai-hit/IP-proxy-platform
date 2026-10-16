@@ -1520,4 +1520,145 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('确认期间订单、状态或权限已变化；没有提交订单操作，请重新核对')).toBeVisible()
     expect(writes).toHaveLength(0)
   })
+
+  test('A1 persisted order-to-service-to-binding chain uses actual PostgreSQL relations',async({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    const relations=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/relations/orders/'+multiOrderId+'/services')
+    await page.goto(base+'/orders/'+multiOrderId)
+    const reply=await relations
+    expect(reply.status()).toBe(200)
+    const linked=(await reply.json()).data
+    expect(linked.items).toHaveLength(3)
+    expect(new Set(linked.items.map((x:any)=>Number(x.id))).size).toBe(3)
+    await page.getByRole('tab',{name:/实际关联服务 \(3\)/}).click()
+    const link=page.locator('.el-tab-pane:visible').getByRole('button',{name:'服务详情'}).first()
+    const sid=Number(linked.items[0].id)
+    const serviceReply=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/services/'+sid)
+    const bindReply=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/relations/services/'+sid+'/bindings')
+    await link.click()
+    await expect(page).toHaveURL(base+'/services/'+sid)
+    const rawService=await serviceReply
+    expect(rawService.status()).toBe(200)
+    const persisted=(await rawService.json()).data
+    expect(Number(persisted.order_id)).toBe(Number(multiOrderId))
+    expect(Number(persisted.id)).toBe(sid)
+    expect(Array.isArray(persisted.actionTasks)).toBe(true)
+    const rawBindings=await bindReply
+    expect(rawBindings.status()).toBe(200)
+    const bindings=(await rawBindings.json()).data
+    expect(Array.isArray(bindings.items)).toBe(true)
+    await page.getByRole('tab',{name:'资源/交付绑定'}).click()
+    await expect(page.getByText('管理面绑定ACTIVE不代表网络执行已经验证。',{exact:false})).toBeVisible()
+    await page.getByRole('tab',{name:'执行任务'}).click()
+    await expect(page.getByRole('columnheader',{name:'操作ID'})).toBeVisible()
+  })
+
+  test('A1 provision wizard follows same-component order changes and never reuses paid snapshot',async({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    expect(unpaidOrderId).toBeTruthy()
+    const paid='**/api/admin/v1/orders/'+multiOrderId+'/provision-preview'
+    const unpaid='**/api/admin/v1/orders/'+unpaidOrderId+'/provision-preview'
+    await page.route(paid,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        order:{id:Number(multiOrderId),order_no:'CI-PAID-PREVIEW',status:'PENDING_PROVISION'},
+        paymentReady:true,alreadyProvisioned:false,
+        items:[{id:990011,service_count:1,product_name:'CI Paid product',product_type:'SHORT_IP'}],
+        availableReverseProxies:[]
+      }})}))
+    await page.route(unpaid,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        order:{id:Number(unpaidOrderId),order_no:'CI-UNPAID-PREVIEW',status:'PENDING_PROVISION'},
+        paymentReady:false,alreadyProvisioned:false,
+        items:[{id:990012,service_count:1,product_name:'CI Unpaid product',product_type:'SHORT_IP'}],
+        availableReverseProxies:[]
+      }})}))
+    await page.goto(base+'/service-provision?orderId='+multiOrderId)
+    await expect(page.getByText('CI-PAID-PREVIEW')).toBeVisible()
+    await expect(page.getByRole('button',{name:'下一步'})).toBeEnabled()
+    await page.evaluate(async id=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/service-provision?orderId='+id)
+    },unpaidOrderId)
+    await expect(page.getByText('CI-UNPAID-PREVIEW')).toBeVisible()
+    await expect(page.getByRole('button',{name:'下一步'})).toBeDisabled()
+    await expect(page.getByText('CI-PAID-PREVIEW')).toHaveCount(0)
+    await expect(page.getByText('CI Paid product')).toHaveCount(0)
+  })
+
+  test('A1 delayed old provision preview cannot replace a newly selected order',async({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    expect(unpaidOrderId).toBeTruthy()
+    const paid='**/api/admin/v1/orders/'+multiOrderId+'/provision-preview'
+    const unpaid='**/api/admin/v1/orders/'+unpaidOrderId+'/provision-preview'
+    await page.route(paid,async route=>{
+      await new Promise(resolve=>setTimeout(resolve,900))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{
+          order:{id:Number(multiOrderId),order_no:'CI-DELAYED-OLD'},
+          paymentReady:true,alreadyProvisioned:false,items:[],availableReverseProxies:[]
+        }})})
+    })
+    await page.route(unpaid,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        order:{id:Number(unpaidOrderId),order_no:'CI-FAST-NEW'},
+        paymentReady:false,alreadyProvisioned:false,items:[],availableReverseProxies:[]
+      }})}))
+    await page.goto(base+'/service-provision?orderId='+multiOrderId)
+    await page.evaluate(async id=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/service-provision?orderId='+id)
+    },unpaidOrderId)
+    await expect(page.getByText('CI-FAST-NEW')).toBeVisible()
+    await page.waitForTimeout(1100)
+    await expect(page.getByText('CI-DELAYED-OLD')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'下一步'})).toBeDisabled()
+  })
+
+  test('A1 provision return separates synthetic service receipt from persisted relation retry',async({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    const orderId=Number(multiOrderId)
+    await page.route('**/api/admin/v1/orders/'+multiOrderId+'/provision-preview',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{
+        order:{id:orderId,order_no:'CI-A1-OFFLINE-PREVIEW',status:'PENDING_PROVISION'},
+        paymentReady:true,alreadyProvisioned:false,
+        items:[{id:990011,service_count:1,product_type:'SHORT_IP',product_name:'CI A1'},
+        ],availableReverseProxies:[]
+      }})
+    }))
+    const postUrl='**/api/admin/v1/orders/'+multiOrderId+'/provision'
+    const writes:string[]=[]
+    await page.route(postUrl,route=>{
+      writes.push(route.request().url())
+      return route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{services:[{
+          serviceId:990081,serviceNo:'CI-MOCK-INSTANCE',deliveryStage:'MOCK_ONLY',
+          status:'ACTIVE',deliveryMode:'SELF_OWNED'
+        }]}})
+      })
+    })
+    const rel='**/api/admin/v1/relations/orders/'+multiOrderId+'/services'
+    await page.route(rel,route=>route.fulfill({status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_RELATION_DOWN',message:'forced read outage'})}))
+    await page.goto(base+'/service-provision?orderId='+multiOrderId)
+    await expect(page.getByText('CI-A1-OFFLINE-PREVIEW')).toBeVisible()
+    for(let i=0;i<3;i++)await page.getByRole('button',{name:'下一步'}).click()
+    await page.getByPlaceholder('请填写本次开通原因或业务说明').fill('CI simulated management receipt only')
+    await page.getByRole('button',{name:'确认开通'}).click()
+    await expect(page.getByText('数据库服务关联回查（管理面持久记录）')).toBeVisible()
+    await expect(page.getByText('订单关联服务回查失败或权限不足，不能据此认为没有生成服务。')).toBeVisible()
+    expect(writes).toHaveLength(1)
+    await page.unroute(rel)
+    await page.route(rel,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{
+        id:990081,service_no:'CI-MOCK-INSTANCE',relation_type:'PROVISIONED_INSTANCE',
+        status:'ACTIVE',delivery_stage:'MOCK_ONLY'
+      }],total:1,truncated:false}})
+    }))
+    await page.getByRole('button',{name:'重新回查持久服务关系'}).click()
+    await expect(page.getByText('CI-MOCK-INSTANCE',{exact:true}).last()).toBeVisible()
+    await expect(page.getByText('订单关联服务回查失败或权限不足，不能据此认为没有生成服务。')).toHaveCount(0)
+    await expect(page.getByText('管理面记录一致不代表外部代理可连接或数据面已交付。',{exact:false})).toBeVisible()
+  })
 })
