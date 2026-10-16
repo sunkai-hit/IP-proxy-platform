@@ -14,19 +14,29 @@ async function load(){
  finally{if(version===requestVersion.value)loading.value=false}
 }
 async function close(){
- if(closing.value||loading.value||loadError.value||!row.value.alarm_no||row.value.status==='CLOSED'||!auth.hasPermission('long-monitor:alarm:close'))return
+ if(closing.value||loading.value||loadError.value||!row.value.alarm_no||
+    row.value.status==='CLOSED'||!auth.hasPermission('long-monitor:alarm:close'))return
  const alarmId=id,version=requestVersion.value
- await ElMessageBox.confirm('关闭只代表人工归档，不会改变代理网络状态或检测结果。请先核查监控及服务。','告警归档影响确认',{type:'warning'})
- const {value}=await ElMessageBox.prompt('请输入归档原因','关闭告警',{inputValidator:v=>!!String(v||'').trim()||'必须填写原因'})
- if(id!==alarmId||version!==requestVersion.value)return
+ const alarmNo=row.value.alarm_no,status=row.value.status
  closing.value=true
  try{
+  await ElMessageBox.confirm('关闭只代表人工归档，不会改变代理网络状态或检测结果。请先核查监控及服务。','告警归档影响确认',{type:'warning'})
+  const {value}=await ElMessageBox.prompt('请输入归档原因','关闭告警',{inputValidator:v=>!!String(v||'').trim()||'必须填写原因'})
+  if(id!==alarmId||version!==requestVersion.value||loadError.value||
+     row.value.alarm_no!==alarmNo||row.value.status!==status||
+     !auth.hasPermission('long-monitor:alarm:close')){
+   ElMessage.warning('归档确认期间告警信息已变化，请重新查询')
+   return
+  }
   await longMonitorApi.closeAlarm(alarmId,String(value).trim())
   if(id!==alarmId||version!==requestVersion.value)return
   ElMessage.success('已归档告警；真实网络恢复仍以检测结果为准')
   await load()
- }catch{ElMessage.error('告警归档未确认成功；请重新查询，不能按已关闭处理')}
- finally{closing.value=false}
+ }catch(e:any){
+  if(e==='cancel'||e==='close')return
+  if(id===alarmId&&version===requestVersion.value)
+   ElMessage.error('告警归档未确认成功；请重新查询，不能按已关闭处理')
+ }finally{closing.value=false}
 }
 watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 onMounted(load)
@@ -40,7 +50,7 @@ onMounted(load)
   </div>
   <div class="actions"><el-button @click="load">刷新</el-button>
    <el-button v-if="!loadError&&!loading&&!!row.alarm_no&&auth.hasPermission('long-monitor:alarm:close')&&row.status!=='CLOSED'"
-     type="warning" :loading="closing" @click="close">确认归档</el-button>
+     type="warning" :loading="closing" :disabled="closing" @click="close">确认归档</el-button>
   </div>
  </div>
  <el-alert type="warning" :closable="false"
