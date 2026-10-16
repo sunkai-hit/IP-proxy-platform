@@ -28,6 +28,7 @@ function logout(){auth.logout();router.replace('/login')}
         <el-menu-item v-if="auth.hasPermission('resource:read')" index="/resources/lines">家宽/线路列表</el-menu-item>
         <el-menu-item v-if="auth.hasPermission('resource:pool:read')" index="/resource-pools">资源池</el-menu-item>
         <el-menu-item v-if="auth.hasPermission('resource:exclusive:read')" index="/exclusive-allocations">独享资源</el-menu-item>
+        <el-menu-item v-if="auth.hasPermission('resource:sync-task:read')" index="/sync-tasks">资源同步任务</el-menu-item>
         <el-menu-item v-if="auth.hasPermission('resource:domain:read')" index="/domains">域名配置</el-menu-item>
         <el-menu-item v-if="auth.hasPermission('resource:supplier:read')" index="/suppliers">外部供应商</el-menu-item>
         <el-menu-item v-if="auth.hasPermission('resource:purchase:read')" index="/supplier-purchases">外部套餐/资源采购</el-menu-item>
