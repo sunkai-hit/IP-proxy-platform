@@ -24,6 +24,7 @@ const router=createRouter({history:createWebHistory(),routes:[
   {path:'resource-pools/:id',component:()=>import('@/views/resource/ResourcePoolDetailView.vue'),meta:{title:'资源池详情',permission:'resource:pool:read',menuActive:'/resource-pools'}},
   {path:'exclusive-allocations',component:()=>import('@/views/resource/ExclusiveResourceView.vue'),meta:{title:'独享资源',permission:'resource:exclusive:read'}},
   {path:'exclusive-allocations/:id',component:()=>import('@/views/resource/LegacyResourceDetailView.vue'),meta:{title:'独享资源详情',permission:'resource:exclusive:read',detailType:'EXCLUSIVE',menuActive:'/exclusive-allocations'}},
+  {path:'sync-tasks',component:()=>import('@/views/resource/ResourceSyncTaskView.vue'),meta:{title:'资源同步任务',permission:'resource:sync-task:read'}},
   {path:'domains',component:()=>import('@/views/resource/ResourceDomainView.vue'),meta:{title:'域名配置',permission:'resource:domain:read'}},
   {path:'domains/:id',component:()=>import('@/views/resource/LegacyResourceDetailView.vue'),meta:{title:'域名详情',permission:'resource:domain:read',detailType:'DOMAIN',menuActive:'/domains'}},
   {path:'suppliers',component:()=>import('@/views/resource/ResourceSupplierView.vue'),meta:{title:'外部供应商',permission:'resource:supplier:read'}},
