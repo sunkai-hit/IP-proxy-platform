@@ -13,6 +13,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.*;
 
 /**
@@ -56,6 +57,9 @@ public class ProductGroupStopClient {
         if(serviceId==null||serviceId<=0||operationId==null
                 ||!operationId.matches("[A-Za-z0-9_-]{1,128}"))
             throw new BusinessException("PRODUCT_TASK_ID_INVALID","远程操作编号或服务ID不合法");
+        try{OffsetDateTime.parse(effectiveExpireAt);}
+        catch(Exception e){throw new BusinessException("PRODUCT_TASK_EFFECTIVE_AT_INVALID",
+                "远端停服时间必须为带时区的有效时间，不能发送空值或非法日期");}
         try{
             Map<String,Object> payload=new LinkedHashMap<>();
             payload.put("action","PAUSE");
@@ -93,7 +97,7 @@ public class ProductGroupStopClient {
                 "尚未联合签收真实释放写接口，不允许发送释放指令");
         if(serviceId==null||serviceId<=0||operationId==null
                 ||!operationId.matches("[A-Za-z0-9_-]{1,128}")
-                ||ipv4==null||!ipv4.matches("[0-9.]{7,15}")
+                ||!validIpv4(ipv4)
                 ||!Set.of("UNBIND_SERVICE_ONLY","RETURN_TO_SHORT_AFTER_VERIFICATION").contains(releasePlan))
             throw new BusinessException("PRODUCT_RELEASE_INVALID","资源释放参数不合法");
         try {
@@ -118,6 +122,18 @@ public class ProductGroupStopClient {
         }catch(BusinessException e){throw e;}
         catch(Exception e){throw new BusinessException("PRODUCT_TASK_ACK_UNCERTAIN",
                 "远端释放调用超时或结果不确定，禁止重发，请按操作编号查单");}
+    }
+
+    private static boolean validIpv4(String raw){
+        if(raw==null||!raw.matches("[0-9.]{7,15}"))return false;
+        String[] parts=raw.split("\\.",-1);
+        if(parts.length!=4)return false;
+        for(String part:parts){
+            if(part.isBlank()||part.length()>3||(part.length()>1&&part.startsWith("0")))return false;
+            try{if(Integer.parseInt(part)>255)return false;}
+            catch(NumberFormatException ignored){return false;}
+        }
+        return true;
     }
 
     private static Response httpPost(URI uri,String bearer,String opId,String body) throws Exception {
