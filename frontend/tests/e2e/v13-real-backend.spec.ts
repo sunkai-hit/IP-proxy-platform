@@ -1869,4 +1869,101 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     expect(writes).toHaveLength(0)
   })
 
+  test('A UI-11 exclusive allocation ledger outage hides stale inventory and retries against PostgreSQL',async({page})=>{
+    const api='**/api/admin/v1/exclusive-allocations?*'
+    let unavailable=false
+    await page.route(api,route=>route.fulfill({
+      status:unavailable?503:200,contentType:'application/json',
+      body:unavailable?JSON.stringify({code:'CI_EXCLUSIVE_LEDGER_DOWN',message:'synthetic outage'}):
+       JSON.stringify({code:'OK',data:{items:[{id:920001,allocation_no:'CI-EXCLUSIVE-ALLOCATION-A',
+         ip_address:'198.51.100.11',egress_claim_status:'NO_VERIFIED_CLAIM',status:'ALLOCATED'}],total:1}})
+    }))
+    await page.goto(base+'/exclusive-allocations')
+    await expect(page.getByRole('button',{name:'CI-EXCLUSIVE-ALLOCATION-A'})).toBeVisible()
+    unavailable=true
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('独享占用列表读取失败，当前历史分配和出口授权状态未知，不能据此判断可用或可释放。')).toBeVisible()
+    await expect(page.getByText('CI-EXCLUSIVE-ALLOCATION-A')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'核对详情'})).toHaveCount(0)
+    await page.unroute(api)
+    const response=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/exclusive-allocations')
+    await page.getByRole('button',{name:'重新加载独享占用列表'}).click()
+    expect((await response).status()).toBe(200)
+    await expect(page.getByText('独享占用列表读取失败，当前历史分配和出口授权状态未知，不能据此判断可用或可释放。')).toHaveCount(0)
+  })
+
+  test('A UI-11 detail identity mismatch fails closed and a fresh verified record can be retried',async({page})=>{
+    await page.route('**/api/admin/v1/exclusive-allocations?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        items:[{id:920002,allocation_no:'CI-EXCLUSIVE-920002',status:'ALLOCATED',
+          egress_claim_status:'NO_VERIFIED_CLAIM'}],total:1}})
+    }))
+    let mismatch=true
+    await page.route('**/api/admin/v1/exclusive-allocations/920002',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        id:mismatch?920999:920002,allocation_no:mismatch?'CI-FOREIGN-920999':'CI-EXCLUSIVE-920002',
+        status:'ALLOCATED',egress_claim_status:'NO_VERIFIED_CLAIM',service_no:'CI-SERVICE-920002'}})
+    }))
+    await page.goto(base+'/exclusive-allocations')
+    await page.getByRole('button',{name:'CI-EXCLUSIVE-920002'}).click()
+    const drawer=page.locator('.el-drawer')
+    await expect(drawer.getByText('当前独享占用详情读取失败或与所选记录不一致，固定公网IPv4的占用、宽限及释放状态均不可据此确认。')).toBeVisible()
+    await expect(drawer.getByText('CI-FOREIGN-920999')).toHaveCount(0)
+    await expect(drawer.getByText('CI-SERVICE-920002')).toHaveCount(0)
+    mismatch=false
+    await drawer.getByRole('button',{name:'重新加载独享详情'}).click()
+    await expect(drawer.getByText('CI-SERVICE-920002')).toBeVisible()
+    await expect(drawer.getByText('CI-FOREIGN-920999')).toHaveCount(0)
+    await expect(drawer.getByText('缺有效出口占用快照，须先人工核对')).toBeVisible()
+  })
+
+  test('A UI-11 delayed old allocation detail never overwrites new drawer after closing and reopening',async({page})=>{
+    await page.route('**/api/admin/v1/exclusive-allocations?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        items:[{id:920003,allocation_no:'CI-EXCLUSIVE-OLD',status:'ALLOCATED'},
+          {id:920004,allocation_no:'CI-EXCLUSIVE-NEW',status:'ALLOCATED'}],total:2}})
+    }))
+    await page.route('**/api/admin/v1/exclusive-allocations/920003',async route=>{
+      await new Promise(resolve=>setTimeout(resolve,950))
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{id:920003,allocation_no:'CI-EXCLUSIVE-OLD',service_no:'CI-STALE-SERVICE-OLD',
+          egress_claim_status:'NO_VERIFIED_CLAIM'}})})
+    })
+    await page.route('**/api/admin/v1/exclusive-allocations/920004',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{id:920004,allocation_no:'CI-EXCLUSIVE-NEW',service_no:'CI-CURRENT-SERVICE-NEW',
+          egress_claim_status:'NO_VERIFIED_CLAIM'}})
+    }))
+    await page.goto(base+'/exclusive-allocations')
+    await page.getByRole('button',{name:'CI-EXCLUSIVE-OLD'}).click()
+    const drawer=page.locator('.el-drawer')
+    await expect(drawer.getByText('正在核对当前独享占用与关联服务……')).toBeVisible()
+    await drawer.locator('.el-drawer__close-btn').click()
+    await expect(drawer).not.toBeVisible()
+    await page.getByRole('button',{name:'CI-EXCLUSIVE-NEW'}).click()
+    await expect(drawer.getByText('CI-CURRENT-SERVICE-NEW')).toBeVisible()
+    await page.waitForTimeout(1100)
+    await expect(drawer.getByText('CI-STALE-SERVICE-OLD')).toHaveCount(0)
+    await expect(drawer.getByText('CI-CURRENT-SERVICE-NEW')).toBeVisible()
+  })
+
+  test('A UI-11 a failed current detail request shows unknown and never exposes a service action',async({page})=>{
+    await page.route('**/api/admin/v1/exclusive-allocations?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        items:[{id:920005,allocation_no:'CI-EXCLUSIVE-UNREADABLE',status:'ALLOCATED',
+          service_id:12345,service_no:'CI-UNVERIFIED-SERVICE'}],total:1}})
+    }))
+    await page.route('**/api/admin/v1/exclusive-allocations/920005',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_EXCLUSIVE_DETAIL_DOWN',message:'synthetic outage'})
+    }))
+    await page.goto(base+'/exclusive-allocations')
+    await page.getByRole('button',{name:'CI-EXCLUSIVE-UNREADABLE'}).click()
+    const drawer=page.locator('.el-drawer')
+    await expect(drawer.getByText('当前独享占用详情读取失败或与所选记录不一致，固定公网IPv4的占用、宽限及释放状态均不可据此确认。')).toBeVisible()
+    await expect(drawer.getByRole('button',{name:'查看服务出口与任务'})).toHaveCount(0)
+    await expect(drawer.getByText('CI-UNVERIFIED-SERVICE')).toHaveCount(0)
+  })
+
 })
