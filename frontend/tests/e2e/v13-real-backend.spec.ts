@@ -743,6 +743,44 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('附件数量',{exact:true})).toHaveCount(0)
   })
 
+  test('failed order provisioning precheck cannot reuse old paid or network eligibility snapshot', async ({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    await page.route('**/api/admin/v1/orders/'+multiOrderId+'/provision-preview',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PRECHECK_DOWN',message:'unavailable'})
+    }))
+    await page.goto(base+'/service-provision?orderId='+multiOrderId)
+    await expect(page.getByText('订单付款及资源预检失败或已失效，旧快照已清除，不能继续开通。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'确认开通'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'下一步'})).toHaveCount(0)
+  })
+
+  test('failed refresh invalidates previously paid order preview and blocks provisioning', async ({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    const matcher='**/api/admin/v1/orders/'+multiOrderId+'/provision-preview'
+    let calls=0
+    await page.route(matcher,route=>{
+      calls++
+      if(calls>1)return route.fulfill({
+        status:503,contentType:'application/json',
+        body:JSON.stringify({code:'CI_REFRESH_DOWN',message:'unavailable'})
+      })
+      return route.fulfill({
+        status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{order:{id:Number(multiOrderId),order_no:'CI-PROVISION-TEST'},
+          paymentReady:true,alreadyProvisioned:false,items:[{id:900991,service_count:1,
+           product_type:'SHORT_IP',product_name:'CI SHORT',delivery_mode:'SELF_OWNED'}],
+          availableReverseProxies:[]}})
+      })
+    })
+    await page.goto(base+'/service-provision?orderId='+multiOrderId)
+    await expect(page.getByText('CI-PROVISION-TEST')).toBeVisible()
+    await page.getByRole('button',{name:'刷新付款与资源状态'}).click()
+    await expect(page.getByText('订单付款及资源预检失败或已失效，旧快照已清除，不能继续开通。')).toBeVisible()
+    await expect(page.getByText('CI-PROVISION-TEST')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'确认开通'})).toHaveCount(0)
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>
