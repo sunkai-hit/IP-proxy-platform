@@ -131,6 +131,125 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.locator('.el-table__body tr').first()).toBeVisible()
   })
 
+  test('order detail API failure cannot display a stale payment status and can retry', async ({ page }) => {
+    expect(multiOrderId).toBeTruthy()
+    const matcher = '**/api/admin/v1/orders/' + multiOrderId
+    await page.route(matcher, route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_ORDER_READ_FAILURE', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/orders/' + multiOrderId)
+    await expect(page.getByText('订单详情读取失败，无法核实付款、订单项和实际服务。')).toBeVisible()
+    await expect(page.getByText('订单主记录')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '进入服务开通向导' })).toHaveCount(0)
+    await page.unroute(matcher)
+    await page.getByRole('button', { name: '重新加载订单' }).click()
+    await expect(page.getByText('订单主记录')).toBeVisible()
+    await expect(page.getByText('订单详情读取失败，无法核实付款、订单项和实际服务。')).toHaveCount(0)
+  })
+
+  test('service detail API outage hides previous delivery evidence and can reload', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    const matcher = '**/api/admin/v1/services/' + serviceId
+    await page.route(matcher, route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_SERVICE_READ_FAILURE', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/services/' + serviceId)
+    await expect(page.getByText('服务详情读取失败，无法核实当前服务状态、凭证或真实交付。')).toBeVisible()
+    await expect(page.getByText('真实交付状态')).toHaveCount(0)
+    await page.unroute(matcher)
+    await page.getByRole('button', { name: '重新加载服务' }).click()
+    await expect(page.getByText('真实交付状态')).toBeVisible()
+    await expect(page.getByText('MOCK_ONLY').first()).toBeVisible()
+  })
+
+  test('service credential read error is not represented as no credentials', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    await page.route('**/api/admin/v1/services/' + serviceId + '/credentials', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_CREDENTIAL_READ_FAILURE', message: 'synthetic outage' }),
+    }))
+    await page.goto(base + '/services/' + serviceId)
+    await page.getByRole('tab', { name: '服务凭证' }).click()
+    await expect(page.getByText('凭证查询失败或权限已变化，不能据此认定没有服务凭证。')).toBeVisible()
+    await expect(page.getByText('凭证读取失败')).toBeVisible()
+  })
+
+  test('order and service lists show read failures and recover without misreporting zero records', async ({ page }) => {
+    for (const [path, matcher, errorMessage, buttonName] of [
+      ['/orders', '**/api/admin/v1/orders?*', '订单列表查询失败，不能据此认定客户没有订单。', '重新查询订单'],
+      ['/services', '**/api/admin/v1/services?*', '服务列表查询失败，不能据此认定客户没有服务实例。', '重新查询服务'],
+    ]) {
+      await page.route(matcher, route => route.fulfill({
+        status: 503, contentType: 'application/json',
+        body: JSON.stringify({ code: 'CI_LIST_FAILURE', message: 'synthetic outage' }),
+      }))
+      await page.goto(base + path)
+      await expect(page.getByText(errorMessage)).toBeVisible()
+      await page.unroute(matcher)
+      const recovery = page.waitForResponse(r =>
+        new URL(r.url()).pathname === '/api/admin/v1' + path &&
+        r.request().method() === 'GET')
+      await page.getByRole('button', { name: buttonName }).click()
+      const response = await recovery
+      expect(response.status()).toBe(200)
+      const payload = (await response.json()).data
+      expect(Array.isArray(payload.items)).toBe(true)
+      await expect(page.getByText(errorMessage)).toHaveCount(0)
+      await expect(page.locator('.el-table').first()).toBeVisible()
+      if (payload.items.length) await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+    }
+  })
+
+  test('order ledger is readable when optional customer/product selectors fail and unpaid provision is not offered', async ({ page }) => {
+    await page.route('**/api/admin/v1/customers?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_CUSTOMER_LOOKUP_DOWN', message: 'synthetic failure' }),
+    }))
+    await page.route('**/api/admin/v1/products?*', route => route.fulfill({
+      status: 503, contentType: 'application/json',
+      body: JSON.stringify({ code: 'CI_PRODUCT_LOOKUP_DOWN', message: 'synthetic failure' }),
+    }))
+    await page.goto(base + '/orders')
+    await expect(page.getByText('客户或产品筛选选项读取失败；订单列表仍可独立查询。')).toBeVisible()
+    await expect(page.locator('.el-table__body tr').first()).toBeVisible()
+    // The unpaid order should have a detail link, not a misleading provision shortcut.
+    const row = page.locator('.el-table__body tr').filter({ hasText: '待核实' }).first()
+    if (await row.count()) await expect(row.getByRole('button', { name: '开通', exact: true })).toHaveCount(0)
+  })
+
+  test('SPA order-to-order navigation refreshes the actual record and item children', async ({ page }) => {
+    expect(multiOrderId).toBeTruthy()
+    expect(unpaidOrderId).toBeTruthy()
+    expect(unpaidOrderId).not.toBe(multiOrderId)
+    await page.goto(base + '/orders/' + multiOrderId)
+    await expect(page.getByText('订单主记录')).toBeVisible()
+    const firstOrderNo = (await page.locator('.head h2').textContent()) || ''
+    await page.evaluate(async id => {
+      const app = (document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/orders/' + id)
+    }, unpaidOrderId)
+    await expect(page).toHaveURL(base + '/orders/' + unpaidOrderId)
+    await expect(page.locator('.head h2')).not.toHaveText(firstOrderNo)
+    await expect(page.getByText('订单主记录')).toBeVisible()
+    await expect(page.getByText('未核实', { exact: true })).toBeVisible()
+  })
+
+  test('SPA service route change to a missing record never retains previous credentials or delivery', async ({ page }) => {
+    expect(serviceId).toBeTruthy()
+    await page.goto(base + '/services/' + serviceId)
+    await expect(page.getByText('MOCK_ONLY').first()).toBeVisible()
+    await page.evaluate(async () => {
+      const app = (document.querySelector('#app') as any).__vue_app__
+      await app.config.globalProperties.$router.push('/services/0')
+    })
+    await expect(page).toHaveURL(base + '/services/0')
+    await expect(page.getByText('服务详情读取失败，无法核实当前服务状态、凭证或真实交付。')).toBeVisible()
+    await expect(page.getByText('MOCK_ONLY')).toHaveCount(0)
+    await expect(page.getByRole('tab', { name: '服务凭证' })).toHaveCount(0)
+  })
+
   test('resource pool loads member/usage tabs from PostgreSQL', async ({ page }) => {
     expect(poolId).toBeTruthy()
     const operationRead = page.waitForResponse(response =>

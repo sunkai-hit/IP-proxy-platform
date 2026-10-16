@@ -63,7 +63,7 @@ jobs:
       - name: Verify V1.3 cross-page router, payment-selection and RBAC guards
         run: python3 scripts/ci_v13_ui_workflow_gate.py
       - name: Verify short-IP allocation guard
-        run: mvn -B -Dtest=OpenApiMapperGuardTest,OpenApiLegacyExtractionGateTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest test
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,OpenApiLegacyExtractionGateTest,V12ServiceQueryFilterTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
