@@ -104,3 +104,57 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
     expect(result.code).toBe('AUTH_FORBIDDEN')
   }
 })
+
+
+test('A1 viewer cannot confirm, cancel, pay or provision an actual order; PostgreSQL relations stay unchanged',async({page})=>{
+  const unpaidId=process.env.V13_E2E_UNPAID_ORDER_ID
+  expect(unpaidId,'A1 uses the confirmed but unpaid PostgreSQL order seeded by backend-smoke').toBeTruthy()
+  await page.goto(base+'/login')
+  const fields=page.locator('.login-card input')
+  await fields.nth(0).fill(process.env.V13_E2E_VIEWER_USER||'ci_v13_readonly')
+  await fields.nth(1).fill(process.env.V13_E2E_VIEWER_PASSWORD||'admin123')
+  const login=page.waitForResponse(r=>r.url().endsWith('/api/admin/v1/auth/login'))
+  await page.getByRole('button',{name:'登录',exact:true}).click()
+  expect((await login).status()).toBe(200)
+  await page.goto(base+'/orders/'+unpaidId)
+  await expect(page.getByText('订单主记录')).toBeVisible()
+  await expect(page.getByRole('button',{name:'核实客户付款'})).toHaveCount(0)
+  await expect(page.getByRole('button',{name:'进入服务开通向导'})).toHaveCount(0)
+  await expect(page.getByRole('button',{name:'取消订单'})).toHaveCount(0)
+  const proof=await page.evaluate(async id=>{
+    const token=localStorage.getItem('ipproxy_access_token')
+    const basePath='/api/admin/v1/orders/'+id
+    const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'}
+    const check=async(path:string,method='GET',body?:any)=>{
+      const r=await fetch(path,{method,headers,body:body?JSON.stringify(body):undefined})
+      return {status:r.status,payload:await r.json()}
+    }
+    const before=await check(basePath)
+    const relationsBefore=await check('/api/admin/v1/relations/orders/'+id+'/services')
+    const mutations=await Promise.all([
+      check(basePath+'/confirm','POST',{reason:'CI read-only must not confirm'}),
+      check(basePath+'/cancel','POST',{reason:'CI read-only must not cancel'}),
+      check(basePath+'/payment-confirmation','POST',{paymentReference:'CI-UNTRUSTED-NO-PAY',reason:'CI viewer denied'}),
+      check(basePath+'/provision','POST',{reason:'CI viewer denied',plans:[]}),
+      check(basePath+'/provision-preview')
+    ])
+    const after=await check(basePath)
+    const relationsAfter=await check('/api/admin/v1/relations/orders/'+id+'/services')
+    return {before,after,relationsBefore,relationsAfter,mutations}
+  },unpaidId)
+  for(const snapshot of [proof.before,proof.after,proof.relationsBefore,proof.relationsAfter])
+    expect(snapshot.status,JSON.stringify(snapshot)).toBe(200)
+  for(const rejected of proof.mutations){
+    expect(rejected.status,JSON.stringify(rejected)).toBe(400)
+    expect(rejected.payload.code,JSON.stringify(rejected)).toBe('AUTH_FORBIDDEN')
+  }
+  const original=proof.before.payload.data,now=proof.after.payload.data
+  expect(original.payment_status).not.toBe('PAID_CONFIRMED')
+  expect(now.id).toBe(original.id)
+  expect(now.order_no).toBe(original.order_no)
+  expect(now.status).toBe(original.status)
+  expect(now.payment_status).toBe(original.payment_status)
+  expect(now.items).toEqual(original.items)
+  expect(proof.relationsAfter.payload.data).toEqual(proof.relationsBefore.payload.data)
+  expect(proof.relationsAfter.payload.data.items).toHaveLength(0)
+})
