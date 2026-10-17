@@ -44,8 +44,8 @@ public class CustomerService {
         Map<String,Object> safe=new LinkedHashMap<>(raw);
         Object material=safe.remove("submitted_data"),attachments=safe.remove("attachment_refs");
         Map<?,?> source=jsonObject(material);
-        safe.put("subject_name",String.valueOf(source.getOrDefault("subjectName","")));
-        String number=String.valueOf(source.getOrDefault("documentNo",""));
+        safe.put("subject_name",String.valueOf(source.get("subjectName")==null?"":source.get("subjectName")));
+        String number=String.valueOf(source.get("documentNo")==null?"":source.get("documentNo"));
         safe.put("document_number_masked",number.isBlank()?"未填写":
             number.length()>8?number.substring(0,3)+"••••"+number.substring(number.length()-4):"已提交，隐藏");
         safe.put("attachment_count",jsonListSize(attachments));
