@@ -41,6 +41,23 @@ public class ExternalDeliveryMapper {
       """:"""
       UPDATE res_supplier_purchase SET customer_id=?,supplier_package_name=?,supplier_package_no=?,purchase_account=?,purchase_secret_cipher=?,interface_endpoint=?,package_quota=?,remaining_quota=?,purchase_cost=?,currency=?,effective_at=?,expire_at=?,remark=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE
       """;return secret==null?jdbc.update(sql,customerId,packageName,packageNo,account,endpoint,quota,remaining,cost,currency,effective,expire,remark,actor,id):jdbc.update(sql,customerId,packageName,packageNo,account,secret,endpoint,quota,remaining,cost,currency,effective,expire,remark,actor,id);}
+    // Lock the one purchase ledger row before any coverage-sensitive mutation.
+    // Proxy registration and supplier-term edits both acquire this lock so
+    // a late supplier edit cannot race an earlier customer service binding.
+    public void lockPurchase(Long id){
+        jdbc.queryForList("SELECT id FROM res_supplier_purchase WHERE id=? AND deleted=FALSE FOR UPDATE",Long.class,id);
+    }
+    public boolean linkedCoverageExceedsPurchase(Long purchaseId,OffsetDateTime newExpire){
+        return Boolean.TRUE.equals(jdbc.queryForObject("""
+          SELECT EXISTS(SELECT 1 FROM res_reverse_proxy rp
+            LEFT JOIN svc_instance s ON s.id=rp.service_id AND s.deleted=FALSE
+            WHERE rp.purchase_id=? AND rp.deleted=FALSE
+              AND (CAST(? AS timestamptz) IS NULL
+                OR (rp.expire_at IS NOT NULL AND rp.expire_at>CAST(? AS timestamptz))
+                OR (s.id IS NOT NULL AND s.status NOT IN ('TERMINATED','PROVISION_FAILED')
+                    AND (s.expire_at IS NULL OR s.expire_at>CAST(? AS timestamptz)))))
+          """,Boolean.class,purchaseId,newExpire,newExpire,newExpire));
+    }
     public int purchaseStatus(Long id,String status,Long actor){return jdbc.update("UPDATE res_supplier_purchase SET status=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",status,actor,id);}
 
     public long countProxies(String k,String status,Long customerId){return jdbc.queryForObject("""
