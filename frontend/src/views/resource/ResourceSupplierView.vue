@@ -39,6 +39,11 @@ async function loadOptions(){
  }catch{optionsError.value=true}
  finally{optionsBusy.value=false}
 }
+function codes(value:any):string[]{
+ if(Array.isArray(value))return value.map(String)
+ if(typeof value==='string'){try{const arr=JSON.parse(value);return Array.isArray(arr)?arr.map(String):[]}catch{return []}}
+ return []
+}
 function reset(){Object.assign(form,{supplierCode:'',supplierName:'',contactName:'',contactPhone:'',
  apiEndpoint:'',authTypeCode:'TOKEN',apiAccount:'',secret:'',regionCodes:[],carrierCodes:[],fetchMode:'MANUAL'})}
 function add(){
@@ -55,7 +60,7 @@ function edit(r:any){
  Object.assign(form,{supplierCode:r.supplier_code,supplierName:r.supplier_name,
   contactName:r.contact_name||'',contactPhone:r.contact_phone||'',apiEndpoint:r.api_endpoint,
   authTypeCode:r.auth_type_code,apiAccount:r.api_account||'',secret:'',
-  regionCodes:[...(r.region_codes||[])],carrierCodes:[...(r.carrier_codes||[])],
+  regionCodes:codes(r.region_codes),carrierCodes:codes(r.carrier_codes),
   fetchMode:r.fetch_mode})
  dialog.value=true
 }
