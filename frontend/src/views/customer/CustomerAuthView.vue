@@ -118,9 +118,6 @@ async function review(row:any,approve:boolean){
    ElMessage.error('认证审核或审核前核对未确认成功；请回查申请、状态和审计')
  }finally{busy.value=false}
 }
-function parseObject(v:any):Record<string,any>{if(v&&typeof v==='object'&&!Array.isArray(v))return v;try{const x=JSON.parse(String(v||'{}'));return x&&typeof x==='object'&&!Array.isArray(x)?x:{}}catch{return {}}}
-function attachmentCount(v:any){if(Array.isArray(v))return v.length;try{const x=JSON.parse(String(v||'[]'));return Array.isArray(x)?x.length:0}catch{return 0}}
-function maskDocument(v:any){const x=String(v||'');return x.length>8?x.slice(0,3)+'••••'+x.slice(-4):(x?'已提交，隐藏':'未填写')}
 onMounted(init)
 </script>
 <template><div class="page"><div class="head"><div><h2>客户认证</h2><p>区分个人/企业认证，保留完整申请与审核记录。</p></div><el-button v-if="auth.hasPermission('customer:write')" type="primary" :disabled="optionsLoading||optionsError||loading||loadError||busy" @click="openCreate">新建认证申请</el-button></div><el-alert title="客户认证保留申请、审核和附件引用；普通详情只展示业务摘要，不直接输出证件原文或原始资料JSON。" type="info" :closable="false"/>
@@ -128,9 +125,9 @@ onMounted(init)
 <el-dialog v-model="createDialog" title="新建认证申请" width="600px" :close-on-click-modal="!busy" :close-on-press-escape="!busy" :show-close="!busy"><el-form label-width="120px"><el-form-item label="客户"><el-select v-model="form.customerId" filterable style="width:100%" @change="(id:number)=>{const c=customers.find(x=>x.id===id);if(c)form.authTypeCode=c.customer_type_code}"><el-option v-for="c in customers" :key="c.id" :label="`${c.customer_code} · ${c.customer_name}`" :value="c.id"/></el-select></el-form-item><el-form-item label="认证类型"><el-select v-model="form.authTypeCode" style="width:100%"><el-option v-for="x in options.authTypes" :key="x.item_code" :label="x.item_name" :value="x.item_code"/></el-select></el-form-item><el-form-item label="认证主体名称"><el-input v-model="form.subjectName"/></el-form-item><el-form-item label="证件/主体编号"><el-input v-model="form.documentNo"/></el-form-item><el-form-item label="附件引用"><el-input v-model="form.attachmentRefs" placeholder="多个引用用逗号分隔"/></el-form-item></el-form><template #footer><el-button :disabled="busy" @click="createDialog=false">取消</el-button><el-button type="primary" :loading="busy" :disabled="optionsLoading||optionsError||loading||loadError||busy" @click="create">提交</el-button></template></el-dialog>
 <el-dialog v-model="detailDialog" title="认证详情" width="680px" @closed="closeDetail"><el-alert v-if="detailLoading" type="info" :closable="false" title="正在核对当前认证申请身份与资料。"/><el-alert v-if="detailError" type="error" :closable="false" title="认证详情读取失败，不能确认资料、审核状态或历史意见。"/><template v-if="detail"><el-descriptions :column="2" border><el-descriptions-item label="认证编号">{{ detail.auth_no }}</el-descriptions-item><el-descriptions-item label="客户">{{ detail.customer_name }}</el-descriptions-item><el-descriptions-item label="类型">{{ detail.auth_type_code }}</el-descriptions-item><el-descriptions-item label="状态">{{ detail.status }}</el-descriptions-item><el-descriptions-item label="审核人">{{ detail.reviewer_name||'—' }}</el-descriptions-item><el-descriptions-item label="审核意见">{{ detail.review_opinion||'—' }}</el-descriptions-item></el-descriptions><h4>申请资料摘要（敏感信息不回显）</h4>
 <el-descriptions :column="2" border>
- <el-descriptions-item label="认证主体">{{parseObject(detail.submitted_data).subjectName||'未提供'}}</el-descriptions-item>
- <el-descriptions-item label="证件/主体编号">{{maskDocument(parseObject(detail.submitted_data).documentNo)}}</el-descriptions-item>
- <el-descriptions-item label="附件数量">{{attachmentCount(detail.attachment_refs)}}</el-descriptions-item>
+ <el-descriptions-item label="认证主体">{{detail.subject_name||'未提供'}}</el-descriptions-item>
+ <el-descriptions-item label="证件/主体编号">{{detail.document_number_masked||'未填写'}}</el-descriptions-item>
+ <el-descriptions-item label="附件数量">{{detail.attachment_count??'—'}}</el-descriptions-item>
  <el-descriptions-item label="申请时间">{{detail.submitted_at||'—'}}</el-descriptions-item>
  <el-descriptions-item label="审核时间">{{detail.reviewed_at||'未审核'}}</el-descriptions-item>
 </el-descriptions>
