@@ -2732,4 +2732,32 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button',{name:'服务详情'})).toHaveCount(0)
   })
 
+  test('A UI-36 actual PostgreSQL purchase relation APIs return verifiable source IDs',async({page})=>{
+    await page.goto(base+'/supplier-purchases')
+    const item=page.locator('.el-table__body tr').filter({hasText:'CI-PUR-R3'})
+    await expect(item).toBeVisible()
+    const proxyResult=page.waitForResponse(r=>r.request().method()==='GET'&&
+      /\/relations\/supplier-purchases\/\d+\/proxies$/.test(new URL(r.url()).pathname))
+    const serviceResult=page.waitForResponse(r=>r.request().method()==='GET'&&
+      /\/relations\/supplier-purchases\/\d+\/services$/.test(new URL(r.url()).pathname))
+    await item.getByRole('button',{name:'详情'}).click()
+    const [proxyResponse,serviceResponse]=await Promise.all([proxyResult,serviceResult])
+    const purchaseId=Number(new URL(page.url()).pathname.split('/').pop())
+    expect(purchaseId).toBeGreaterThan(0)
+    expect(proxyResponse.status()).toBe(200)
+    expect(serviceResponse.status()).toBe(200)
+    const proxyRows=(await proxyResponse.json()).data?.items
+    const serviceRows=(await serviceResponse.json()).data?.items
+    expect(Array.isArray(proxyRows)).toBe(true)
+    expect(Array.isArray(serviceRows)).toBe(true)
+    expect(proxyRows.length).toBeGreaterThan(0)
+    for(const candidate of proxyRows)expect(Number(candidate.purchase_id)).toBe(purchaseId)
+    for(const service of serviceRows){
+      expect(Number(service.supplier_purchase_id)===purchaseId||
+        Number(service.reverse_proxy_purchase_id)===purchaseId).toBe(true)
+    }
+    await expect(page.getByRole('heading',{name:'CI-PUR-R3'})).toBeVisible()
+    await expect(page.getByRole('tab',{name:/反向代理明细 \(1\)/})).toBeVisible()
+  })
+
 })
