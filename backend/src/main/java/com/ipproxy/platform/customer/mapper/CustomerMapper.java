@@ -67,7 +67,7 @@ public interface CustomerMapper {
         WHERE id=#{id} AND deleted=FALSE
         """) int updateCustomer(@Param("id") Long id,@Param("name") String name,@Param("typeCode") String typeCode,@Param("contactName") String contactName,@Param("contactPhone") String contactPhone,@Param("contactEmail") String contactEmail,@Param("ownerUserId") Long ownerUserId,@Param("remark") String remark,@Param("actorId") Long actorId);
     @Update("UPDATE customer SET auth_status=#{status},updated_at=now(),updated_by=#{actorId},version=version+1 WHERE id=#{id} AND deleted=FALSE") int updateCustomerAuthStatus(@Param("id") Long id,@Param("status") String status,@Param("actorId") Long actorId);
-    @Update("UPDATE customer SET status=#{status},updated_at=now(),updated_by=#{actorId},version=version+1 WHERE id=#{id} AND deleted=FALSE") int updateCustomerStatus(@Param("id") Long id,@Param("status") String status,@Param("actorId") Long actorId);
+    @Update("UPDATE customer SET status=#{status},updated_at=now(),updated_by=#{actorId},version=version+1 WHERE id=#{id} AND deleted=FALSE AND status=#{expectedStatus} AND version=#{expectedVersion}") int updateCustomerStatus(@Param("id") Long id,@Param("status") String status,@Param("expectedStatus") String expectedStatus,@Param("expectedVersion") Long expectedVersion,@Param("actorId") Long actorId);
 
     @Select("""
         SELECT a.id,a.auth_no,a.customer_id,c.customer_code,c.customer_name,a.auth_type_code,a.submitted_data,a.attachment_refs,a.status,
