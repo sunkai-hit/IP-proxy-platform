@@ -8,13 +8,26 @@ const router=useRouter(),auth=useAuthStore(),rows=ref<any[]>([]),total=ref(0),lo
 const query=reactive({page:1,size:20,keyword:'',status:'',province:'',city:'',carrier:''})
 const form=reactive<any>({poolCode:'',poolName:'',provinceCode:'',cityCode:'',carrierCode:'',purpose:''})
 const data=(r:any)=>r.data.data
+const validId=(v:any)=>Number.isSafeInteger(Number(v))&&Number(v)>0
+function validPoolPage(d:any){
+ if(!d||!Array.isArray(d.items)||!Number.isSafeInteger(Number(d.total))||Number(d.total)<0||d.items.length>Number(d.total))return false
+ const ids=new Set<number>()
+ return d.items.every((pool:any)=>{
+  if(!validId(pool?.id)||ids.has(Number(pool.id))||
+    !String(pool.pool_code||'').trim()||!String(pool.pool_name||'').trim())return false
+  ids.add(Number(pool.id));return true
+ })
+}
 let listVersion=0,editVersion=0
 async function load(){
  const version=++listVersion
  loading.value=true;loadError.value=false;rows.value=[];total.value=0
  try{
   const d=data(await v12ResourceApi.pools({...query}))||{}
-  if(version===listVersion){rows.value=d.items||[];total.value=d.total??0}
+  if(version===listVersion){
+   if(!validPoolPage(d))throw new Error('POOL_LIST_UNVERIFIED')
+   rows.value=d.items;total.value=d.total
+  }
  }catch{
   if(version===listVersion){loadError.value=true;rows.value=[];total.value=0}
  }finally{if(version===listVersion)loading.value=false}
@@ -31,13 +44,16 @@ async function edit(r:any){
  try{
   const d=data(await v12ResourceApi.pool(selectedId))
   if(version!==editVersion)return
+  if(!validId(selectedId)||Number(d?.id)!==selectedId||
+    String(d.pool_code||'').trim()!==String(r.pool_code||'').trim()||
+    !String(d.pool_name||'').trim())throw new Error('POOL_EDIT_IDENTITY_CHANGED')
   editId.value=selectedId
   Object.assign(form,{poolCode:d.pool_code,poolName:d.pool_name,provinceCode:d.province_code||'',cityCode:d.city_code||'',carrierCode:d.carrier_code||'',purpose:d.purpose||''})
   dialog.value=true
  }catch{if(version===editVersion)ElMessage.error('资源池信息读取失败，不能使用旧资料修改')}
 }
 async function save(){
- if(saving.value||!auth.hasPermission('resource:pool:write'))return
+ if(saving.value||!auth.hasPermission('resource:pool:write')||loading.value||loadError.value)return
  if(!form.poolCode||!form.poolName){ElMessage.warning('请填写资源池编码和名称');return}
  const selectedId=editId.value,version=editVersion
  saving.value=true

@@ -16,8 +16,23 @@ const addDialog=ref(false),candidateRows=ref<any[]>([]),candidateTotal=ref(0)
 const candidateLoading=ref(false),candidateError=ref(false),candidateSelected=ref<any[]>([])
 const cq=reactive({page:1,size:20,keyword:'',type:''})
 const canWrite=computed(()=>auth.hasPermission('resource:pool:write'))
-const poolReady=computed(()=>!!detail.value.pool_code&&!detailError.value&&!detailLoading.value)
+const poolReady=computed(()=>validId(poolId.value)&&Number(detail.value.id)===poolId.value&&
+ !!String(detail.value.pool_code||'').trim()&&!detailError.value&&!detailLoading.value)
 const data=(r:any)=>r.data.data
+const validId=(v:any)=>Number.isSafeInteger(Number(v))&&Number(v)>0
+function validPool(p:any,id:number){
+ return p&&validId(id)&&Number(p.id)===id&&String(p.pool_code||'').trim()&&
+  String(p.pool_name||'').trim()
+}
+function validLinePage(d:any){
+ if(!d||!Array.isArray(d.items)||!Number.isSafeInteger(Number(d.total))||Number(d.total)<0||d.items.length>Number(d.total))return false
+ const ids=new Set<number>()
+ return d.items.every((line:any)=>{
+  if(!validId(line?.id)||ids.has(Number(line.id))||
+    !String(line.resource_code||'').trim()||!['SHARED','LONG'].includes(line.line_type))return false
+  ids.add(Number(line.id));return true
+ })
+}
 const metric=(v:any)=>v===undefined||v===null?'—':v
 let detailVersion=0,lineVersion=0,operationVersion=0,usageVersion=0,candidateVersion=0
 function lineTypeLabel(v:any){return v==='SHARED'?'共享':v==='LONG'?'长效':'未设置'}
@@ -27,7 +42,10 @@ async function loadDetail(){
  detailLoading.value=true;detailError.value=false;detail.value={}
  try{
   const d=data(await v12ResourceApi.pool(id))
-  if(version===detailVersion&&id===poolId.value)detail.value=d||{}
+  if(version===detailVersion&&id===poolId.value){
+   if(!validPool(d,id))throw new Error('POOL_IDENTITY_UNVERIFIED')
+   detail.value=d
+  }
  }catch{
   if(version===detailVersion&&id===poolId.value){detailError.value=true;detail.value={}}
  }finally{if(version===detailVersion)detailLoading.value=false}
@@ -38,7 +56,10 @@ async function loadLines(){
  loading.value=true;lineError.value=false;rows.value=[];total.value=0;selected.value=[]
  try{
   const d=data(await v12ResourceApi.poolLines(id,{...q,type}))||{}
-  if(version===lineVersion&&id===poolId.value){rows.value=d.items||[];total.value=d.total??0}
+  if(version===lineVersion&&id===poolId.value){
+   if(!validLinePage(d))throw new Error('POOL_LINES_UNVERIFIED')
+   rows.value=d.items;total.value=d.total
+  }
  }catch{
   if(version===lineVersion&&id===poolId.value){lineError.value=true;rows.value=[];total.value=0}
  }finally{if(version===lineVersion)loading.value=false}
@@ -80,18 +101,23 @@ async function loadCandidates(){
  try{
   const d=data(await v12ResourceApi.candidatePoolLines(id,{...cq}))||{}
   if(version===candidateVersion&&id===poolId.value&&addDialog.value){
-   candidateRows.value=d.items||[];candidateTotal.value=d.total??0
+   if(!poolReady.value||!validLinePage(d))throw new Error('POOL_CANDIDATES_UNVERIFIED')
+   candidateRows.value=d.items;candidateTotal.value=d.total
   }
  }catch{
-  if(version===candidateVersion&&id===poolId.value){candidateError.value=true;candidateRows.value=[]}
+  if(version===candidateVersion&&id===poolId.value){candidateError.value=true;candidateRows.value=[];candidateTotal.value=0;candidateSelected.value=[]}
  }finally{if(version===candidateVersion)candidateLoading.value=false}
 }
 async function addLines(){
  if(!canWrite.value||!poolReady.value||saving.value||candidateError.value||candidateLoading.value||!candidateSelected.value.length)return
  const id=poolId.value,version=candidateVersion,ids=candidateSelected.value.map((x:any)=>Number(x.id))
+ const memberSnapshot=candidateRows.value
+ if(ids.some(x=>!validId(x)||!memberSnapshot.some((r:any)=>Number(r.id)===x)))return
  try{
   const {value}=await ElMessageBox.prompt('请输入加入资源池的原因','加入线路',{inputValidator:v=>!!String(v||'').trim()||'必须填写原因'})
-  if(id!==poolId.value||!poolReady.value||!addDialog.value||version!==candidateVersion||candidateError.value){
+  if(id!==poolId.value||!poolReady.value||!addDialog.value||version!==candidateVersion||candidateError.value||
+    candidateLoading.value||ids.length!==candidateSelected.value.length||
+    !ids.every(x=>candidateSelected.value.some((r:any)=>Number(r.id)===x)&&candidateRows.value.some((r:any)=>Number(r.id)===x))){
    ElMessage.warning('当前资源池或候选线路已变化，请重新核对');return
   }
   saving.value=true
@@ -107,7 +133,8 @@ async function removeLines(items:any[]){
  const id=poolId.value,version=lineVersion,ids=items.map((x:any)=>Number(x.id))
  try{
   const {value}=await ElMessageBox.prompt(`确认移出 ${ids.length} 条线路。若承载未释放固定出口或会清空在用服务的来源池，后端将拒绝本操作；请填写原因`,'移出线路',{inputValidator:v=>!!String(v||'').trim()||'必须填写原因'})
-  if(id!==poolId.value||version!==lineVersion||!poolReady.value||lineError.value||
+  if(id!==poolId.value||version!==lineVersion||!poolReady.value||lineError.value||loading.value||
+     ids.length!==items.length||!ids.every(validId)||
      !ids.every(x=>rows.value.some((r:any)=>Number(r.id)===x))){
    ElMessage.warning('当前资源池或线路成员已变化，请重新核对');return
   }
