@@ -7,17 +7,33 @@ import {businessRelationsApi} from '@/api/businessRelations'
 import {useAuthStore} from '@/stores/auth'
 const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
 const detail=ref<any>(null),credentials=ref<any[]>([]),orders=ref<any[]>([])
-const ordersTruncated=ref(false),loading=ref(false),ordersError=ref(false),credentialError=ref(false),detailError=ref(false),requestVersion=ref(0)
+const ordersTruncated=ref(false),loading=ref(false),ordersError=ref(false),serviceError=ref(false),credentialError=ref(false),detailError=ref(false),requestVersion=ref(0)
 const fmt=(v:any)=>v===null||v===undefined||v===''?'—':String(v)
+const validId=(v:any)=>Number.isSafeInteger(Number(v))&&Number(v)>0
+function ownsRows(rows:any,customerId:number,numberField:string):boolean{
+ if(!Array.isArray(rows))return false
+ const ids=new Set<number>()
+ for(const item of rows){
+  const childId=Number(item?.id)
+  if(!validId(childId)||ids.has(childId)||Number(item?.customer_id)!==customerId||
+     !String(item?.[numberField]||'').trim())return false
+  ids.add(childId)
+ }
+ return true
+}
 async function load(){
  const version=++requestVersion.value,customerId=id
- loading.value=true;detailError.value=false;ordersError.value=false;credentialError.value=false
+ loading.value=true;detailError.value=false;ordersError.value=false;serviceError.value=false;credentialError.value=false
  detail.value=null;credentials.value=[];orders.value=[];ordersTruncated.value=false
  try{
   const result=(await customerApi.detail(customerId)).data.data
   if(version!==requestVersion.value)return
-  if(!result?.customer?.customer_code)throw new Error('Customer primary record absent')
-  detail.value=result
+  if(!validId(customerId)||Number(result?.customer?.id)!==customerId||
+     !String(result.customer.customer_code||'').trim())throw new Error('CUSTOMER_PARENT_IDENTITY_INVALID')
+  if(auth.hasPermission('service:read')&&!ownsRows(result.services,customerId,'service_no')){
+    serviceError.value=true
+    detail.value={...result,services:[]}
+  }else detail.value=result
   const [cred,ord]=await Promise.allSettled([
    auth.hasPermission('customer:credential:read')?customerApi.credentials(customerId):Promise.resolve(null),
    auth.hasPermission('order:read')?businessRelationsApi.customerOrders(customerId):Promise.resolve(null)
@@ -25,18 +41,31 @@ async function load(){
   if(version!==requestVersion.value)return
   if(cred.status==='fulfilled')credentials.value=cred.value?.data?.data||[]
   else credentialError.value=true
-  if(ord.status==='fulfilled'){
-   orders.value=ord.value?.data?.data?.items||[]
-   ordersTruncated.value=!!ord.value?.data?.data?.truncated
-  }else ordersError.value=true
+  if(auth.hasPermission('order:read')){
+   const payload=ord.status==='fulfilled'?ord.value?.data?.data:null
+   const items=payload?.items
+   if(!ownsRows(items,customerId,'order_no')){
+    ordersError.value=true;orders.value=[]
+   }else{
+    orders.value=items;ordersTruncated.value=!!payload?.truncated
+   }
+  }
  }catch{
   if(version===requestVersion.value){
-   detailError.value=true;detail.value=null;credentials.value=[];orders.value=[]
+   detailError.value=true;detail.value=null;credentials.value=[];orders.value=[];serviceError.value=false
   }
  }finally{if(version===requestVersion.value)loading.value=false}
 }
-function openOrder(newOrder=false){router.push({path:'/orders',query:{customerId:String(id),...(newOrder?{newOrder:'1'}:{})}})}
-function openService(serviceId:number){router.push('/services/'+serviceId)}
+function openOrder(newOrder=false){
+ if(!loading.value&&!detailError.value&&Number(detail.value?.customer?.id)===id&&
+    auth.hasPermission('order:read')&&(!newOrder||auth.hasPermission('order:write')))
+  void router.push({path:'/orders',query:{customerId:String(id),...(newOrder?{newOrder:'1'}:{})}})
+}
+function openService(serviceId:number){
+ if(!loading.value&&!serviceError.value&&auth.hasPermission('service:read')&&validId(serviceId)&&
+   (detail.value?.services||[]).some((s:any)=>Number(s.id)===Number(serviceId)&&Number(s.customer_id)===id))
+  void router.push('/services/'+serviceId)
+}
 function metric(v:any){return v==null?'—':v}
 watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
 onMounted(load)
@@ -49,7 +78,7 @@ onMounted(load)
   <div class="head-actions">
    <el-tag>{{detail.customer.customer_type_code}}</el-tag>
    <el-tag type="success">{{detail.customer.status}}</el-tag>
-   <el-button v-if="auth.hasPermission('order:read')&&auth.hasPermission('order:write')" type="primary" @click="openOrder(true)">为该客户创建订单</el-button>
+   <el-button v-if="auth.hasPermission('order:read')&&auth.hasPermission('order:write')" :disabled="loading||detailError" type="primary" @click="openOrder(true)">为该客户创建订单</el-button>
    <el-button @click="load">刷新</el-button>
   </div>
  </div>
@@ -88,12 +117,13 @@ onMounted(load)
      <el-table-column prop="service_count" label="已关联服务" width="95"/>
      <el-table-column label="金额" min-width="135"><template #default="s">{{s.row.total_amount}} {{s.row.currency}}</template></el-table-column>
      <el-table-column prop="created_at" label="创建时间" min-width="165"/>
-     <el-table-column label="操作" width="105"><template #default="s"><el-button type="primary" link @click="router.push('/orders/'+s.row.id)">订单详情</el-button></template></el-table-column>
+     <el-table-column label="操作" width="105"><template #default="s"><el-button v-if="!ordersError&&validId(s.row.id)&&Number(s.row.customer_id)===id" type="primary" link @click="router.push('/orders/'+s.row.id)">订单详情</el-button></template></el-table-column>
     </el-table>
    </el-tab-pane>
    <el-tab-pane v-if="auth.hasPermission('service:read')" label="服务实例">
     <el-alert type="info" :closable="false" title="服务列表只显示管理面状态；具体公网IPv4授权、真实交付和到期任务请进入服务详情核对。" style="margin-bottom:12px"/>
-    <el-table :data="detail.services||[]" stripe border>
+    <el-alert v-if="serviceError" type="error" :closable="false" title="服务关联返回错误的客户归属、重复ID或缺少来源，不能据此认定该客户没有服务，也不能打开旧服务。"/>
+    <el-table :data="detail.services||[]" :empty-text="serviceError?'服务关联归属不可核实':'暂无已登记服务'" stripe border>
      <el-table-column prop="service_no" label="服务编号" min-width="170"/>
      <el-table-column prop="product_name" label="产品" min-width="130"/>
      <el-table-column prop="package_name" label="套餐" min-width="130"/>

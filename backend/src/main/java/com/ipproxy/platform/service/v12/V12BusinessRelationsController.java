@@ -49,7 +49,7 @@ public class V12BusinessRelationsController {
     public ApiResponse<?> customerOrders(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
         require(p,"customer:read");require(p,"order:read");existing("customer",id);
         return ApiResponse.success(result(jdbc.queryForList("""
-          SELECT o.id,o.order_no,o.order_type,o.status,o.payment_status,o.total_amount,o.currency,
+          SELECT o.id,o.order_no,o.customer_id,o.order_type,o.status,o.payment_status,o.total_amount,o.currency,
                  o.renewal_service_id,s.service_no renewal_service_no,o.created_at,o.confirmed_at,
                  (SELECT count(*) FROM biz_order_item i WHERE i.order_id=o.id) order_item_count,
                  (SELECT count(*) FROM svc_instance x WHERE x.order_id=o.id AND x.deleted=FALSE) service_count
@@ -185,7 +185,7 @@ public class V12BusinessRelationsController {
             "SELECT EXISTS(SELECT 1 FROM biz_order WHERE id=? AND deleted=FALSE)",Boolean.class,id)))
             throw new BusinessException("RELATION_PARENT_NOT_FOUND","订单不存在");
         return ApiResponse.success(result(jdbc.queryForList("""
-          SELECT s.id,s.service_no,s.order_item_id,c.customer_name,
+          SELECT s.id,s.service_no,s.customer_id,s.order_id,s.order_item_id,c.customer_name,
                  prod.product_name,s.product_type,s.status,s.delivery_stage,
                  s.delivery_mode,s.effective_at,s.expire_at,s.created_at,
                  CASE WHEN s.order_id=? THEN 'CREATED_FROM_ORDER'

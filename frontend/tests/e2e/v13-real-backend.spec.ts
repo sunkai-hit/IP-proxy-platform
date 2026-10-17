@@ -2760,4 +2760,125 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('tab',{name:/反向代理明细 \(1\)/})).toBeVisible()
   })
 
+  test('A UI-03 customer HTTP200 foreign primary ID cannot render or start orders',async({page})=>{
+    expect(customerId).toBeTruthy()
+    const url='**/api/admin/v1/customers/'+customerId
+    await page.route(url,async route=>{
+      const upstream=await route.fetch()
+      const body=await upstream.json()
+      body.data.customer.id=Number(customerId)+900000
+      body.data.customer.customer_name='CI-FOREIGN-CUSTOMER-NOT-OWNED'
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)})
+    })
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByText('客户详情读取失败，无法确认客户归属、合同、服务或认证状态。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-CUSTOMER-NOT-OWNED')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'为该客户创建订单'})).toHaveCount(0)
+    await page.unroute(url)
+    await page.getByRole('button',{name:'重新加载客户详情'}).click()
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+  })
+
+  test('A UI-03 foreign-customer order relation is unknown rather than zero or navigable',async({page})=>{
+    expect(customerId).toBeTruthy()
+    await page.route('**/api/admin/v1/relations/customers/'+customerId+'/orders',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{
+        id:990701,order_no:'CI-CROSS-CUSTOMER-ORDER',customer_id:Number(customerId)+1,
+        order_type:'NEW',status:'PENDING_CONFIRM',payment_status:'UNVERIFIED'
+      }],truncated:false}})
+    }))
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await expect(page.getByText('订单关联明细暂不可用，不代表客户没有订单。')).toBeVisible()
+    await expect(page.getByText('CI-CROSS-CUSTOMER-ORDER')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'订单详情'})).toHaveCount(0)
+  })
+
+  test('A UI-03 foreign customer service relation blocks service actions while parent stays visible',async({page})=>{
+    expect(customerId).toBeTruthy()
+    const url='**/api/admin/v1/customers/'+customerId
+    await page.route(url,async route=>{
+      const upstream=await route.fetch()
+      const body=await upstream.json()
+      body.data.services=[{id:990711,customer_id:Number(customerId)+1,
+        service_no:'CI-CROSS-CUSTOMER-SERVICE',product_name:'CI Product',status:'ACTIVE'}]
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)})
+    })
+    await page.goto(base+'/customers/'+customerId)
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    await page.getByRole('tab',{name:'服务实例'}).click()
+    await expect(page.getByText('服务关联返回错误的客户归属、重复ID或缺少来源，不能据此认定该客户没有服务，也不能打开旧服务。')).toBeVisible()
+    await expect(page.getByText('CI-CROSS-CUSTOMER-SERVICE')).toHaveCount(0)
+    await expect(page.locator('.el-tab-pane:visible').getByRole('button',{name:'查看详情'})).toHaveCount(0)
+    await expect(page.locator('.el-tab-pane:visible').getByRole('button',{name:'续费/变更'})).toHaveCount(0)
+  })
+
+  test('A UI-20 HTTP200 wrong-order parent blocks payment actions and recovers from PostgreSQL',async({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    const url='**/api/admin/v1/orders/'+multiOrderId
+    await page.route(url,async route=>{
+      const upstream=await route.fetch()
+      const body=await upstream.json()
+      body.data.id=Number(multiOrderId)+900000
+      body.data.order_no='CI-FOREIGN-ORDER-DETAIL'
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(body)})
+    })
+    await page.goto(base+'/orders/'+multiOrderId)
+    await expect(page.getByText('订单详情读取失败，无法核实付款、订单项和实际服务。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-ORDER-DETAIL')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'核实客户付款'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'进入服务开通向导'})).toHaveCount(0)
+    await page.unroute(url)
+    await page.getByRole('button',{name:'重新加载订单'}).click()
+    await expect(page.getByText('订单主记录')).toBeVisible()
+  })
+
+  test('A UI-20 forged order-service relation forbids cross-order navigation',async({page})=>{
+    expect(multiOrderId).toBeTruthy()
+    const url='**/api/admin/v1/relations/orders/'+multiOrderId+'/services'
+    await page.route(url,async route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[{
+        id:990721,service_no:'CI-FOREIGN-ORDER-SERVICE',customer_id:990722,
+        order_id:Number(multiOrderId),relation_type:'CREATED_FROM_ORDER'
+      }],truncated:false}})}))
+    await page.goto(base+'/orders/'+multiOrderId)
+    await expect(page.getByText('订单主记录')).toBeVisible()
+    await page.getByRole('tab',{name:'实际关联服务 (未知)'}).click()
+    await expect(page.getByText('服务关系查询失败，不能据此认定没有实例或续费服务。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-ORDER-SERVICE')).toHaveCount(0)
+    await expect(page.locator('.el-tab-pane:visible').getByRole('button',{name:'服务详情'})).toHaveCount(0)
+  })
+
+  test('A UI-03/20 actual PostgreSQL customer and order relations have matching provenance',async({page})=>{
+    expect(customerId).toBeTruthy()
+    expect(multiOrderId).toBeTruthy()
+    const customerReply=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/customers/'+customerId)
+    const ordersReply=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/relations/customers/'+customerId+'/orders')
+    await page.goto(base+'/customers/'+customerId)
+    const customer=(await (await customerReply).json()).data
+    const customerOrders=(await (await ordersReply).json()).data.items
+    expect(Number(customer.customer.id)).toBe(Number(customerId))
+    expect(customerOrders.length).toBeGreaterThan(0)
+    for(const o of customerOrders)expect(Number(o.customer_id)).toBe(Number(customerId))
+    for(const s of customer.services)expect(Number(s.customer_id)).toBe(Number(customerId))
+    await expect(page.getByRole('heading',{name:'V12 CI Customer'})).toBeVisible()
+    const servicesReply=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/relations/orders/'+multiOrderId+'/services')
+    const orderReply=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/orders/'+multiOrderId)
+    await page.goto(base+'/orders/'+multiOrderId)
+    const order=(await (await orderReply).json()).data
+    const services=(await (await servicesReply).json()).data.items
+    expect(Number(order.id)).toBe(Number(multiOrderId))
+    expect(services.length).toBe(3)
+    for(const s of services){
+      expect(Number(s.customer_id)).toBe(Number(order.customer_id))
+      if(s.relation_type==='CREATED_FROM_ORDER')expect(Number(s.order_id)).toBe(Number(multiOrderId))
+    }
+    await expect(page.getByRole('tab',{name:'实际关联服务 (3)'})).toBeVisible()
+  })
+
 })

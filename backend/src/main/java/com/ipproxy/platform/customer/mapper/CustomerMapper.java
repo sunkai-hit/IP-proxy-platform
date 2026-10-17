@@ -126,7 +126,7 @@ public interface CustomerMapper {
     @Update("UPDATE customer_account SET status=#{status},updated_at=now(),updated_by=#{actorId},version=version+1 WHERE id=#{id} AND deleted=FALSE") int updateAccountStatus(@Param("id") Long id,@Param("status") String status,@Param("actorId") Long actorId);
 
     @Select("""
-        SELECT s.id,s.service_no,s.product_type,p.product_name,pk.package_name,s.status,s.effective_at,s.expire_at,s.last_used_at,
+        SELECT s.id,s.customer_id,s.service_no,s.product_type,p.product_name,pk.package_name,s.status,s.effective_at,s.expire_at,s.last_used_at,
                (SELECT count(*) FROM svc_credential cr WHERE cr.service_id=s.id AND cr.deleted=FALSE) credential_count,
                (SELECT count(*) FROM svc_whitelist w WHERE w.service_id=s.id AND w.deleted=FALSE AND w.status='ACTIVE') whitelist_count
         FROM svc_instance s JOIN prd_product p ON p.id=s.product_id LEFT JOIN prd_package pk ON pk.id=s.package_id
