@@ -48,6 +48,7 @@ const router=createRouter({history:createWebHistory(),routes:[
   {path:'service-provision',component:()=>import('@/views/service/ServiceProvisionView.vue'),meta:{title:'服务开通',permission:'service:provision'}},
   {path:'services',component:()=>import('@/views/service/ServiceListView.vue'),meta:{title:'服务实例',permission:'service:read'}},
   {path:'services/:id',component:()=>import('@/views/service/ServiceDetailView.vue'),meta:{title:'服务详情',permission:'service:read',menuActive:'/services'}},
+  {path:'services/:id/backup-candidates',component:()=>import('@/views/resource/BackupCandidateView.vue'),meta:{title:'备用候选核对',permission:'service:read',menuActive:'/services'}},
   {path:'service-changes',component:()=>import('@/views/service/ServiceChangeView.vue'),meta:{title:'服务变更',permission:'service:change'}},
   {path:'service-releases',component:()=>import('@/views/service/ServiceReleaseView.vue'),meta:{title:'到期与资源释放',permission:'service:release'}},
 

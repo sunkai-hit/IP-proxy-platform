@@ -169,6 +169,8 @@ onMounted(load)
 <el-tab-pane label="出口IPv4授权" name="egress"><el-alert title="合同固定公网IPv4与线路当前IP不同；独享跨客户按公网IPv4排他。未验证的出口不能宣称已交付。" type="warning" :closable="false"/><el-table :data="detail.egressClaims||[]"><el-table-column prop="egress_ipv4" label="固定出口IPv4"/><el-table-column prop="claim_mode" label="共享/独享"/><el-table-column prop="claim_status" label="占用状态"/><el-table-column prop="source_line_id" label="来源线路"/><el-table-column prop="hold_until_at" label="保留截至"/><el-table-column prop="verified_at" label="真实验证"/></el-table></el-tab-pane><el-tab-pane label="人工备用候选" name="backups">
  <el-alert type="warning" :closable="false"
   title="仅服务级人工切换；当前真实资源API及产品切换/回退接口未签收，预检只读且任何候选都不可提交执行。"/>
+ <el-button v-if="auth.hasPermission('service:read')" :disabled="!ready" style="margin-top:12px"
+   @click="router.push('/services/'+id+'/backup-candidates')">独立核对备用候选</el-button>
  <el-alert v-if="previewError" type="error" :closable="false" title="人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。"/>
  <el-table :data="detail.backupCandidates||[]" border stripe style="margin-top:12px">
   <el-table-column prop="resource_code" label="备用家宽/线路" min-width="160"/>

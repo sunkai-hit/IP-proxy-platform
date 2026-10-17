@@ -128,12 +128,27 @@ public class V12Round3Controller {
     @GetMapping("/services/{id}/backup-candidates")
     public ApiResponse<?> backups(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal actor) {
         require(actor,"service:read");service(id);
+        // Preserve the existing candidate list contract and add read-only line
+        // evidence so operators can check the source without guessing from an IP.
+        // LEFT JOIN intentionally retains a candidate when its line is missing
+        // or soft-deleted: disappearance is not proof of resource availability.
         List<Map<String,Object>> rows=jdbc.queryForList("""
-          SELECT b.id,b.line_id "lineId",host(b.expected_ipv4) "expectedIpv4",
-                 b.health_status "health",b.last_checked_at "checkedAt",b.candidate_status
-          FROM svc_backup_candidate b WHERE b.service_id=? ORDER BY b.id
+          SELECT b.id,b.service_id "serviceId",b.line_id "lineId",
+                 host(b.expected_ipv4) "expectedIpv4",
+                 b.health_status "health",b.last_checked_at "checkedAt",
+                 b.candidate_status,b.candidate_status "candidateStatus",
+                 l.resource_code "lineCode",l.online_status "onlineStatus",
+                 host(l.current_public_ip) "reportedIpv4",
+                 l.last_sync_at "lastSyncAt",l.deleted "lineDeleted",
+                 l.province_code "provinceCode",l.city_code "cityCode",l.carrier_code "carrierCode"
+          FROM svc_backup_candidate b LEFT JOIN res_line l ON l.id=b.line_id
+          WHERE b.service_id=? ORDER BY b.id
           """,id);
-        for(Map<String,Object> b:rows){b.put("eligible",false);b.put("reason","真实切换能力尚待资源API和产品组确认");}
+        for(Map<String,Object> b:rows){
+            b.put("eligible",false);
+            b.put("reason","仅为管理面历史/当前快照，真实切换与回退接口尚未签收");
+            b.put("dataSource","MANAGEMENT_DB_UNVERIFIED");
+        }
         return ApiResponse.success(rows);
     }
 
