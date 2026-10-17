@@ -2487,4 +2487,142 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('外部DNS已生效',{exact:true})).toHaveCount(0)
   })
 
+  function ciProxyListRow(overrides:Record<string,any>={}){
+    return {id:990017,proxy_no:'CI-PROXY-SOURCE-A',customer_id:990001,
+      customer_name:'CI Customer A',purchase_id:990002,supplier_name:'CI Supplier A',
+      upstream_host:'upstream.ci.invalid',platform_host:'platform.ci.invalid',platform_port:8080,
+      protocol_code:'HTTP',status:'PENDING',...overrides}
+  }
+
+  test('A UI-17 proxy disable confirmation binds customer and purchase; cancel performs no write',async({page})=>{
+    await page.route('**/api/admin/v1/v12/external-delivery/reverse-proxies?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[ciProxyListRow()],total:1}})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&/\/reverse-proxies\/990017\/(apply|test|disable)$/.test(new URL(r.url()).pathname))
+        writes.push(r.url())
+    })
+    await page.goto(base+'/reverse-proxies')
+    await page.getByRole('button',{name:'停用',exact:true}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI-PROXY-SOURCE-A')
+    await expect(box).toContainText('ID 990017')
+    await expect(box).toContainText('所属客户 #990001')
+    await expect(box).toContainText('来源采购 #990002')
+    await box.getByRole('button',{name:'返回核对'}).click()
+    await expect(box).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-17 proxy ownership and status changing during prompt blocks obsolete apply',async({page})=>{
+    let row=ciProxyListRow()
+    await page.route('**/api/admin/v1/v12/external-delivery/reverse-proxies?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[row],total:1}})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/reverse-proxies\/990017\/apply$/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/reverse-proxies')
+    await page.getByRole('button',{name:'应用',exact:true}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI-PROXY-SOURCE-A')
+    row=ciProxyListRow({customer_id:990099,purchase_id:990088,status:'ABNORMAL'})
+    await page.evaluate(()=>{(document.querySelector('.filters .el-button--primary') as HTMLElement)?.click()})
+    await expect(page.locator('.el-table__body')).toContainText('ABNORMAL')
+    await box.locator('input').fill('old proxy owner cannot be applied')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    expect(writes).toHaveLength(0)
+    await expect(page.getByText('确认期间代理编号、状态、所属客户或来源采购已变化，未提交旧操作')).toBeVisible()
+  })
+
+  test('A UI-17 proxy creation requires live customer-scoped service options and refuses 503',async({page})=>{
+    const purchaseId=990111,customerId=990112
+    await page.route('**/api/admin/v1/v12/external-delivery/options*',route=>{
+      const customer=new URL(route.request().url()).searchParams.get('customerId')
+      return route.fulfill({status:customer?503:200,contentType:'application/json',
+        body:customer?JSON.stringify({code:'CI_SERVICE_OPTIONS_DOWN',message:'synthetic outage'}):
+        JSON.stringify({code:'OK',data:{purchases:[{
+          id:purchaseId,code:'CI-PAID-PURCHASE',name:'CI Owned Package',
+          supplier_name:'CI Supplier',customer_id:customerId
+        }],suppliers:[],customers:[],services:[]}})})
+    })
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/external-delivery/reverse-proxies')writes.push(r.url())})
+    await page.goto(base+'/reverse-proxies?purchaseId='+purchaseId)
+    await page.getByRole('button',{name:'登记反向代理'}).click()
+    await expect(page.getByText('关联服务来源读取失败，当前采购与服务关系无法核实，禁止保存。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'保存代理配置（未交付）'})).toBeDisabled()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-16 purchase registration cannot submit before customer payment evidence resolves',async({page})=>{
+    await page.route('**/api/admin/v1/v12/external-delivery/options*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{suppliers:[{id:990201,code:'SUP-ONE',name:'CI Supplier'}],
+        customers:[{id:990202,code:'CUST-ONE',name:'CI Customer'}],purchases:[],services:[]}})
+    }))
+    await page.route('**/api/admin/v1/v12/external-delivery/purchases/paid-order-options*',async route=>{
+      await new Promise(resolve=>setTimeout(resolve,1000))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:[{id:990203,order_no:'CI-PAID-ORDER'}]})})
+    })
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/external-delivery/purchases')writes.push(r.url())})
+    await page.goto(base+'/supplier-purchases')
+    await page.getByRole('button',{name:'登记采购'}).click()
+    await page.locator('.el-drawer .el-form-item').filter({hasText:'归属客户'}).locator('.el-select').click()
+    await page.getByRole('option',{name:/CI Customer/}).click()
+    await expect(page.getByRole('button',{name:'保存采购记录'})).toBeDisabled()
+    await page.getByRole('button',{name:'取消'}).click()
+    await page.waitForTimeout(1150)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-16 failed paid-order lookup prevents writing unknown customer ownership',async({page})=>{
+    await page.route('**/api/admin/v1/v12/external-delivery/options*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{suppliers:[{id:990201,code:'SUP-ONE',name:'CI Supplier'}],
+        customers:[{id:990202,code:'CUST-ONE',name:'CI Customer'}],purchases:[],services:[]}})
+    }))
+    await page.route('**/api/admin/v1/v12/external-delivery/purchases/paid-order-options*',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_PAYMENTS_DOWN',message:'synthetic unverified payment'})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/external-delivery/purchases')writes.push(r.url())})
+    await page.goto(base+'/supplier-purchases')
+    await page.getByRole('button',{name:'登记采购'}).click()
+    await page.locator('.el-drawer .el-form-item').filter({hasText:'归属客户'}).locator('.el-select').click()
+    await page.getByRole('option',{name:/CI Customer/}).click()
+    await expect(page.getByText('客户付款订单读取失败，不能确认当前采购的付款来源。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'保存采购记录'})).toBeDisabled()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-17 proxy save does not write while its customer service lookup is unsettled',async({page})=>{
+    const purchaseId=990311,customerId=990312
+    await page.route('**/api/admin/v1/v12/external-delivery/options*',async route=>{
+      const customer=new URL(route.request().url()).searchParams.get('customerId')
+      if(customer)await new Promise(resolve=>setTimeout(resolve,1050))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:customer?{purchases:[],customers:[],suppliers:[],services:[]}:
+          {purchases:[{id:purchaseId,code:'CI-OWNED-PURCHASE',name:'CI package',
+            supplier_name:'CI supplier',customer_id:customerId}],services:[],suppliers:[],customers:[]}})})
+    })
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/external-delivery/reverse-proxies')writes.push(r.url())})
+    await page.goto(base+'/reverse-proxies?purchaseId='+purchaseId)
+    await page.getByRole('button',{name:'登记反向代理'}).click()
+    await expect(page.getByRole('button',{name:'保存代理配置（未交付）'})).toBeDisabled()
+    await page.getByRole('button',{name:'取消'}).click()
+    await page.waitForTimeout(1150)
+    expect(writes).toHaveLength(0)
+  })
+
 })
