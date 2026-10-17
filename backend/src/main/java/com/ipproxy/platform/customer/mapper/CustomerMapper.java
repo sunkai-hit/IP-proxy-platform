@@ -70,7 +70,7 @@ public interface CustomerMapper {
     @Update("UPDATE customer SET status=#{status},updated_at=now(),updated_by=#{actorId},version=version+1 WHERE id=#{id} AND deleted=FALSE AND status=#{expectedStatus} AND version=#{expectedVersion}") int updateCustomerStatus(@Param("id") Long id,@Param("status") String status,@Param("expectedStatus") String expectedStatus,@Param("expectedVersion") Long expectedVersion,@Param("actorId") Long actorId);
 
     @Select("""
-        SELECT a.id,a.auth_no,a.customer_id,c.customer_code,c.customer_name,a.auth_type_code,a.submitted_data,a.attachment_refs,a.status,
+        SELECT a.id,a.auth_no,a.customer_id,c.customer_code,c.customer_name,a.auth_type_code,a.status,
                a.reviewer_id,u.display_name reviewer_name,a.reviewed_at,a.review_opinion,a.submitted_at
         FROM customer_auth a JOIN customer c ON c.id=a.customer_id LEFT JOIN sys_user u ON u.id=a.reviewer_id
         WHERE a.deleted=FALSE AND (#{customerId}=0 OR a.customer_id=#{customerId})
