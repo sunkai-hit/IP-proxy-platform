@@ -37,7 +37,7 @@ let purchaseLookupVersion=0
 function closeDrawer(){
  if(saving.value)return
  ++creationVersion;++purchaseLookupVersion
- drawer.value=false;services.value=[];servicesBusy.value=false;servicesError.value=false
+ drawer.value=false;createBusy.value=false;services.value=[];servicesBusy.value=false;servicesError.value=false
  form.upstreamSecret='';form.platformSecret=''
 }
 async function openCreate(){
