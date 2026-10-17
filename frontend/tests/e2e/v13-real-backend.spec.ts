@@ -1416,7 +1416,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.getByRole('tab',{name:'人工备用候选'}).click()
     await expect(page.getByText('CI-PREVIEW-ONLY-LINE')).toBeVisible()
     await page.getByRole('button',{name:'预检影响与冲突'}).click()
-    await expect(page.getByText('人工切换预检失败，不能使用之前的候选冲突或网络影响结论。')).toBeVisible()
+    await expect(page.getByText('人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。')).toBeVisible()
     await expect(page.getByText('人工切换影响预检（禁止直接执行）')).toHaveCount(0)
     await expect(page.getByRole('button',{name:/真实切换不可用/})).toHaveCount(0)
   })
