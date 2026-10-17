@@ -729,7 +729,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
       status:200,contentType:'application/json',
       body:JSON.stringify({code:'OK',data:{items:[{id:900991,auth_no:'CI-KYC-900991',
-        customer_name:'CI Customer',status:'PENDING'}],total:1}}),
+        customer_id:900801,customer_name:'CI Customer',status:'PENDING'}],total:1}}),
     }))
     await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
       status:503,contentType:'application/json',
@@ -3047,21 +3047,19 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     expect(writes).toHaveLength(0)
   })
 
-  test('A UI-04 edited list during review prompt cannot post to stale application',async({page})=>{
-    let newer=false
-    await ciKycList(page,()=>ciKycApplication({status:newer?'REVIEWING':'PENDING'}))
+  test('A UI-04 externally changed review status is rejected before any write',async({page})=>{
+    await ciKycList(page)
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:ciKycApplication({status:'REVIEWING'})})
+    }))
     const writes:string[]=[]
     page.on('request',r=>{if(r.method()==='POST'&&/\/customer-auth\/900991\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
     await page.goto(base+'/customer-auth')
     await expect(page.getByText('CI-KYC-900991')).toBeVisible()
     await page.getByRole('button',{name:'通过',exact:true}).click()
-    newer=true
-    const refreshed=page.waitForResponse(r=>r.url().includes('/api/admin/v1/customer-auth?')&&r.status()===200)
-    await page.evaluate(()=>{(document.querySelector('.filters button') as HTMLButtonElement)?.click()})
-    await refreshed
-    await expect(page.locator('.el-table__body')).toContainText('REVIEWING')
     await page.getByRole('button',{name:'确认提交'}).click()
-    await expect(page.getByText('审核确认期间申请身份、状态或列表已变化，未提交操作')).toBeVisible()
+    await expect(page.getByText('认证申请详情或审核状态已变化，请重新核对后再审核')).toBeVisible()
     expect(writes).toHaveLength(0)
   })
 
