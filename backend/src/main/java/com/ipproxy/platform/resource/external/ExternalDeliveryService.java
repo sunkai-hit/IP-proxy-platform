@@ -27,7 +27,26 @@ public class ExternalDeliveryService {
     public PageResult<Map<String,Object>> purchases(int page,int size,String keyword,String status,Long supplierId,Long customerId){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countPurchases(k,s,supplierId,customerId),db.purchases(k,s,supplierId,customerId,size,(page-1)*size));}
     public Map<String,Object> purchase(Long id){Map<String,Object>x=db.purchase(id);if(x==null)throw notFound("外部套餐采购");Map<String,Object> out=new LinkedHashMap<>(x);out.remove("purchase_secret_cipher");out.put("secretConfigured",x.get("purchase_secret_cipher")!=null);return out;}
     @Transactional public Long createPurchase(PurchaseInput in,UserPrincipal actor,String ip){validatePurchase(in);requirePaidCustomerOrder(in);String no="PUR-"+OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))+"-"+Integer.toHexString(new Random().nextInt(65536)).toUpperCase(Locale.ROOT);Long id=db.insertPurchase(no,in.supplierId(),in.customerId(),in.supplierPackageName().trim(),n(in.supplierPackageNo()),n(in.purchaseAccount()),cipher.encrypt(in.purchaseSecret()),n(in.interfaceEndpoint()),blankNull(in.packageQuota()),blankNull(in.remainingQuota()),in.purchaseCost(),currency(in.currency()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());if(in.customerId()!=null)db.linkPurchaseToPaidOrder(id,in.sourceCustomerOrderId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"CREATE","新增外部供应商套餐采购",ip);return id;}
-    @Transactional public void updatePurchase(Long id,PurchaseInput in,UserPrincipal actor,String ip){Map<String,Object> original=purchase(id);validatePurchase(in);if(!Objects.equals(number(original.get("customer_id")),in.customerId()))throw new BusinessException("PURCHASE_OWNER_CHANGE_BLOCKED","采购所属客户不可直接修改");db.updatePurchase(id,in.customerId(),in.supplierPackageName().trim(),n(in.supplierPackageNo()),n(in.purchaseAccount()),n(in.purchaseSecret()).isBlank()?null:cipher.encrypt(in.purchaseSecret()),n(in.interfaceEndpoint()),blankNull(in.packageQuota()),blankNull(in.remainingQuota()),in.purchaseCost(),currency(in.currency()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"UPDATE","修改外部套餐采购",ip);}
+    @Transactional public void updatePurchase(Long id,PurchaseInput in,UserPrincipal actor,String ip){
+        validatePurchase(in);
+        db.lockPurchase(id);
+        Map<String,Object> original=purchase(id);
+        if(!Objects.equals(number(original.get("customer_id")),in.customerId()))
+            throw new BusinessException("PURCHASE_OWNER_CHANGE_BLOCKED","采购所属客户不可直接修改");
+        Long originalOrder=number(original.get("source_customer_order_id"));
+        if(in.sourceCustomerOrderId()!=null&&!Objects.equals(originalOrder,in.sourceCustomerOrderId()))
+            throw new BusinessException("PURCHASE_PAID_ORDER_IMMUTABLE","采购付款来源订单不可通过修改采购资料更换");
+        if(in.customerId()!=null){
+            Map<String,Object> paid=originalOrder==null?null:db.paymentConfirmedOrder(originalOrder);
+            if(paid==null||!Objects.equals(number(paid.get("customer_id")),in.customerId())||
+                !"PAID_CONFIRMED".equals(String.valueOf(paid.get("payment_status")))||
+                "CANCELLED".equals(String.valueOf(paid.get("status"))))
+                throw new BusinessException("PURCHASE_PAYMENT_NOT_VERIFIED","原客户付款来源已失效，禁止修改客户专属采购");
+        }
+        if(db.linkedCoverageExceedsPurchase(id,in.expireAt()))
+            throw new BusinessException("PURCHASE_UPSTREAM_TERM_SHORT",
+                "供应商新到期时间不足以覆盖已经登记的代理或未终止的客户服务，不得缩短/清空有效期");
+        db.updatePurchase(id,in.customerId(),in.supplierPackageName().trim(),n(in.supplierPackageNo()),n(in.purchaseAccount()),n(in.purchaseSecret()).isBlank()?null:cipher.encrypt(in.purchaseSecret()),n(in.interfaceEndpoint()),blankNull(in.packageQuota()),blankNull(in.remainingQuota()),in.purchaseCost(),currency(in.currency()),in.effectiveAt(),in.expireAt(),n(in.remark()),actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"UPDATE","修改外部套餐采购",ip);}
     @Transactional public void purchaseStatus(Long id,String status,String reason,UserPrincipal actor,String ip){purchase(id);String s=n(status).toUpperCase(Locale.ROOT);if(!Set.of("ACTIVE","EXPIRED","DISABLED").contains(s))throw new BusinessException("PURCHASE_STATUS_INVALID","不支持的采购状态");db.purchaseStatus(id,s,actor.userId());audit.success(actor,"EXTERNAL_DELIVERY","SUPPLIER_PURCHASE",id,"STATUS_"+s,required(reason,"操作原因不能为空"),ip);}
 
     public PageResult<Map<String,Object>> proxies(int page,int size,String keyword,String status,Long customerId){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countProxies(k,s,customerId),db.proxies(k,s,customerId,size,(page-1)*size));}
@@ -57,6 +76,12 @@ public class ExternalDeliveryService {
             throw new BusinessException("PROXY_PURCHASE_EXPIRED",
                 "供应商套餐已过期或缺少有效期，不允许创建新的平台代理交付");
     }
+    private void requireProxyTermCoverage(ProxyInput in,Map<String,Object> purchase){
+        OffsetDateTime supplierUntil=utcTimestamp(purchase.get("expire_at"));
+        if(in.expireAt()!=null&&(supplierUntil==null||in.expireAt().isAfter(supplierUntil)))
+            throw new BusinessException("PROXY_UPSTREAM_TERM_SHORT",
+                "代理登记到期超过供应商采购的已核实有效期");
+    }
     private void requireProxyServiceOwnership(Long serviceId,Long customerId,Map<String,Object> purchase){
         if(serviceId==null)return;
         Map<String,Object> svc=db.serviceOwnership(serviceId);
@@ -72,7 +97,9 @@ public class ExternalDeliveryService {
     }
     @Transactional public Long createProxy(ProxyInput in,UserPrincipal actor,String ip){
         validateProxy(in);
+        db.lockPurchase(in.purchaseId());
         Map<String,Object> purchase=purchase(in.purchaseId());
+        requireProxyTermCoverage(in,purchase);
         Long customerId=in.customerId()!=null?in.customerId():number(purchase.get("customer_id"));
         requirePaidDedicatedPurchase(purchase,customerId);
         requireProxyServiceOwnership(in.serviceId(),customerId,purchase);
@@ -94,7 +121,13 @@ public class ExternalDeliveryService {
         if(!Objects.equals(number(old.get("purchase_id")),in.purchaseId()) ||
            (in.customerId()!=null&&!Objects.equals(number(old.get("customer_id")),in.customerId())))
             throw new BusinessException("PROXY_OWNERSHIP_IMMUTABLE","代理的采购及客户归属不可通过修改配置变更");
+        db.lockPurchase(in.purchaseId());
+        old=proxy(id);
+        if(!Objects.equals(number(old.get("purchase_id")),in.purchaseId()) ||
+           (in.customerId()!=null&&!Objects.equals(number(old.get("customer_id")),in.customerId())))
+            throw new BusinessException("PROXY_OWNERSHIP_IMMUTABLE","代理已在等待校验期间更换归属");
         Map<String,Object> purchase=purchase(in.purchaseId());
+        requireProxyTermCoverage(in,purchase);
         requirePaidDedicatedPurchase(purchase,number(old.get("customer_id")));
         requireProxyServiceOwnership(in.serviceId(),number(old.get("customer_id")),purchase);
         db.updateProxy(id,in.serviceId(),in.protocolCode().trim().toUpperCase(Locale.ROOT),
