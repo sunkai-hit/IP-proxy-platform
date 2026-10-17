@@ -17,19 +17,47 @@ const canPay=computed(()=>auth.hasPermission('order:payment:verify'))
 const canProvision=computed(()=>auth.hasPermission('order:provision')&&auth.hasPermission('service:provision'))
 const canRenew=computed(()=>auth.hasPermission('service:renew')&&auth.hasPermission('service:change'))
 const fmt=(v:any)=>v==null||v===''?'—':String(v)
-const orderReady=computed(()=>!loading.value&&!detailError.value&&id>0&&Number(row.value.id)===id)
+const validId=(v:any)=>Number.isSafeInteger(Number(v))&&Number(v)>0
+function validateItems(items:any,orderId:number){
+ if(!Array.isArray(items))return false
+ const ids=new Set<number>()
+ for(const item of items){
+  if(!validId(item?.id)||ids.has(Number(item.id))||Number(item.order_id)!==orderId)return false
+  ids.add(Number(item.id))
+ }
+ return true
+}
+function validateServices(items:any,orderId:number,customerId:number,renewalTarget:number){
+ if(!Array.isArray(items))return false
+ const ids=new Set<number>()
+ for(const service of items){
+  if(!validId(service?.id)||ids.has(Number(service.id))||
+     !String(service?.service_no||'').trim()||Number(service.customer_id)!==customerId)return false
+  ids.add(Number(service.id))
+  if(service.relation_type==='CREATED_FROM_ORDER'){
+   if(Number(service.order_id)!==orderId)return false
+  }else if(service.relation_type==='RENEWAL_TARGET'){
+   if(!validId(renewalTarget)||Number(service.id)!==renewalTarget)return false
+  }else return false
+ }
+ return true
+}
+const orderReady=computed(()=>!loading.value&&!detailError.value&&validId(id)&&Number(row.value.id)===id&&
+ validId(row.value.customer_id)&&!!String(row.value.order_no||'').trim())
 function actionSnapshot(permission:string){
  if(!orderReady.value||working.value||!auth.hasPermission(permission)){
   ElMessage.warning('订单资料或操作权限尚未核实，不能提交')
   return null
  }
  return {id,version:requestVersion.value,number:String(row.value.order_no||id),
+  customerId:Number(row.value.customer_id),type:row.value.order_type,
   status:row.value.status,payment:row.value.payment_status}
 }
-function sameOrder(s:{id:number,version:number,status:any,payment:any},permission:string){
+function sameOrder(s:{id:number,version:number,customerId:number,type:any,number:string,status:any,payment:any},permission:string){
  return orderReady.value&&id===s.id&&requestVersion.value===s.version&&
   row.value.status===s.status&&row.value.payment_status===s.payment&&
-  auth.hasPermission(permission)
+  Number(row.value.customer_id)===s.customerId&&row.value.order_type===s.type&&
+  row.value.order_no===s.number&&auth.hasPermission(permission)
 }
 
 async function load(){
@@ -37,14 +65,19 @@ async function load(){
  loading.value=true;detailError.value=false;relatedError.value=false;truncated.value=false
  row.value={};relatedServices.value=[]
  try{
-  const detail=data(await orderServiceApi.order(orderId))||{}
-  if(version!==requestVersion.value)return
+  const detail=data(await orderServiceApi.order(orderId))
+  if(version!==requestVersion.value||id!==orderId)return
+  if(!validId(orderId)||Number(detail?.id)!==orderId||!validId(detail?.customer_id)||
+     !String(detail.order_no||'').trim()||!validateItems(detail.items,orderId))
+    throw new Error('ORDER_PRIMARY_IDENTITY_INVALID')
   row.value=detail
   if(auth.hasPermission('service:read')){
    try{
     const sub=data(await businessRelationsApi.orderServices(orderId))
     if(version!==requestVersion.value)return
-    relatedServices.value=sub.items||[];truncated.value=!!sub.truncated
+    if(!validateServices(sub?.items,orderId,Number(detail.customer_id),Number(detail.renewal_service_id||0)))
+      throw new Error('ORDER_SERVICE_RELATION_UNTRUSTED')
+    relatedServices.value=sub.items;truncated.value=!!sub.truncated
    }catch{
     if(version===requestVersion.value){relatedError.value=true;relatedServices.value=[]}
    }
@@ -152,7 +185,7 @@ onMounted(load)
    <el-descriptions-item label="订单类型">{{fmt(row.order_type)}}</el-descriptions-item>
    <el-descriptions-item label="订单状态">{{fmt(row.status)}}</el-descriptions-item>
    <el-descriptions-item label="所属客户">
-    <el-button v-if="auth.hasPermission('customer:read')" link type="primary"
+    <el-button v-if="validId(row.customer_id)&&auth.hasPermission('customer:read')" link type="primary"
       @click="router.push('/customers/'+row.customer_id)">{{row.customer_name}}</el-button>
     <span v-else>{{fmt(row.customer_name)}}</span>
    </el-descriptions-item>
@@ -164,7 +197,7 @@ onMounted(load)
    <el-descriptions-item label="预计生效">{{fmt(row.expected_effective_at)}}</el-descriptions-item>
    <el-descriptions-item label="预计到期">{{fmt(row.expected_expire_at)}}</el-descriptions-item>
    <el-descriptions-item v-if="row.order_type==='RENEW'" label="续费原服务">
-    <el-button v-if="row.renewal_service_id&&auth.hasPermission('service:read')" link type="primary"
+    <el-button v-if="validId(row.renewal_service_id)&&auth.hasPermission('service:read')" link type="primary"
      @click="router.push('/services/'+row.renewal_service_id)">{{renewalTarget?.service_no||'查看原服务'}}</el-button>
     <span v-else>{{row.renewal_service_id?'服务权限不足':'未绑定原服务'}}</span>
    </el-descriptions-item>
@@ -185,11 +218,11 @@ onMounted(load)
     </el-table>
    </el-tab-pane>
    <el-tab-pane v-if="auth.hasPermission('service:read')" name="services"
-      :label="'实际关联服务 ('+relatedServices.length+')'">
+      :label="relatedError?'实际关联服务 (未知)':'实际关联服务 ('+relatedServices.length+')'">
     <el-alert v-if="relatedError" type="warning" :closable="false" title="服务关系查询失败，不能据此认定没有实例或续费服务。"/>
     <el-alert v-if="truncated" type="info" :closable="false" title="这里仅显示最近200条关联服务。"/>
     <el-alert type="info" :closable="false" title="新增订单显示实际创建的服务实例；续费订单显示原服务作为续费目标，不会虚构一条新服务。"/>
-    <el-table :data="relatedServices" stripe border style="margin-top:12px">
+    <el-table :data="relatedServices" :empty-text="relatedError?'关联服务归属不可核实':'当前未登记关联服务'" stripe border style="margin-top:12px">
      <el-table-column prop="service_no" label="服务号" min-width="180"/>
      <el-table-column label="关联关系" min-width="140"><template #default="s">{{s.row.relation_type==='RENEWAL_TARGET'?'本单续费目标':'本单生成实例'}}</template></el-table-column>
      <el-table-column prop="product_name" label="产品" min-width="140"/>
@@ -197,7 +230,7 @@ onMounted(load)
      <el-table-column prop="delivery_stage" label="真实交付阶段" min-width="145"/>
      <el-table-column prop="expire_at" label="服务到期" min-width="175"/>
      <el-table-column label="操作" width="200"><template #default="s">
-      <el-button link type="primary" @click="router.push('/services/'+s.row.id)">服务详情</el-button>
+      <el-button v-if="!relatedError&&validId(s.row.id)" link type="primary" @click="router.push('/services/'+s.row.id)">服务详情</el-button>
       <el-button v-if="canRenew&&row.order_type==='RENEW'&&isPaid"
        link type="success" @click="goRenew">办理本单续费</el-button>
      </template></el-table-column>
