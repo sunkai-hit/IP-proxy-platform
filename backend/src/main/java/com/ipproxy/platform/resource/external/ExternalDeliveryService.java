@@ -33,6 +33,8 @@ public class ExternalDeliveryService {
         Map<String,Object> original=purchase(id);
         if(!Objects.equals(number(original.get("customer_id")),in.customerId()))
             throw new BusinessException("PURCHASE_OWNER_CHANGE_BLOCKED","采购所属客户不可直接修改");
+        if(!Objects.equals(number(original.get("supplier_id")),in.supplierId()))
+            throw new BusinessException("PURCHASE_SUPPLIER_IMMUTABLE","已登记采购不可通过编辑更换供应商");
         Long originalOrder=number(original.get("source_customer_order_id"));
         if(in.sourceCustomerOrderId()!=null&&!Objects.equals(originalOrder,in.sourceCustomerOrderId()))
             throw new BusinessException("PURCHASE_PAID_ORDER_IMMUTABLE","采购付款来源订单不可通过修改采购资料更换");
