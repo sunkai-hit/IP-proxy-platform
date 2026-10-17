@@ -54,8 +54,8 @@ async function load(){
   proxyWarning.value=auth.hasPermission('resource:reverse-proxy:read')&&!safeProxies
   serviceWarning.value=auth.hasPermission('service:read')&&!safeServices
   proxies.value=safeProxies||[];services.value=safeServices||[]
-  proxyTruncated.value=!!safeProxies&&!!p.value?.data?.data?.truncated
-  serviceTruncated.value=!!safeServices&&!!s.value?.data?.data?.truncated
+  proxyTruncated.value=!!safeProxies&&p.status==='fulfilled'&&!!p.value?.data?.data?.truncated
+  serviceTruncated.value=!!safeServices&&s.status==='fulfilled'&&!!s.value?.data?.data?.truncated
  }catch{if(version===requestVersion.value){loadError.value=true;row.value={};proxies.value=[];services.value=[]}}
  finally{if(version===requestVersion.value)loading.value=false}
 }
