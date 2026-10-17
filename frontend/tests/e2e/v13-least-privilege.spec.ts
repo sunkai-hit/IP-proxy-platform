@@ -77,6 +77,14 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'CI read-only forbidden' })
       }),
+      check('/api/admin/v1/customers/' + customerId + '/freeze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'CI viewer cannot freeze customer' })
+      }),
+      check('/api/admin/v1/customers/' + customerId + '/disable', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'CI viewer cannot disable customer' })
+      }),
       check('/api/admin/v1/v12/resources/lines'),
       check('/api/admin/v1/v12/resource-pools'),
       check('/api/admin/v1/v12/resource-pools/1/operations'),
