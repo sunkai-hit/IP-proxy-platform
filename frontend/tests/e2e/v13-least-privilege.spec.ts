@@ -120,6 +120,22 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({reason:'CI viewer cannot apply an upstream proxy'})
       }),
+      // A5: no direct access to customer Bot secrets, monitor probes,
+      // alarm archiving or notification records for the CI read-only actor.
+      check('/api/admin/v1/long-monitor/bots?page=1&size=20'),
+      check('/api/admin/v1/long-monitor/notifications?page=1&size=20'),
+      check('/api/admin/v1/long-monitor/monitors/1/check', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({reason:'CI A5 viewer probe denied'})
+      }),
+      check('/api/admin/v1/long-monitor/bots/1/test', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({reason:'CI A5 viewer must never contact Bot'})
+      }),
+      check('/api/admin/v1/long-monitor/alarms/1/close', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({reason:'CI A5 viewer archive denied'})
+      }),
       check('/api/admin/v1/v12/resources/lines'),
       check('/api/admin/v1/v12/resource-pools'),
       check('/api/admin/v1/v12/resource-pools/1/operations'),

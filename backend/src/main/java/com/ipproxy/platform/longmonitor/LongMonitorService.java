@@ -43,31 +43,102 @@ public class LongMonitorService {
     @Transactional public Long createBot(BotInput in,UserPrincipal actor,String ip){validateBot(in);String no=next("BOT");Long id=db.insertBot(no,in.customerId(),in.botName().trim(),in.botType().trim().toUpperCase(Locale.ROOT),in.webhookUrl().trim(),cipher.encrypt(in.accessToken()),cipher.encrypt(in.secret()),n(in.remark()),actor.userId());audit.success(actor,"LONG_MONITOR","BOT",id,"CREATE","新增客户机器人",ip);return id;}
     @Transactional public void updateBot(Long id,BotInput in,UserPrincipal actor,String ip){bot(id);validateBot(in);db.updateBot(id,in.botName().trim(),in.botType().trim().toUpperCase(Locale.ROOT),in.webhookUrl().trim(),n(in.accessToken()).isBlank()?null:cipher.encrypt(in.accessToken()),n(in.secret()).isBlank()?null:cipher.encrypt(in.secret()),n(in.remark()),actor.userId());audit.success(actor,"LONG_MONITOR","BOT",id,"UPDATE","修改客户机器人",ip);}
     @Transactional public void botEnabled(Long id,boolean enabled,String reason,UserPrincipal actor,String ip){bot(id);db.botEnabled(id,enabled,actor.userId());audit.success(actor,"LONG_MONITOR","BOT",id,enabled?"ENABLE":"DISABLE",required(reason,"操作原因不能为空"),ip);}
-    @Transactional public Map<String,Object> testBot(Long id,String reason,UserPrincipal actor,String ip){Map<String,Object> raw=rawBot(id);Map<String,Object> payload=Map.of("title","IP代理平台机器人测试","message","这是一条V1.2客户机器人配置测试消息","time",OffsetDateTime.now().toString());CustomerBotNotificationAdapter.Result r=notifier.send(botConfig(raw),"TEST",payload);db.botTestResult(id,r.success()?"SUCCESS":"FAILED",r.message());audit.success(actor,"LONG_MONITOR","BOT",id,"TEST",required(reason,"操作原因不能为空"),ip);return Map.of("success",r.success(),"message",r.message(),"response",r.response());}
+    @Transactional public Map<String,Object> testBot(Long id,String reason,UserPrincipal actor,String ip){
+        String why=required(reason,"操作原因不能为空");
+        Map<String,Object> raw=rawBot(id);
+        Map<String,Object> payload=Map.of("title","IP代理平台机器人测试","message","这是一条V1.2客户机器人配置测试消息","time",OffsetDateTime.now().toString());
+        CustomerBotNotificationAdapter.Result r;
+        if(!Boolean.TRUE.equals(raw.get("enabled")))r=CustomerBotNotificationAdapter.Result.pending("客户机器人已停用，未执行发送");
+        else r=safeNotify(botConfig(raw),"TEST",payload);
+        db.botTestResult(id,r.success()?"SUCCESS":"FAILED",r.message());
+        audit.success(actor,"LONG_MONITOR","BOT",id,"TEST",why,ip);
+        return Map.of("success",r.success(),"message",r.message(),"response",r.response());
+    }
 
     public PageResult<Map<String,Object>> monitors(int page,int size,String keyword,String status,Long customerId,Boolean enabled){page=page(page);size=size(size);String k=n(keyword),s=n(status);return new PageResult<>(page,size,db.countMonitors(k,s,customerId,enabled),db.monitors(k,s,customerId,enabled,size,(page-1)*size));}
     public Map<String,Object> monitor(Long id){Map<String,Object>x=db.monitor(id);if(x==null)throw notFound("长效代理监控");x=new LinkedHashMap<>(x);x.put("checkHistory",db.checkHistory(id,200));return x;}
     @Transactional public Long createMonitor(MonitorInput in,UserPrincipal actor,String ip){validateMonitor(in);String no=next("LM");Long id=db.insertMonitor(no,in.customerId(),in.serviceId(),in.lineId(),in.reverseProxyId(),in.targetHost().trim(),in.targetPort(),up(in.proxyProtocol(),"HTTP"),up(in.checkMethod(),"PROXY_CONNECT"),n(in.checkUrl()),val(in.intervalSeconds(),60),val(in.timeoutSeconds(),10),val(in.failureThreshold(),3),val(in.recoveryThreshold(),2),in.botId(),n(in.remark()),actor.userId());audit.success(actor,"LONG_MONITOR","MONITOR",id,"CREATE","新增客户长效代理监控",ip);return id;}
     @Transactional public void updateMonitor(Long id,MonitorInput in,UserPrincipal actor,String ip){monitor(id);validateMonitor(in);db.updateMonitor(id,in.lineId(),in.reverseProxyId(),in.targetHost().trim(),in.targetPort(),up(in.proxyProtocol(),"HTTP"),up(in.checkMethod(),"PROXY_CONNECT"),n(in.checkUrl()),val(in.intervalSeconds(),60),val(in.timeoutSeconds(),10),val(in.failureThreshold(),3),val(in.recoveryThreshold(),2),in.botId(),n(in.remark()),actor.userId());audit.success(actor,"LONG_MONITOR","MONITOR",id,"UPDATE","修改客户长效代理监控",ip);}
     @Transactional public void monitorEnabled(Long id,boolean enabled,String reason,UserPrincipal actor,String ip){monitor(id);db.monitorEnabled(id,enabled,actor.userId());audit.success(actor,"LONG_MONITOR","MONITOR",id,enabled?"ENABLE":"DISABLE",required(reason,"操作原因不能为空"),ip);}
-    @Transactional public Map<String,Object> check(Long id,String reason,UserPrincipal actor,String ip){Map<String,Object> result=checkOne(id);audit.success(actor,"LONG_MONITOR","MONITOR",id,"CHECK",required(reason,"检测原因不能为空"),ip);return result;}
+    @Transactional public Map<String,Object> check(Long id,String reason,UserPrincipal actor,String ip){
+        String why=required(reason,"检测原因不能为空");
+        Map<String,Object> result=checkOne(id);
+        audit.success(actor,"LONG_MONITOR","MONITOR",id,"CHECK",why,ip);
+        return result;
+    }
 
     @Scheduled(fixedDelayString="${app.long-monitor.scan-delay-ms:30000}")
     public void scheduledCheck(){if(!scheduledEnabled)return;for(Map<String,Object> m:db.dueMonitors(100)){try{checkOne(((Number)m.get("id")).longValue());}catch(Exception ignored){}}}
 
-    @Transactional public Map<String,Object> checkOne(Long id){Map<String,Object> m=db.monitor(id);if(m==null)throw notFound("长效代理监控");LongMonitorMapperUnusedGuard.guard(m);LongProxyCheckAdapter.CheckResult r=checker.check(m);String adapterStatus=up(r.status(),"UNKNOWN");int failures=number(m.get("consecutive_failures"),0),successes=number(m.get("consecutive_successes"),0);String before=String.valueOf(m.get("current_status"));String after=before;boolean success="NORMAL".equals(adapterStatus);
-        if("NORMAL".equals(adapterStatus)){failures=0;successes++;int threshold=number(m.get("recovery_threshold"),2);if(!"ABNORMAL".equals(before)||successes>=threshold)after="NORMAL";}
-        else if("ABNORMAL".equals(adapterStatus)){successes=0;failures++;if(failures>=number(m.get("failure_threshold"),3))after="ABNORMAL";}
-        else {after="UNKNOWN";}
-        db.insertCheck(id,success,r.latencyMs(),n(r.outboundIp()),r.responseCode(),n(r.errorType()),n(r.message()),j(r.detail()));db.updateMonitorCheck(id,after,failures,successes,"NORMAL".equals(adapterStatus)?null:r.message(),success);
-        Map<String,Object> event=new LinkedHashMap<>();event.put("monitorId",id);event.put("monitorNo",m.get("monitor_no"));event.put("customerId",m.get("customer_id"));event.put("serviceId",m.get("service_id"));event.put("target",m.get("target_host")+":"+m.get("target_port"));event.put("status",after);event.put("message",r.message());event.put("latencyMs",r.latencyMs());
-        if(!"ABNORMAL".equals(before)&&"ABNORMAL".equals(after))openAlarmAndNotify(m,event);
-        if("ABNORMAL".equals(before)&&"NORMAL".equals(after))recoverAlarmAndNotify(m,event);
-        return Map.of("before",before,"after",after,"adapterStatus",adapterStatus,"consecutiveFailures",failures,"consecutiveSuccesses",successes,"message",r.message());}
+    @Transactional public Map<String,Object> checkOne(Long id){
+        Map<String,Object> m=db.monitor(id);
+        if(m==null)throw notFound("长效代理监控");
+        LongProxyCheckAdapter.CheckResult r=checker.check(m);
+        if(r==null)r=LongProxyCheckAdapter.CheckResult.unknown("检测适配器未返回有效结果");
+        String adapterStatus=up(r.status(),"UNKNOWN");
+        int failures=number(m.get("consecutive_failures"),0),successes=number(m.get("consecutive_successes"),0);
+        String before=String.valueOf(m.get("current_status")),after=before;
+        boolean openAlarm=db.openAlarm(id)!=null;
+        boolean success="NORMAL".equals(adapterStatus),failed="ABNORMAL".equals(adapterStatus);
+        if(success){
+            failures=0;successes++;
+            // A prior OPEN alarm is durable incident evidence even if an intervening
+            // adapter outage changed the displayed monitor status to UNKNOWN.
+            after=openAlarm&&successes<number(m.get("recovery_threshold"),2)?"UNKNOWN":"NORMAL";
+        }else if(failed){
+            successes=0;failures++;
+            after=openAlarm||failures>=number(m.get("failure_threshold"),3)?"ABNORMAL":
+                "NORMAL".equals(before)?"NORMAL":"UNKNOWN";
+        }else{
+            // UNKNOWN is neither successful delivery nor a valid failure probe.
+            // Break both consecutive streaks; never mark an open incident recovered.
+            failures=0;successes=0;after="UNKNOWN";
+        }
+        db.insertCheck(id,success,r.latencyMs(),n(r.outboundIp()),r.responseCode(),n(r.errorType()),n(r.message()),j(r.detail()));
+        db.updateMonitorCheck(id,after,failures,successes,success?null:r.message(),success,failed);
+        Map<String,Object> event=new LinkedHashMap<>();
+        event.put("monitorId",id);event.put("monitorNo",m.get("monitor_no"));
+        event.put("customerId",m.get("customer_id"));event.put("serviceId",m.get("service_id"));
+        event.put("target",m.get("target_host")+":"+m.get("target_port"));
+        event.put("status",after);event.put("message",r.message());event.put("latencyMs",r.latencyMs());
+        if(!openAlarm&&"ABNORMAL".equals(after))openAlarmAndNotify(m,event);
+        if(openAlarm&&"NORMAL".equals(after))recoverAlarmAndNotify(m,event);
+        return Map.of("before",before,"after",after,"adapterStatus",adapterStatus,
+            "consecutiveFailures",failures,"consecutiveSuccesses",successes,"message",n(r.message()));
+    }
 
-    private void openAlarmAndNotify(Map<String,Object> m,Map<String,Object> event){Long mid=num(m.get("id"));Map<String,Object> open=db.openAlarm(mid);Long aid=open==null?db.insertAlarm(next("ALM"),mid,num(m.get("customer_id")),num(m.get("service_id")),j(event)):num(open.get("id"));notifyBot(m,aid,"ALARM",event);}
-    private void recoverAlarmAndNotify(Map<String,Object> m,Map<String,Object> event){Map<String,Object> open=db.openAlarm(num(m.get("id")));if(open==null)return;Long aid=num(open.get("id"));db.recoverAlarm(aid,j(event));notifyBot(m,aid,"RECOVERY",event);}
-    private void notifyBot(Map<String,Object> m,Long alarmId,String type,Map<String,Object> event){Long botId=num(m.get("bot_id"));if(botId==null)return;Map<String,Object> raw=rawBot(botId);CustomerBotNotificationAdapter.Result r=notifier.send(botConfig(raw),type,event);db.insertNotification(alarmId,num(m.get("id")),botId,type,String.valueOf(raw.get("bot_type")),j(event),j(r.response()),r.success()?"SUCCESS":"FAILED",r.success()?null:r.message());}
+    private void openAlarmAndNotify(Map<String,Object> m,Map<String,Object> event){
+        Long mid=num(m.get("id"));
+        Map<String,Object> open=db.openAlarm(mid);
+        Long aid=open==null?db.insertAlarm(next("ALM"),mid,num(m.get("customer_id")),num(m.get("service_id")),j(event)):num(open.get("id"));
+        // An already-open incident is not a fresh alarm or another notification.
+        if(open==null)notifyBot(m,aid,"ALARM",event);
+    }
+    private void recoverAlarmAndNotify(Map<String,Object> m,Map<String,Object> event){
+        Map<String,Object> open=db.openAlarm(num(m.get("id")));
+        if(open==null)return;
+        Long aid=num(open.get("id"));
+        if(db.recoverAlarm(aid,j(event))==1)notifyBot(m,aid,"RECOVERY",event);
+    }
+    private CustomerBotNotificationAdapter.Result safeNotify(Map<String,Object> bot,String type,Map<String,Object> payload){
+        try{
+            CustomerBotNotificationAdapter.Result r=notifier.send(bot,type,payload);
+            return r==null?CustomerBotNotificationAdapter.Result.pending("通知适配器未返回回执，投递未确认"):r;
+        }catch(RuntimeException e){
+            // Do not expose raw exception text; it can contain remote webhook credentials.
+            // An adapter exception must not roll back the detected alarm/recovery.
+            return CustomerBotNotificationAdapter.Result.pending("通知适配器执行异常，投递未确认");
+        }
+    }
+    private void notifyBot(Map<String,Object> m,Long alarmId,String type,Map<String,Object> event){
+        Long botId=num(m.get("bot_id"));if(botId==null)return;
+        Map<String,Object> raw=rawBot(botId);
+        CustomerBotNotificationAdapter.Result r=Boolean.TRUE.equals(raw.get("enabled"))
+            ?safeNotify(botConfig(raw),type,event)
+            :CustomerBotNotificationAdapter.Result.pending("客户机器人已停用，未执行发送");
+        db.insertNotification(alarmId,num(m.get("id")),botId,type,String.valueOf(raw.get("bot_type")),
+            j(event),j(r.response()),r.success()?"SUCCESS":"FAILED",r.success()?null:r.message());
+    }
 
     public PageResult<Map<String,Object>> alarms(int page,int size,String status,Long customerId){page=page(page);size=size(size);String s=n(status);return new PageResult<>(page,size,db.countAlarms(s,customerId),db.alarms(s,customerId,size,(page-1)*size));}
     public Map<String,Object> alarm(Long id){Map<String,Object>x=db.alarm(id);if(x==null)throw notFound("告警");return x;}

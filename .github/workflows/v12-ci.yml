@@ -63,7 +63,7 @@ jobs:
       - name: Verify V1.3 cross-page router, payment-selection and RBAC guards
         run: python3 scripts/ci_v13_ui_workflow_gate.py
       - name: Verify short-IP allocation guard
-        run: mvn -B -Dtest=OpenApiMapperGuardTest,OpenApiLegacyExtractionGateTest,V12ServiceQueryFilterTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest,CustomerAuthReadRedactionTest test
+        run: mvn -B -Dtest=OpenApiMapperGuardTest,OpenApiLegacyExtractionGateTest,V12ServiceQueryFilterTest,BuiltinResourcePolicyTest,ProductAuthorizationServiceTest,ProductAuthorizationSecurityTest,V12ProvisionSafetyTest,ProductGroupReadClientTest,ProductGroupReadControllerTest,ProductTaskReconcilerTest,ProductExpiryStopDispatcherTest,ProductGroupStopClientTest,ProductExpiryStopCommitterTest,ProductGraceReleaseInspectorTest,ProductGraceReleaseControllerTest,ProductGraceReleaseFlowTest,LongMonitorServiceTest,ProductGroupHttpWireTest,OrderServiceCredentialVisibilityTest,CustomerDetailVisibilityTest,CustomerAuthReadRedactionTest test
         working-directory: backend
       - name: Package backend
         run: mvn -B -DskipTests package
@@ -536,6 +536,24 @@ jobs:
           BOT_DETAIL=$(curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/bots/$BOT_ID")
           python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert "webhook_url" not in x and "access_token_cipher" not in x and "secret_cipher" not in x and "last_test_message" not in x and x["webhook_mask"]=="已配置（不回显地址）" and isinstance(x["monitorReferences"],list)' <<< "$BOT_DETAIL"
           echo 'UI-31 bot secret redaction and monitor reference shape verified'
+          # A5: a REAL PostgreSQL OPEN incident exists independently of probe
+          # transport. This synthetic LONG_IP/Mock fixture never contacts devices.
+          A5_MON_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
+            INSERT INTO lm_monitor(monitor_no,customer_id,service_id,target_host,target_port,bot_id,current_status,consecutive_failures,consecutive_successes,failure_threshold,recovery_threshold,last_failure_at)
+            VALUES('CI-A5-OPEN-UNKNOWN',$CID,$EXP3,'ci-monitor.invalid',18080,$BOT_ID,'ABNORMAL',3,1,3,2,now()-interval '1 hour') RETURNING id" | sed -n '1p')
+          A5_ALARM_ID=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
+            INSERT INTO lm_alarm(alarm_no,monitor_id,customer_id,service_id,status)
+            VALUES('CI-A5-ALARM-OPEN',$A5_MON_ID,$CID,$EXP3,'OPEN') RETURNING id" | sed -n '1p')
+          A5_LAST_FAILURE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT last_failure_at::text FROM lm_monitor WHERE id=$A5_MON_ID")
+          A5_CHECK=$(curl -fsS -H "$H" -H "$J" -d '{"reason":"CI A5 unknown real-adapter guard"}' "http://localhost:8080/api/admin/v1/long-monitor/monitors/$A5_MON_ID/check")
+          python3 -c 'import json,sys; x=json.load(sys.stdin)["data"]; assert x["adapterStatus"]=="UNKNOWN" and x["after"]=="UNKNOWN" and x["consecutiveFailures"]==0 and x["consecutiveSuccesses"]==0,x' <<< "$A5_CHECK"
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT status FROM lm_alarm WHERE id=$A5_ALARM_ID")" = "OPEN"
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT current_status FROM lm_monitor WHERE id=$A5_MON_ID")" = "UNKNOWN"
+          test "$A5_LAST_FAILURE" = "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT last_failure_at::text FROM lm_monitor WHERE id=$A5_MON_ID")"
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM lm_check_record WHERE monitor_id=$A5_MON_ID")" = "1"
+          test "$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT count(*) FROM lm_notification WHERE monitor_id=$A5_MON_ID")" = "0"
+          echo 'A5 PostgreSQL OPEN alarm held through Noop UNKNOWN, no false delivery or failure timestamp'
+
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/monitors?page=1&size=20" >/dev/null
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/alarms?page=1&size=20" >/dev/null
           curl -fsS -H "$H" "http://localhost:8080/api/admin/v1/long-monitor/notifications?page=1&size=20" >/dev/null
@@ -597,6 +615,7 @@ jobs:
             V13_E2E_CUSTOMER_ID="$CID" V13_E2E_ORDER_ID="$MULTI_ID" \
             V13_E2E_SERVICE_ID="$SID" V13_E2E_POOL_ID="$POOLID" \
             V13_E2E_UNPAID_ORDER_ID="$LONG_OID" \
+            V13_E2E_A5_MONITOR_ID="$A5_MON_ID" \
             V13_E2E_VIEWER_USER=ci_v13_readonly V13_E2E_VIEWER_PASSWORD=admin123 \
             npx playwright test tests/e2e/v13-real-backend.spec.ts tests/e2e/v13-least-privilege.spec.ts --reporter=line --workers=1 --timeout=40000
           )

@@ -468,6 +468,54 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('检测适配器未返回真实可验证结果，状态仍为 UNKNOWN')).toBeVisible()
   })
 
+
+  test('A5 real PostgreSQL OPEN incident survives repeated Noop UNKNOWN checks without fake recovery or notification',async({page})=>{
+    const monitorId=process.env.V13_E2E_A5_MONITOR_ID
+    expect(monitorId,'A5 fixture must exist in real PostgreSQL').toBeTruthy()
+    await page.goto(base+'/long-monitor/monitors')
+    const target=page.locator('.el-table__body tr').filter({hasText:'CI-A5-OPEN-UNKNOWN'})
+    await expect(target).toBeVisible()
+    await expect(target).toContainText('UNKNOWN')
+    const auditBefore=await page.evaluate(async id=>{
+      const headers={Authorization:'Bearer '+localStorage.getItem('ipproxy_access_token')}
+      const get=async(path:string)=>{const r=await fetch('/api/admin/v1'+path,{headers});return {status:r.status,body:await r.json()}}
+      const monitor=await get('/long-monitor/monitors/'+id)
+      return {status:monitor.status,count:monitor.body?.data?.checkHistory?.length,
+        lastFailure:monitor.body?.data?.last_failure_at}
+    },monitorId)
+    expect(auditBefore.status).toBe(200)
+    expect(auditBefore.count).toBe(1)
+    const checkReply=page.waitForResponse(r=>r.request().method()==='POST'&&
+      new URL(r.url()).pathname==='/api/admin/v1/long-monitor/monitors/'+monitorId+'/check')
+    await target.getByRole('button',{name:'检测',exact:true}).click()
+    const result=await checkReply
+    expect(result.status()).toBe(200)
+    expect((await result.json()).data).toMatchObject({
+      adapterStatus:'UNKNOWN',after:'UNKNOWN',consecutiveFailures:0,consecutiveSuccesses:0
+    })
+    await expect(page.getByText('检测适配器未返回真实可验证结果，状态仍为 UNKNOWN')).toBeVisible()
+    const persisted=await page.evaluate(async id=>{
+      const headers={Authorization:'Bearer '+localStorage.getItem('ipproxy_access_token')}
+      const get=async(path:string)=>{const r=await fetch('/api/admin/v1'+path,{headers});return {status:r.status,body:await r.json()}}
+      const monitor=await get('/long-monitor/monitors/'+id)
+      const alarms=await get('/long-monitor/alarms?page=1&size=20')
+      const notifications=await get('/long-monitor/notifications?page=1&size=20&monitorId='+id)
+      const alarm=alarms.body?.data?.items?.find((x:any)=>Number(x.monitor_id)===Number(id))
+      return {codes:[monitor.status,alarms.status,notifications.status],
+        status:monitor.body?.data?.current_status,
+        checkCount:monitor.body?.data?.checkHistory?.length,
+        lastFailure:monitor.body?.data?.last_failure_at,
+        alarm:{id:alarm?.id,status:alarm?.status,number:alarm?.alarm_no},
+        notifications:notifications.body?.data?.items}
+    },monitorId)
+    expect(persisted.codes).toEqual([200,200,200])
+    expect(persisted.status).toBe('UNKNOWN')
+    expect(persisted.checkCount).toBe(2)
+    expect(persisted.lastFailure).toEqual(auditBefore.lastFailure)
+    expect(persisted.alarm).toMatchObject({status:'OPEN',number:'CI-A5-ALARM-OPEN'})
+    expect(persisted.notifications).toEqual([])
+  })
+
   test('reverse proxy details fail closed and cannot expose apply or disable buttons', async ({ page }) => {
     const first='**/api/admin/v1/v12/external-delivery/reverse-proxies/900991'
     await page.route(first,route=>route.fulfill({
