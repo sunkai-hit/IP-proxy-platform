@@ -2881,4 +2881,124 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('tab',{name:'实际关联服务 (3)'})).toBeVisible()
   })
 
+  function ciCustomerStatusRow(overrides:Record<string,any>={}){
+    return {id:990801,customer_code:'CI-CUST-990801',customer_name:'CI Customer Impact',
+      customer_type_code:'ENTERPRISE',status:'ACTIVE',auth_status:'UNVERIFIED',
+      service_count:2,grace_pending_count:1,contact_name:'CI Admin',...overrides}
+  }
+
+  test('A UI-02 customer impact confirmation identifies actual customer and cancel sends zero writes',async({page})=>{
+    await page.route('**/api/admin/v1/customers?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{items:[ciCustomerStatusRow()],total:1}})}))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customers\/990801\/(freeze|resume|disable)$/.test(new URL(r.url()).pathname))
+      writes.push(r.url())})
+    await page.goto(base+'/customers')
+    await page.getByRole('button',{name:'冻结',exact:true}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI-CUST-990801')
+    await expect(box).toContainText('ID 990801')
+    await expect(box).toContainText('未终止服务：2个')
+    await expect(box).toContainText('宽限/释放待处理：1个')
+    await expect(page.getByRole('button',{name:'停用',exact:true})).toBeDisabled()
+    await box.getByRole('button',{name:'返回核对'}).click()
+    await expect(box).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-02 customer status change during first impact confirmation blocks stale freeze',async({page})=>{
+    let currentStatus='ACTIVE'
+    await page.route('**/api/admin/v1/customers?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{items:[ciCustomerStatusRow({status:currentStatus})],total:1}})}))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customers\/990801\/freeze$/.test(new URL(r.url()).pathname))
+      writes.push(r.url())})
+    await page.goto(base+'/customers')
+    await page.getByRole('button',{name:'冻结',exact:true}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('原状态：ACTIVE')
+    currentStatus='FROZEN'
+    await page.evaluate(()=>{(document.querySelector('.filters .el-button--primary') as HTMLElement)?.click()})
+    await expect(page.locator('.el-table__body')).toContainText('FROZEN')
+    await box.getByRole('button',{name:'继续填写原因'}).click()
+    await expect(page.getByText('影响确认期间客户、状态或在用服务已变化，未提交状态操作')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-02 second confirmation rejects service-impact change without submitting disable',async({page})=>{
+    let remaining=2
+    await page.route('**/api/admin/v1/customers?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{items:[ciCustomerStatusRow({service_count:remaining})],total:1}})}))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customers\/990801\/disable$/.test(new URL(r.url()).pathname))
+      writes.push(r.url())})
+    await page.goto(base+'/customers')
+    await page.getByRole('button',{name:'停用',exact:true}).click()
+    let box=page.locator('.el-message-box').last()
+    await box.getByRole('button',{name:'继续填写原因'}).click()
+    box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI Customer Impact')
+    remaining=5
+    await page.evaluate(()=>{(document.querySelector('.filters .el-button--primary') as HTMLElement)?.click()})
+    await expect(page.locator('.el-table__body')).toContainText('5')
+    await box.locator('input').fill('stale customer impact is forbidden')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('填写原因期间客户身份、状态或服务影响已变化，未提交状态操作')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-02 missing service impact and failed list never enable customer status mutation',async({page})=>{
+    let bad=false
+    await page.route('**/api/admin/v1/customers?*',route=>route.fulfill({
+      status:bad?503:200,contentType:'application/json',
+      body:bad?JSON.stringify({code:'CI_CUSTOMER_LIST_DOWN',message:'simulated outage'}):
+        JSON.stringify({code:'OK',data:{items:[ciCustomerStatusRow({service_count:null})],total:1}})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customers\/990801\//.test(new URL(r.url()).pathname))
+      writes.push(r.url())})
+    await page.goto(base+'/customers')
+    await page.getByRole('button',{name:'冻结',exact:true}).click()
+    await expect(page.getByText('客户身份、管理状态或服务影响数未核实，禁止提交状态操作')).toBeVisible()
+    await expect(page.locator('.el-message-box')).toHaveCount(0)
+    bad=true
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('客户列表读取失败，不能据此认定没有客户或没有未终止服务。')).toBeVisible()
+    await expect(page.getByText('CI Customer Impact')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'冻结',exact:true})).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-02 real PostgreSQL concurrent customer freeze can commit only once',async({page})=>{
+    await page.goto(base+'/customers')
+    const result=await page.evaluate(async()=>{
+      const token=localStorage.getItem('ipproxy_access_token')
+      const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'}
+      const response=await fetch('/api/admin/v1/customers',{method:'POST',headers,body:JSON.stringify({
+        customerName:'CI isolated status CAS '+Date.now(),customerTypeCode:'ENTERPRISE',
+        contactName:'CI status conflict',remark:'CI-only disposable record'
+      })})
+      const body=await response.json()
+      if(response.status!==200||!body?.data?.id)return {created:false,status:response.status,body}
+      const id=Number(body.data.id)
+      const calls=await Promise.all([1,2].map(async()=> {
+        const r=await fetch('/api/admin/v1/customers/'+id+'/freeze',{
+          method:'POST',headers,body:JSON.stringify({reason:'CI race: only one state transition'})})
+        const b=await r.json()
+        return {status:r.status,code:b.code}
+      }))
+      const final=await fetch('/api/admin/v1/customers/'+id,{headers})
+      const record=(await final.json()).data.customer
+      return {created:true,id,calls,state:record?.status}
+    })
+    expect(result.created,JSON.stringify(result)).toBe(true)
+    expect(result.calls.filter((x:any)=>x.status===200)).toHaveLength(1)
+    expect(result.calls.filter((x:any)=>x.status===400)).toHaveLength(1)
+    expect(['CUSTOMER_STATUS_INVALID','CUSTOMER_STATUS_CONFLICT']).toContain(result.calls.find((x:any)=>x.status===400)?.code)
+    expect(result.state).toBe('FROZEN')
+  })
+
 })
