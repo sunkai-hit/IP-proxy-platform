@@ -3090,4 +3090,53 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button',{name:'通过',exact:true})).toHaveCount(0)
   })
 
+
+  test('A UI-04 real PostgreSQL KYC list, detail and customer subtree return redacted material only',async({page})=>{
+    await page.goto(base+'/customer-auth')
+    const report=await page.evaluate(async()=>{
+      const token=localStorage.getItem('ipproxy_access_token')
+      const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'}
+      async function invoke(url:string,method='GET',payload?:any){
+        const r=await fetch(url,{method,headers,body:payload?JSON.stringify(payload):undefined})
+        return {status:r.status,body:await r.json()}
+      }
+      const name='CI KYC redaction '+Date.now()
+      const created=await invoke('/api/admin/v1/customers','POST',{
+        customerName:name,customerTypeCode:'ENTERPRISE',contactName:'CI privacy test',
+        remark:'CI-only disposable redaction verification'
+      })
+      const id=Number(created.body?.data?.id)
+      if(created.status!==200||!Number.isSafeInteger(id))return {created}
+      const secret='CI_PRIVATE_KYC_DOCUMENT_987654321',reference='CI_PRIVATE_KYC_ATTACHMENT_REF'
+      const auth=await invoke('/api/admin/v1/customers/'+id+'/auth','POST',{
+        authTypeCode:'ENTERPRISE',submittedData:{subjectName:name,documentNo:secret},
+        attachmentRefs:[reference]
+      })
+      const authId=Number(auth.body?.data?.id)
+      if(auth.status!==200||!Number.isSafeInteger(authId))return {created,auth}
+      const detail=await invoke('/api/admin/v1/customer-auth/'+authId)
+      const list=await invoke('/api/admin/v1/customer-auth?page=1&size=20&customerId='+id)
+      const customer=await invoke('/api/admin/v1/customers/'+id)
+      const noSecrets=(r:any)=>{
+        const text=JSON.stringify(r.body)
+        return !text.includes(secret)&&!text.includes(reference)&&
+          !text.includes('submitted_data')&&!text.includes('attachment_refs')
+      }
+      return {created:created.status,auth:auth.status,detail:detail.status,list:list.status,
+        customer:customer.status,allRedacted:[detail,list,customer].every(noSecrets),
+        masked:detail.body?.data?.document_number_masked,
+        attachments:detail.body?.data?.attachment_count,
+        listCount:list.body?.data?.items?.length,
+        customerCount:customer.body?.data?.authRecords?.length}
+    })
+    expect(report.created,JSON.stringify(report)).toBe(200)
+    expect(report.auth,JSON.stringify(report)).toBe(200)
+    expect([report.detail,report.list,report.customer]).toEqual([200,200,200])
+    expect(report.allRedacted,JSON.stringify(report)).toBe(true)
+    expect(report.masked).toContain('••••')
+    expect(report.attachments).toBe(1)
+    expect(report.listCount).toBe(1)
+    expect(report.customerCount).toBe(1)
+  })
+
 })
