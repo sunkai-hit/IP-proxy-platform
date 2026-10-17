@@ -2186,4 +2186,120 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('button',{name:'预检影响与冲突'})).toBeEnabled()
   })
 
+  test('A UI-12 backup candidate ledger shows source-line proof separately from switchability',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const api='**/api/admin/v1/v12/services/'+serviceId+'/backup-candidates'
+    await page.route(api,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:[
+        {id:960001,serviceId:Number(serviceId),lineId:960021,lineCode:'CI-BACKUP-LINE-VERIFIED-ONLY-IN-DB',
+          expectedIpv4:'203.0.113.7',reportedIpv4:'203.0.113.7',lastSyncAt:'2026-10-17T00:00:00Z',
+          onlineStatus:'ONLINE',candidateStatus:'CANDIDATE',health:'HEALTHY',
+          checkedAt:'2026-10-17T00:00:00Z',lineDeleted:false,eligible:false,
+          reason:'未签收真实切换适配器',dataSource:'MANAGEMENT_DB_UNVERIFIED'},
+        {id:960002,serviceId:Number(serviceId),lineId:960022,lineCode:'CI-BACKUP-LINE-MISMATCH',
+          expectedIpv4:'203.0.113.9',reportedIpv4:'203.0.113.8',lastSyncAt:'2026-10-17T00:00:00Z',
+          onlineStatus:'ONLINE',candidateStatus:'CANDIDATE',health:'UNKNOWN',
+          checkedAt:'2026-10-17T00:00:00Z',lineDeleted:false,eligible:false,
+          reason:'未签收真实切换适配器',dataSource:'MANAGEMENT_DB_UNVERIFIED'}
+      ]})}))
+    const writes:string[]=[]
+    page.on('request',request=>{
+      if(request.method()!=='GET'&&/\/failover-tasks$/.test(new URL(request.url()).pathname))writes.push(request.url())
+    })
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'人工备用候选'}).click()
+    await page.getByRole('button',{name:'独立核对备用候选'}).click()
+    await expect(page).toHaveURL(new RegExp('/services/'+serviceId+'/backup-candidates$'))
+    await expect(page.getByText('CI-BACKUP-LINE-VERIFIED-ONLY-IN-DB')).toBeVisible()
+    await expect(page.getByText('管理面快照一致（不代表真实出口已核验）')).toBeVisible()
+    await expect(page.getByText('预期IPv4与最近上报IPv4不一致')).toBeVisible()
+    await expect(page.getByText('独立候选台账仅证明管理数据库中的历史和当前记录。',{exact:false})).toBeVisible()
+    await expect(page.getByRole('button',{name:/真实切换|立即切换|执行切换/})).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-12 candidate API outage invalidates old source proof and recovers from actual backend',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const api='**/api/admin/v1/v12/services/'+serviceId+'/backup-candidates'
+    let offline=false
+    await page.route(api,route=>route.fulfill({status:offline?503:200,contentType:'application/json',
+      body:offline?JSON.stringify({code:'CI_CANDIDATE_DOWN',message:'synthetic outage'}):
+        JSON.stringify({code:'OK',data:[{
+          id:960003,serviceId:Number(serviceId),lineId:960023,lineCode:'CI-CANDIDATE-OLD',
+          expectedIpv4:'203.0.113.13',reportedIpv4:'203.0.113.13',
+          lastSyncAt:'2026-10-17T00:00:00Z',eligible:false,
+          reason:'仅管理快照',dataSource:'MANAGEMENT_DB_UNVERIFIED'
+        }]})}))
+    await page.goto(base+'/services/'+serviceId+'/backup-candidates')
+    await expect(page.getByText('CI-CANDIDATE-OLD')).toBeVisible()
+    offline=true
+    await page.getByRole('button',{name:'刷新核对'}).click()
+    await expect(page.getByText('候选台账读取失败、存在跨服务记录或来源不可信，不能据此推断无候选、可切换或资源可回池。')).toBeVisible()
+    await expect(page.getByText('CI-CANDIDATE-OLD')).toHaveCount(0)
+    await page.unroute(api)
+    const loaded=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/services/'+serviceId+'/backup-candidates')
+    await page.getByRole('button',{name:'重新核对服务与候选'}).click()
+    expect((await loaded).status()).toBe(200)
+    await expect(page.getByText('候选台账读取失败、存在跨服务记录或来源不可信，不能据此推断无候选、可切换或资源可回池。')).toHaveCount(0)
+  })
+
+  test('A UI-12 foreign-service or forged eligible candidate result is never displayed',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    let forged='owner'
+    await page.route('**/api/admin/v1/v12/services/'+serviceId+'/backup-candidates',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:[{
+        id:960004,serviceId:forged==='owner'?Number(serviceId)+1:Number(serviceId),
+        lineId:960024,lineCode:'CI-FOREIGN-OR-FORGED-CANDIDATE',
+        expectedIpv4:'203.0.113.24',reportedIpv4:'203.0.113.24',
+        lastSyncAt:'2026-10-17T00:00:00Z',
+        eligible:forged==='eligible',reason:'untrusted snapshot',
+        dataSource:'MANAGEMENT_DB_UNVERIFIED'
+      }]})
+    }))
+    await page.goto(base+'/services/'+serviceId+'/backup-candidates')
+    await expect(page.getByText('候选台账读取失败、存在跨服务记录或来源不可信，不能据此推断无候选、可切换或资源可回池。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-OR-FORGED-CANDIDATE')).toHaveCount(0)
+    forged='eligible'
+    await page.getByRole('button',{name:'重新核对服务与候选'}).click()
+    await expect(page.getByText('候选台账读取失败、存在跨服务记录或来源不可信，不能据此推断无候选、可切换或资源可回池。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-OR-FORGED-CANDIDATE')).toHaveCount(0)
+  })
+
+  test('A UI-12 delayed candidate response cannot overwrite another service after SPA navigation',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const newId=960099
+    const oldApi='**/api/admin/v1/v12/services/'+serviceId+'/backup-candidates'
+    await page.route(oldApi,async route=>{
+      await new Promise(resolve=>setTimeout(resolve,1000))
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:[{
+        id:960005,serviceId:Number(serviceId),lineId:960025,lineCode:'CI-STALE-BACKUP-OLD',
+        eligible:false,reason:'旧服务管理数据',dataSource:'MANAGEMENT_DB_UNVERIFIED'
+      }]})})
+    })
+    await page.route('**/api/admin/v1/services/'+newId,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:newId,service_no:'CI-SERVICE-NEW',customer_name:'CI Customer New',
+        product_type:'LONG_IP',status:'ACTIVE',delivery_stage:'UNVERIFIED'}})
+    }))
+    await page.route('**/api/admin/v1/v12/services/'+newId+'/backup-candidates',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:[{
+        id:960006,serviceId:newId,lineId:960026,lineCode:'CI-CURRENT-BACKUP-NEW',
+        eligible:false,reason:'新服务管理数据',dataSource:'MANAGEMENT_DB_UNVERIFIED'
+      }]})
+    }))
+    const received=page.waitForRequest(r=>r.method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/services/'+serviceId+'/backup-candidates')
+    await page.goto(base+'/services/'+serviceId+'/backup-candidates')
+    await received
+    await page.evaluate(async id=>{
+      await (document.querySelector('#app') as any).__vue_app__.config.globalProperties.$router.push('/services/'+id+'/backup-candidates')
+    },newId)
+    await expect(page.getByText('CI-CURRENT-BACKUP-NEW')).toBeVisible()
+    await page.waitForTimeout(1150)
+    await expect(page.getByText('CI-STALE-BACKUP-OLD')).toHaveCount(0)
+    await expect(page.getByText('CI-SERVICE-NEW')).toBeVisible()
+  })
+
 })
