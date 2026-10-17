@@ -107,6 +107,19 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
       check('/api/admin/v1/v12/release-actions/CI-ROLE-DENIED/commit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }
       }),
+      // A4 supply purchases/proxy endpoints must enforce HTTP RBAC before
+      // evaluating any customer/order/service or remote network state.
+      check('/api/admin/v1/v12/external-delivery/purchases?page=1&size=20'),
+      check('/api/admin/v1/v12/external-delivery/purchases/1'),
+      check('/api/admin/v1/v12/external-delivery/purchases/1', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({supplierId:1,customerId:customerId,supplierPackageName:'CI denied'})
+      }),
+      check('/api/admin/v1/v12/external-delivery/reverse-proxies?page=1&size=20'),
+      check('/api/admin/v1/v12/external-delivery/reverse-proxies/1/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({reason:'CI viewer cannot apply an upstream proxy'})
+      }),
       check('/api/admin/v1/v12/resources/lines'),
       check('/api/admin/v1/v12/resource-pools'),
       check('/api/admin/v1/v12/resource-pools/1/operations'),
