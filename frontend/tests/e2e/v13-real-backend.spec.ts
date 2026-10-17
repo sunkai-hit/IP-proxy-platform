@@ -1699,6 +1699,117 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.locator('.el-tab-pane:visible .el-table__body tr')).toHaveCount(3)
   })
 
+
+  test('A2 delayed old paid renewal detail cannot re-enable submission after same-service verification fails',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const sid=Number(serviceId),cid=Number(customerId),oid=990889
+    const expiry=new Date(Date.now()+45*24*60*60*1000).toISOString()
+    await page.route('**/api/admin/v1/services?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{items:[{
+        id:sid,service_no:'CI-A2-RENEW-SAME-SERVICE',customer_id:cid,customer_name:'CI Renew Owner',
+        product_type:'SHORT_IP',product_name:'CI Short',status:'ACTIVE',
+        expire_at:expiry,delivery_stage:'MOCK_ONLY'
+      }],total:1}})
+    }))
+    await page.route('**/api/admin/v1/relations/services/'+sid+'/paid-renewal-orders',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        items:[{id:oid,order_no:'CI-A2-PAID-RENEW',total_amount:100,currency:'CNY'}],truncated:false
+      }})
+    }))
+    let calls=0
+    await page.route('**/api/admin/v1/orders/'+oid,async route=>{
+      const n=++calls
+      if(n===1){
+        await new Promise(resolve=>setTimeout(resolve,1200))
+        return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
+          code:'OK',data:{id:oid,customer_id:cid,order_type:'RENEW',payment_status:'PAID_CONFIRMED',
+            status:'PENDING_PROVISION',renewal_service_id:sid,
+            items:[{package_snapshot:{service_days:30}}]}
+        })})
+      }
+      return route.fulfill({status:503,contentType:'application/json',
+        body:JSON.stringify({code:'CI_A2_ORDER_RECHECK_DOWN',message:'synthetic outage'})})
+    })
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&/\/api\/admin\/v1\/services\/\d+\/renew$/.test(new URL(r.url()).pathname))writes.push(r.url())
+    })
+    await page.goto(base+'/service-changes?serviceId='+sid+'&action=renew&renewalOrderId='+oid)
+    await expect.poll(()=>calls).toBe(1)
+    await page.getByPlaceholder('填写可审计的业务原因').fill('CI A2 no reused old term')
+    await page.getByRole('button',{name:'重新核对服务与续费订单'}).click()
+    await expect.poll(()=>calls).toBe(2)
+    await expect(page.getByText('无法确认续费订单套餐期限快照，必须核对订单详情')).toBeVisible()
+    await page.waitForTimeout(1350)
+    await expect(page.getByText('无法确认续费订单套餐期限快照，必须核对订单详情')).toBeVisible()
+    await expect(page.getByText(/按原服务合同试算的新到期/)).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'预览并确认续费'})).toBeDisabled()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A2 paid renewal rejected by Mock preserves actual PostgreSQL service expiry, order and claims',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    await page.goto(base+'/service-changes?serviceId='+serviceId+'&action=renew')
+    const result=await page.evaluate(async sid=>{
+      const headers={Authorization:'Bearer '+localStorage.getItem('ipproxy_access_token'),'Content-Type':'application/json'}
+      async function call(path:string,method='GET',body?:any){
+        const response=await fetch('/api/admin/v1'+path,{
+          method,headers,body:body?JSON.stringify(body):undefined
+        })
+        return {status:response.status,payload:await response.json()}
+      }
+      const source=await call('/services/'+sid)
+      if(source.status!==200)return {stage:'source',source}
+      const svc=source.payload.data
+      const customerId=Number(svc.customer_id),productId=Number(svc.product_id),packageId=Number(svc.package_id)
+      const creation=await call('/orders','POST',{
+        customerId,orderType:'RENEW',renewalServiceId:sid,
+        remark:'CI-only A2 synthetic paid renewal; no real product write',
+        items:[{productId,packageId,quantity:1,serviceCount:1}]
+      })
+      if(creation.status!==200)return {stage:'create',creation,svc:{id:svc.id,product_id:svc.product_id,package_id:svc.package_id}}
+      const id=Number(creation.payload.data.id)
+      const confirm=await call('/orders/'+id+'/confirm','POST',{reason:'CI synthetic A2 order confirmation'})
+      const payment=await call('/orders/'+id+'/payment-confirmation','POST',{
+        paymentReference:'CI-A2-RENEW-ISOLATED-'+id,reason:'CI synthetic paid fixture; not live settlement'
+      })
+      const beforeService=await call('/services/'+sid)
+      const beforeOrder=await call('/orders/'+id)
+      const beforeClaims=await call('/v12/services/'+sid+'/egress-claims')
+      const rawTerm=beforeOrder.payload?.data?.items?.[0]?.package_snapshot
+      const term=typeof rawTerm==='string'?JSON.parse(rawTerm):rawTerm
+      const days=Number(term?.service_days)
+      const attempted=await call('/services/'+sid+'/renew','POST',{
+        days,renewalOrderId:id,reason:'CI assert Mock renew cannot modify persisted contract'
+      })
+      const afterService=await call('/services/'+sid)
+      const afterOrder=await call('/orders/'+id)
+      const afterClaims=await call('/v12/services/'+sid+'/egress-claims')
+      return {stage:'checked',confirm:confirm.status,payment:payment.status,
+        before:{svc:beforeService.payload?.data,order:beforeOrder.payload?.data,claims:beforeClaims.payload?.data},
+        after:{svc:afterService.payload?.data,order:afterOrder.payload?.data,claims:afterClaims.payload?.data},
+        statuses:[beforeService.status,beforeOrder.status,beforeClaims.status,
+          afterService.status,afterOrder.status,afterClaims.status],
+        days,attempted:{status:attempted.status,code:attempted.payload?.code},
+        orderId:id}
+    },Number(serviceId))
+    expect(result.stage,JSON.stringify(result)).toBe('checked')
+    expect([result.confirm,result.payment]).toEqual([200,200])
+    expect(result.statuses).toEqual([200,200,200,200,200,200])
+    expect(Number.isInteger(result.days)&&result.days>0).toBe(true)
+    expect(result.attempted.status,JSON.stringify(result)).toBe(400)
+    expect(result.attempted.code,JSON.stringify(result)).toBe('DATA_PLANE_ADAPTER_UNAVAILABLE')
+    for(const key of ['id','status','expiry_phase','expire_at','grace_until_at','grace_days_snapshot','delivery_stage']){
+      expect(result.after.svc?.[key],key).toEqual(result.before.svc?.[key])
+    }
+    expect(result.before.order.payment_status).toBe('PAID_CONFIRMED')
+    expect(result.before.order.status).toBe('PENDING_PROVISION')
+    expect(result.after.order.payment_status).toBe(result.before.order.payment_status)
+    expect(result.after.order.status).toBe(result.before.order.status)
+    expect(result.after.order.items).toEqual(result.before.order.items)
+    expect(result.after.claims).toEqual(result.before.claims)
+  })
+
   test('A2 backend business FAILED release is never presented as completed service termination',async({page})=>{
     expect(serviceId).toBeTruthy()
     const sid=Number(serviceId)
