@@ -91,6 +91,22 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ opinion: 'CI viewer cannot approve KYC' })
       }),
+      // A2 read-only actor must not plan, verify, dispatch or commit fixed-IP release.
+      check('/api/admin/v1/services/' + serviceId + '/renew', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({days:30,renewalOrderId:1,reason:'CI viewer denied renewal'})
+      }),
+      check('/api/admin/v1/v12/service-expiry/reconcile', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({reason:'CI viewer cannot reconcile expiry',limit:5})
+      }),
+      check('/api/admin/v1/v12/release-inspections/CI-ROLE-DENIED'),
+      check('/api/admin/v1/v12/release-actions/CI-ROLE-DENIED/dispatch', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }
+      }),
+      check('/api/admin/v1/v12/release-actions/CI-ROLE-DENIED/commit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }
+      }),
       check('/api/admin/v1/v12/resources/lines'),
       check('/api/admin/v1/v12/resource-pools'),
       check('/api/admin/v1/v12/resource-pools/1/operations'),
