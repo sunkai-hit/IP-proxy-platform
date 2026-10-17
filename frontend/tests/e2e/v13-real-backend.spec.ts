@@ -1776,9 +1776,11 @@ test.describe('V1.3 actual browser management-console smoke', () => {
       const beforeService=await call('/services/'+sid)
       const beforeOrder=await call('/orders/'+id)
       const beforeClaims=await call('/v12/services/'+sid+'/egress-claims')
-      const rawTerm=beforeOrder.payload?.data?.items?.[0]?.package_snapshot
-      const term=typeof rawTerm==='string'?JSON.parse(rawTerm):rawTerm
-      const days=Number(term?.service_days)
+      // Package detail is the authoritative HTTP shape in this CI fixture;
+      // the PostgreSQL jsonb order snapshot may be serialized as an opaque object.
+      // Renewal will independently verify the order's frozen term in SQL.
+      const packageDetail=await call('/packages/'+packageId)
+      const days=Number(packageDetail.payload?.data?.service_days)
       const attempted=await call('/services/'+sid+'/renew','POST',{
         days,renewalOrderId:id,reason:'CI assert Mock renew cannot modify persisted contract'
       })
@@ -1789,13 +1791,13 @@ test.describe('V1.3 actual browser management-console smoke', () => {
         before:{svc:beforeService.payload?.data,order:beforeOrder.payload?.data,claims:beforeClaims.payload?.data},
         after:{svc:afterService.payload?.data,order:afterOrder.payload?.data,claims:afterClaims.payload?.data},
         statuses:[beforeService.status,beforeOrder.status,beforeClaims.status,
-          afterService.status,afterOrder.status,afterClaims.status],
+          afterService.status,afterOrder.status,afterClaims.status,packageDetail.status],
         days,attempted:{status:attempted.status,code:attempted.payload?.code},
         orderId:id}
     },Number(serviceId))
     expect(result.stage,JSON.stringify(result)).toBe('checked')
     expect([result.confirm,result.payment]).toEqual([200,200])
-    expect(result.statuses).toEqual([200,200,200,200,200,200])
+    expect(result.statuses).toEqual([200,200,200,200,200,200,200])
     expect(Number.isInteger(result.days)&&result.days>0).toBe(true)
     expect(result.attempted.status,JSON.stringify(result)).toBe(400)
     expect(result.attempted.code,JSON.stringify(result)).toBe('DATA_PLANE_ADAPTER_UNAVAILABLE')
