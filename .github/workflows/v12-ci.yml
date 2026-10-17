@@ -483,8 +483,8 @@ jobs:
           # even when no reverse_proxy row points to the customer service.
           A4_DIRECT_PURCHASE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "INSERT INTO res_supplier_purchase(purchase_no,supplier_id,customer_id,source_customer_order_id,supplier_package_name,expire_at) VALUES('CI-A4-DIRECT-PURCHASE',$SUPID,$CID,$OID,'CI direct supplier source',now()+interval '90 days') RETURNING id" | sed -n '1p')
           A4_DIRECT_SERVICE=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "
-            INSERT INTO svc_instance(service_no,customer_id,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,effective_at,expire_at,status,delivery_stage,supplier_purchase_id)
-            SELECT 'CI-A4-DIRECT-SERVICE',customer_id,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,now(),now()+interval '29 days','ACTIVE','MOCK_ONLY',$A4_DIRECT_PURCHASE FROM svc_instance WHERE id=$SID RETURNING id" | sed -n '1p')
+            INSERT INTO svc_instance(service_no,customer_id,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,effective_at,expire_at,status,delivery_stage,delivery_mode,supplier_purchase_id)
+            SELECT 'CI-A4-DIRECT-SERVICE',customer_id,product_id,package_id,product_type,product_snapshot,package_snapshot,quota_snapshot,now(),now()+interval '29 days','ACTIVE','MOCK_ONLY','EXTERNAL_PROXY',$A4_DIRECT_PURCHASE FROM svc_instance WHERE id=$SID RETURNING id" | sed -n '1p')
           test -n "$A4_DIRECT_SERVICE"
           A4_OLD_TERM=$(docker exec "$PGID" psql -U ipproxy -d ip_proxy -At -c "SELECT expire_at::text FROM res_supplier_purchase WHERE id=$A4_DIRECT_PURCHASE")
           A4_SHORT_TERM=$(python3 -c 'from datetime import datetime,timedelta,timezone; print((datetime.now(timezone.utc)+timedelta(days=1)).isoformat())')
