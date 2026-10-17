@@ -2302,4 +2302,96 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('CI-SERVICE-NEW')).toBeVisible()
   })
 
+  function ciSupplierRow(overrides:Record<string,any>={}){
+    return {id:970001,supplier_code:'CI-SUPPLIER-A',supplier_name:'CI Supplier Alpha',
+      api_endpoint:'https://ci.example.invalid',auth_type_code:'TOKEN',api_account:'ci-account',
+      secret_configured:true,region_codes:[],carrier_codes:[],fetch_mode:'MANUAL',
+      status:'ACTIVE',interface_status:'UNKNOWN',...overrides}
+  }
+
+  test('A UI-15 supplier HTTP outage clears last supplier and retry uses actual backend',async({page})=>{
+    let offline=false
+    const api='**/api/admin/v1/suppliers?*'
+    await page.route(api,route=>route.fulfill({status:offline?503:200,contentType:'application/json',
+      body:offline?JSON.stringify({code:'CI_SUPPLIER_503',message:'synthetic failure'}):
+        JSON.stringify({code:'OK',data:{items:[ciSupplierRow()],total:1}})}))
+    await page.goto(base+'/suppliers')
+    await expect(page.getByText('CI Supplier Alpha',{exact:true})).toBeVisible()
+    offline=true
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('供应商列表读取失败，不能据此判断供应商不存在、可停用或可同步。')).toBeVisible()
+    await expect(page.getByText('CI Supplier Alpha',{exact:true})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'新增供应商'})).toBeDisabled()
+    await page.unroute(api)
+    const loaded=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/suppliers')
+    await page.getByRole('button',{name:'重新查询供应商列表'}).click()
+    expect((await loaded).status()).toBe(200)
+    await expect(page.getByText('供应商列表读取失败，不能据此判断供应商不存在、可停用或可同步。')).toHaveCount(0)
+  })
+
+  test('A UI-15 supplier pause confirmation shows identity and cancellation never writes',async({page})=>{
+    await page.route('**/api/admin/v1/suppliers?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[ciSupplierRow()],total:1}})
+    }))
+    const requests:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/api\/admin\/v1\/suppliers\/970001\/pause$/.test(new URL(r.url()).pathname))requests.push(r.url())})
+    await page.goto(base+'/suppliers')
+    await page.getByRole('button',{name:'暂停',exact:true}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI Supplier Alpha')
+    await expect(box).toContainText('CI-SUPPLIER-A')
+    await expect(box).toContainText('关联采购与服务影响')
+    await box.getByRole('button',{name:'返回检查'}).click()
+    await expect(box).toHaveCount(0)
+    expect(requests).toHaveLength(0)
+  })
+
+  test('A UI-15 supplier status change during confirmation blocks stale original action',async({page})=>{
+    let status='ACTIVE'
+    await page.route('**/api/admin/v1/suppliers?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[ciSupplierRow({status})],total:1}})
+    }))
+    const requests:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/api\/admin\/v1\/suppliers\/970001\/pause$/.test(new URL(r.url()).pathname))requests.push(r.url())})
+    await page.goto(base+'/suppliers')
+    await page.getByRole('button',{name:'暂停',exact:true}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI-SUPPLIER-A')
+    status='PAUSED'
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.locator('.el-table__body')).toContainText('PAUSED')
+    await box.locator('input').fill('CI old supplier status must not mutate')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    await expect(box).toHaveCount(0)
+    expect(requests).toHaveLength(0)
+    await expect(page.getByText('CI Supplier Alpha',{exact:true})).toBeVisible()
+  })
+
+  test('A UI-15 supplier external fetch response identifies task not network success',async({page})=>{
+    await page.route('**/api/admin/v1/suppliers?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[ciSupplierRow()],total:1}})
+    }))
+    const syncRequests:any[]=[]
+    await page.route('**/api/admin/v1/sync-tasks',async route=>{
+      syncRequests.push(route.request().postDataJSON())
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:{taskId:970088}})})
+    })
+    await page.goto(base+'/suppliers')
+    await page.getByRole('button',{name:'获取资源'}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI Supplier Alpha')
+    await box.locator('input').fill('CI verify task request semantics')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('外部资源获取任务已登记（任务ID 970088），请在同步任务详情核对完成/失败与来源证据')).toBeVisible()
+    expect(syncRequests).toHaveLength(1)
+    expect(syncRequests[0]).toMatchObject({sourceType:'SUPPLIER',supplierId:970001,
+      targetPoolId:null,reason:'CI verify task request semantics'})
+    await expect(page.getByText('外部资源同步完成',{exact:false})).toHaveCount(0)
+  })
+
 })
