@@ -49,14 +49,25 @@ public class ExternalDeliveryMapper {
     }
     public boolean linkedCoverageExceedsPurchase(Long purchaseId,OffsetDateTime newExpire){
         return Boolean.TRUE.equals(jdbc.queryForObject("""
-          SELECT EXISTS(SELECT 1 FROM res_reverse_proxy rp
-            LEFT JOIN svc_instance s ON s.id=rp.service_id AND s.deleted=FALSE
-            WHERE rp.purchase_id=? AND rp.deleted=FALSE
-              AND (CAST(? AS timestamptz) IS NULL
-                OR (rp.expire_at IS NOT NULL AND rp.expire_at>CAST(? AS timestamptz))
-                OR (s.id IS NOT NULL AND s.status NOT IN ('TERMINATED','PROVISION_FAILED')
-                    AND (s.expire_at IS NULL OR s.expire_at>CAST(? AS timestamptz)))))
-          """,Boolean.class,purchaseId,newExpire,newExpire,newExpire));
+          SELECT (
+            EXISTS(SELECT 1 FROM res_reverse_proxy rp
+              LEFT JOIN svc_instance s ON s.id=rp.service_id AND s.deleted=FALSE
+              WHERE rp.purchase_id=? AND rp.deleted=FALSE
+                AND (CAST(? AS timestamptz) IS NULL
+                  OR (rp.expire_at IS NOT NULL AND rp.expire_at>CAST(? AS timestamptz))
+                  OR (s.id IS NOT NULL AND s.status NOT IN ('TERMINATED','PROVISION_FAILED')
+                      AND (s.expire_at IS NULL OR s.expire_at>CAST(? AS timestamptz)))))
+            OR EXISTS(SELECT 1 FROM svc_instance s
+              WHERE s.deleted=FALSE
+                AND s.status NOT IN ('TERMINATED','PROVISION_FAILED')
+                AND (s.supplier_purchase_id=?
+                  OR EXISTS(SELECT 1 FROM res_reverse_proxy rp
+                    WHERE rp.id=s.reverse_proxy_id AND rp.purchase_id=? AND rp.deleted=FALSE))
+                AND (CAST(? AS timestamptz) IS NULL
+                  OR s.expire_at IS NULL OR s.expire_at>CAST(? AS timestamptz)))
+          )
+          """,Boolean.class,purchaseId,newExpire,newExpire,newExpire,
+              purchaseId,purchaseId,newExpire,newExpire));
     }
     public int purchaseStatus(Long id,String status,Long actor){return jdbc.update("UPDATE res_supplier_purchase SET status=?,updated_at=now(),updated_by=?,version=version+1 WHERE id=? AND deleted=FALSE",status,actor,id);}
 
