@@ -76,8 +76,7 @@ public class V12BusinessRelationsController {
     public ApiResponse<?> lineServices(@PathVariable Long id,@AuthenticationPrincipal UserPrincipal p) {
         require(p,"resource:read");require(p,"service:read");existing("line",id);
         return ApiResponse.success(result(jdbc.queryForList("""
-          SELECT s.id,s.service_no,s.supplier_purchase_id,rp.purchase_id reverse_proxy_purchase_id,
-                 c.id customer_id,c.customer_name,p.product_name,
+          SELECT s.id,s.service_no,c.id customer_id,c.customer_name,p.product_name,
                  s.product_type,s.status,s.delivery_stage,s.expire_at,
                  EXISTS(SELECT 1 FROM svc_resource_binding b WHERE b.service_id=s.id
                    AND b.resource_type='LINE' AND b.resource_id=? AND b.status='ACTIVE')
@@ -129,7 +128,8 @@ public class V12BusinessRelationsController {
         require(p,"resource:purchase:read");require(p,"service:read");
         existing("purchase",id);
         return ApiResponse.success(result(jdbc.queryForList("""
-          SELECT s.id,s.service_no,c.id customer_id,c.customer_name,p.product_name,
+          SELECT s.id,s.service_no,s.supplier_purchase_id,rp.purchase_id reverse_proxy_purchase_id,
+                 c.id customer_id,c.customer_name,p.product_name,
                  s.product_type,s.status,s.delivery_stage,s.expire_at,
                  rp.id reverse_proxy_id,rp.proxy_no
           FROM svc_instance s JOIN customer c ON c.id=s.customer_id
