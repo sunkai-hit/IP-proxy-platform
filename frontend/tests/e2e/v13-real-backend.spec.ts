@@ -1322,6 +1322,99 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.locator('.metric-grid strong').first()).toHaveText('1')
   })
 
+
+  test('A3 HTTP200 foreign pool identity cannot enable source mutation and retry restores actual pool',async({page})=>{
+    expect(poolId).toBeTruthy()
+    const url='**/api/admin/v1/v12/resource-pools/'+poolId
+    await page.route(url,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({
+      code:'OK',data:{id:Number(poolId)+900000,pool_code:'CI-FOREIGN-POOL',pool_name:'Foreign Pool',
+        ros_count:90,line_count:90,usage:{service_count:90}}
+    })}))
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(['POST','PUT'].includes(r.method())&&new URL(r.url()).pathname.startsWith('/api/admin/v1/v12/resource-pools/'+poolId))
+        writes.push(r.url())
+    })
+    await page.goto(base+'/resource-pools/'+poolId)
+    await expect(page.getByText('资源池详情读取失败，来源、线路数和服务占用均未知，不能依据旧池资料操作。')).toBeVisible()
+    await expect(page.getByText('Foreign Pool')).toHaveCount(0)
+    await expect(page.locator('.metric-grid strong').first()).toHaveText('—')
+    await expect(page.getByRole('button',{name:'添加线路'})).toBeDisabled()
+    await page.unroute(url)
+    const reloaded=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/v12/resource-pools/'+poolId)
+    await page.getByRole('button',{name:'重新加载资源池详情'}).click()
+    expect((await reloaded).status()).toBe(200)
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toBeVisible()
+    await expect(page.getByRole('button',{name:'添加线路'})).toBeEnabled()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A3 malformed HTTP200 source members and candidate records cannot be treated as safe mutations',async({page})=>{
+    expect(poolId).toBeTruthy()
+    await page.goto(base+'/resource-pools/'+poolId)
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toBeVisible()
+    const memberUrl='**/api/admin/v1/v12/resource-pools/'+poolId+'/lines?*'
+    const malformed={code:'OK',data:{total:1,items:[{
+      id:990881,resource_code:'CI-UNVERIFIED-FOREIGN-LINE',line_type:'EXCLUSIVE'
+    }]}}
+    await page.route(memberUrl,route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(malformed)}))
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('资源池线路成员读取失败，不能据此认为没有可用线路或在用成员。')).toBeVisible()
+    await expect(page.getByText('CI-UNVERIFIED-FOREIGN-LINE')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'批量移出'})).toBeDisabled()
+    await page.unroute(memberUrl)
+    await page.getByRole('button',{name:'重新加载线路成员'}).click()
+    await expect(page.getByText('资源池线路成员读取失败，不能据此认为没有可用线路或在用成员。')).toHaveCount(0)
+    const candidateUrl='**/api/admin/v1/v12/resource-pools/'+poolId+'/candidate-lines?*'
+    await page.route(candidateUrl,route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify(malformed)
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{
+      if(r.method()==='POST'&&new URL(r.url()).pathname==='/api/admin/v1/v12/resource-pools/'+poolId+'/lines')
+        writes.push(r.url())
+    })
+    await page.getByRole('button',{name:'添加线路'}).click()
+    await expect(page.getByText('候选线路查询失败，不能加入未核实的成员。')).toBeVisible()
+    await expect(page.getByRole('button',{name:'加入资源池'})).toBeDisabled()
+    await expect(page.getByText('CI-UNVERIFIED-FOREIGN-LINE')).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A3 real PostgreSQL multi-pool source remains linked after forbidden removal of the last active source',async({page})=>{
+    expect(poolId).toBeTruthy()
+    await page.goto(base+'/resource-pools/'+poolId)
+    await expect(page.getByRole('heading',{name:'V12 Shared Pool'})).toBeVisible()
+    const proof=await page.evaluate(async pid=>{
+      const headers={Authorization:'Bearer '+localStorage.getItem('ipproxy_access_token'),'Content-Type':'application/json'}
+      const call=async(path:string,method='GET',body?:any)=>{
+        const r=await fetch('/api/admin/v1'+path,{method,headers,body:body?JSON.stringify(body):undefined})
+        return {status:r.status,data:await r.json()}
+      }
+      const membersBefore=await call('/v12/resource-pools/'+pid+'/lines?page=1&size=20')
+      const ids=(membersBefore.data?.data?.items||[]).map((x:any)=>Number(x.id))
+      if(ids.length!==2)return {phase:'bad-fixture',membersBefore,ids}
+      const linePoolsBefore=await call('/relations/lines/'+ids[0]+'/pools')
+      const denied=await call('/v12/resource-pools/'+pid+'/lines/remove','POST',{
+        lineIds:ids,reason:'CI A3 active-bound pool source cannot be emptied'
+      })
+      const membersAfter=await call('/v12/resource-pools/'+pid+'/lines?page=1&size=20')
+      const linePoolsAfter=await call('/relations/lines/'+ids[0]+'/pools')
+      const audit=await call('/v12/resource-pools/'+pid+'/operations?limit=200')
+      return {phase:'verified',ids,membersBefore,linePoolsBefore,denied,membersAfter,linePoolsAfter,audit}
+    },Number(poolId))
+    expect(proof.phase,JSON.stringify(proof)).toBe('verified')
+    for(const data of [proof.membersBefore,proof.membersAfter,proof.linePoolsBefore,proof.linePoolsAfter,proof.audit])
+      expect(data.status,JSON.stringify(data)).toBe(200)
+    expect(proof.denied.status,JSON.stringify(proof.denied)).toBe(400)
+    expect(proof.denied.data.code).toBe('POOL_LAST_SOURCE_IN_USE')
+    expect(proof.membersAfter.data.data).toEqual(proof.membersBefore.data.data)
+    expect(proof.linePoolsBefore.data.data.items).toHaveLength(2)
+    expect(proof.linePoolsAfter.data.data).toEqual(proof.linePoolsBefore.data.data)
+    expect(proof.audit.data.data).toEqual(expect.any(Array))
+  })
+
   test('A service credential reset confirmation cannot retarget to a different service via SPA route', async ({ page }) => {
     expect(serviceId).toBeTruthy()
     await page.goto(base+'/services/'+serviceId)
