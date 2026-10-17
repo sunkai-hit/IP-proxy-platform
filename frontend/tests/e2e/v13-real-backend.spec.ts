@@ -721,8 +721,8 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.goto(base+'/customers')
     await expect(page.getByText('客户类型/负责人选项读取失败，列表仍可查询；保存客户暂不可用。')).toBeVisible()
     await expect(page.getByText('V12 CI Customer')).toBeVisible()
-    await page.getByRole('button',{name:'新增客户'}).click()
-    await expect(page.getByRole('dialog').getByRole('button',{name:'保存'})).toBeDisabled()
+    await expect(page.getByRole('button',{name:'新增客户'})).toBeDisabled()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 
   test('customer KYC details cannot display stale sensitive application material after HTTP outage', async ({ page }) => {
