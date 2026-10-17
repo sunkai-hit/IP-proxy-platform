@@ -85,6 +85,12 @@ test('read-only user cannot view sensitive subtables, execute changes or bypass 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'CI viewer cannot disable customer' })
       }),
+      check('/api/admin/v1/customer-auth?page=1&size=20'),
+      check('/api/admin/v1/customer-auth/1'),
+      check('/api/admin/v1/customer-auth/1/approve', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ opinion: 'CI viewer cannot approve KYC' })
+      }),
       check('/api/admin/v1/v12/resources/lines'),
       check('/api/admin/v1/v12/resource-pools'),
       check('/api/admin/v1/v12/resource-pools/1/operations'),
