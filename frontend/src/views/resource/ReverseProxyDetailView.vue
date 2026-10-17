@@ -5,39 +5,67 @@ import {ElMessage,ElMessageBox} from 'element-plus'
 import {externalDeliveryApi} from '@/api/externalDelivery'
 import {useAuthStore} from '@/stores/auth'
 
-const route=useRoute(),router=useRouter(),auth=useAuthStore();let id=Number(route.params.id)
-const row=ref<any>({}),loading=ref(false),busy=ref(false),loadError=ref(false),requestVersion=ref(0)
-const data=(r:any)=>r.data.data,fmt=(v:any)=>v==null||v===''?'—':String(v)
+const route=useRoute(),router=useRouter(),auth=useAuthStore()
+let id=Number(route.params.id)
+const row=ref<any>({}),loading=ref(false),busy=ref(false)
+const loadError=ref(false),requestVersion=ref(0)
+const data=(r:any)=>r.data.data
+const fmt=(v:any)=>v==null||v===''?'—':String(v)
 const mask=(v:any)=>v?('••••'+String(v).slice(-4)):'—'
+const validId=(value:any)=>Number.isSafeInteger(Number(value))&&Number(value)>0
+function matches(record:any,target:number,identity?:{no:string,status:string,customerId:number,purchaseId:number}){
+ if(!record||Number(record.id)!==target||!String(record.proxy_no||'').trim())return false
+ if(!identity)return true
+ return String(record.proxy_no)===identity.no&&String(record.status||'')===identity.status&&
+   Number(record.customer_id||0)===identity.customerId&&Number(record.purchase_id||0)===identity.purchaseId
+}
 async function load(){
  const version=++requestVersion.value,proxyId=id
  loading.value=true;loadError.value=false;row.value={}
- try{const result=data(await externalDeliveryApi.reverseProxy(proxyId))||{};if(version===requestVersion.value)row.value=result}
- catch{if(version===requestVersion.value){loadError.value=true;row.value={}}}
- finally{if(version===requestVersion.value)loading.value=false}
+ if(!validId(proxyId)){loadError.value=true;loading.value=false;return}
+ try{
+  const record=data(await externalDeliveryApi.reverseProxy(proxyId))
+  if(version!==requestVersion.value||proxyId!==id)return
+  if(!matches(record,proxyId))throw new Error('PROXY_DETAIL_IDENTITY_MISMATCH')
+  row.value=record
+ }catch{
+  if(version===requestVersion.value&&proxyId===id){loadError.value=true;row.value={}}
+ }finally{if(version===requestVersion.value&&proxyId===id)loading.value=false}
 }
 async function action(kind:'apply'|'test'|'disable'){
- if(loading.value||busy.value||loadError.value||!row.value.proxy_no)return
+ const proxyId=id,version=requestVersion.value,record=row.value
+ if(loading.value||busy.value||loadError.value||!matches(record,proxyId))return
  const allowed=kind==='test'?'resource:reverse-proxy:test':'resource:reverse-proxy:status'
  if(!auth.hasPermission(allowed))return
- const proxyId=id,version=requestVersion.value
+ const identity={no:String(record.proxy_no),status:String(record.status||''),
+   customerId:Number(record.customer_id||0),purchaseId:Number(record.purchase_id||0)}
  const title={apply:'应用平台代理配置',test:'验证平台代理连通性',disable:'真实停用平台代理入口'}[kind]
- const {value}=await ElMessageBox.prompt('请输入操作原因。没有真实网关验证的返回将被后端拒绝，配置登记状态不等于成功。',title,
-  {inputValidator:(v:string)=>!!String(v||'').trim()||'原因不能为空'})
- if(id!==proxyId||version!==requestVersion.value)return
+ // Single flight starts before the impact confirmation, not after it.
  busy.value=true
  try{
+  const {value}=await ElMessageBox.prompt(
+   `目标代理：${identity.no}（ID ${proxyId}），当前状态：${identity.status}；客户 #${identity.customerId}，采购 #${identity.purchaseId}。请核实关联客户/采购/服务影响。无真实网关验证回执时后台必须拒绝。`,
+   title,{inputValidator:(v:string)=>!!String(v||'').trim()||'原因不能为空',
+     confirmButtonText:'确认提交',cancelButtonText:'返回核对'})
+  if(id!==proxyId||version!==requestVersion.value||loading.value||loadError.value||
+     !auth.hasPermission(allowed)||!matches(row.value,proxyId,identity)){
+   ElMessage.warning('确认期间代理身份、采购/客户归属、状态或详情来源已变化，未提交旧操作')
+   return
+  }
   if(kind==='apply')await externalDeliveryApi.applyReverseProxy(proxyId,String(value).trim())
   if(kind==='test')await externalDeliveryApi.testReverseProxy(proxyId,String(value).trim())
   if(kind==='disable')await externalDeliveryApi.disableReverseProxy(proxyId,String(value).trim())
   if(id!==proxyId||version!==requestVersion.value)return
-  ElMessage.success('管理请求已获得后端返回；实际网关可用性仍以真实探测回执为准')
+  ElMessage.warning('管理请求已返回，必须独立核实真实网关动作、探测结果及审计，不代表网络交付成功')
   await load()
- }catch{if(id===proxyId&&version===requestVersion.value)ElMessage.error('平台代理操作未确认成功，不能据此认定已应用或已停用')}
- finally{busy.value=false}
+ }catch(e:any){
+  if(e==='cancel'||e==='close')return
+  if(id===proxyId&&version===requestVersion.value)
+   ElMessage.error('平台代理操作未确认成功，不能据此认定已应用或已停用')
+ }finally{busy.value=false}
 }
-watch(()=>route.params.id,()=>{id=Number(route.params.id);load()})
-onMounted(load)
+watch(()=>route.params.id,()=>{id=Number(route.params.id);void load()})
+onMounted(()=>{void load()})
 </script>
 <template>
 <div class="page">
@@ -48,10 +76,10 @@ onMounted(load)
    <p>供应商采购 → 平台反向代理 → 客户服务。代理配置状态和真实网络可连接性须分开核对。</p>
   </div>
   <div class="actions">
-   <el-button @click="load">刷新</el-button>
-   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:test')" :loading="busy" @click="action('test')">真实连通性验证</el-button>
-   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='ACTIVE'" :loading="busy" type="primary" @click="action('apply')">应用配置</el-button>
-   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='DISABLED'" :loading="busy" type="danger" plain @click="action('disable')">受控停用</el-button>
+   <el-button :disabled="loading" @click="load">刷新</el-button>
+   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:test')" :loading="busy" :disabled="busy" @click="action('test')">真实连通性验证</el-button>
+   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='ACTIVE'" :loading="busy" :disabled="busy" type="primary" @click="action('apply')">应用配置</el-button>
+   <el-button v-if="!loadError&&!loading&&row.proxy_no&&auth.hasPermission('resource:reverse-proxy:status')&&row.status!=='DISABLED'" :loading="busy" :disabled="busy" type="danger" plain @click="action('disable')">受控停用</el-button>
   </div>
  </div>
  <el-alert type="warning" :closable="false" show-icon
@@ -64,16 +92,16 @@ onMounted(load)
    <el-descriptions-item label="协议">{{fmt(row.protocol_code)}}</el-descriptions-item>
    <el-descriptions-item label="登记状态"><el-tag :type="row.status==='ACTIVE'?'success':'warning'">{{fmt(row.status)}}</el-tag></el-descriptions-item>
    <el-descriptions-item label="采购上游">
-    <el-button v-if="auth.hasPermission('resource:purchase:read')" link type="primary" @click="router.push('/supplier-purchases/'+row.purchase_id)">{{fmt(row.purchase_no)}}</el-button>
+    <el-button v-if="validId(row.purchase_id)&&auth.hasPermission('resource:purchase:read')" link type="primary" @click="router.push('/supplier-purchases/'+row.purchase_id)">{{fmt(row.purchase_no)}}</el-button>
     <span v-else>{{fmt(row.purchase_no)}}</span>
    </el-descriptions-item>
    <el-descriptions-item label="供应商">{{fmt(row.supplier_name)}}</el-descriptions-item>
    <el-descriptions-item label="客户">
-    <el-button v-if="auth.hasPermission('customer:read')" link type="primary" @click="router.push('/customers/'+row.customer_id)">{{fmt(row.customer_name)}}</el-button>
+    <el-button v-if="validId(row.customer_id)&&auth.hasPermission('customer:read')" link type="primary" @click="router.push('/customers/'+row.customer_id)">{{fmt(row.customer_name)}}</el-button>
     <span v-else>{{fmt(row.customer_name)}}</span>
    </el-descriptions-item>
    <el-descriptions-item label="服务">
-    <el-button v-if="row.service_id&&auth.hasPermission('service:read')" link type="primary" @click="router.push('/services/'+row.service_id)">{{fmt(row.service_no)}}</el-button>
+    <el-button v-if="validId(row.service_id)&&auth.hasPermission('service:read')" link type="primary" @click="router.push('/services/'+row.service_id)">{{fmt(row.service_no)}}</el-button>
     <span v-else>{{fmt(row.service_no)}}</span>
    </el-descriptions-item>
    <el-descriptions-item label="平台入口">{{fmt(row.platform_host)}}:{{fmt(row.platform_port)}}</el-descriptions-item>
