@@ -1395,12 +1395,15 @@ test.describe('V1.3 actual browser management-console smoke', () => {
       const membersBefore=await call('/v12/resource-pools/'+pid+'/lines?page=1&size=20')
       const ids=(membersBefore.data?.data?.items||[]).map((x:any)=>Number(x.id))
       if(ids.length!==2)return {phase:'bad-fixture',membersBefore,ids}
-      const linePoolsBefore=await call('/relations/lines/'+ids[0]+'/pools')
+      const firstLinePools=await call('/relations/lines/'+ids[0]+'/pools')
+      const secondLinePools=await call('/relations/lines/'+ids[1]+'/pools')
+      const sharedLineId=firstLinePools.data?.data?.items?.length===2?ids[0]:ids[1]
+      const linePoolsBefore=sharedLineId===ids[0]?firstLinePools:secondLinePools
       const denied=await call('/v12/resource-pools/'+pid+'/lines/remove','POST',{
         lineIds:ids,reason:'CI A3 active-bound pool source cannot be emptied'
       })
       const membersAfter=await call('/v12/resource-pools/'+pid+'/lines?page=1&size=20')
-      const linePoolsAfter=await call('/relations/lines/'+ids[0]+'/pools')
+      const linePoolsAfter=await call('/relations/lines/'+sharedLineId+'/pools')
       const audit=await call('/v12/resource-pools/'+pid+'/operations?limit=200')
       return {phase:'verified',ids,membersBefore,linePoolsBefore,denied,membersAfter,linePoolsAfter,audit}
     },Number(poolId))
