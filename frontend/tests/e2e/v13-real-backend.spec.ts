@@ -2361,7 +2361,9 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     const box=page.locator('.el-message-box').last()
     await expect(box).toContainText('CI-SUPPLIER-A')
     status='PAUSED'
-    await page.getByRole('button',{name:'查询'}).click()
+    // A modal blocks normal clicks, but the list can still refresh via a
+    // programmatic event (or another module) while confirmation is open.
+    await page.evaluate(()=>{(document.querySelector('.filters .el-button') as HTMLElement)?.click()})
     await expect(page.locator('.el-table__body')).toContainText('PAUSED')
     await box.locator('input').fill('CI old supplier status must not mutate')
     await box.getByRole('button',{name:'确认提交'}).click()
