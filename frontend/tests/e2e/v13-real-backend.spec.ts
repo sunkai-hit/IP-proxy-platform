@@ -729,7 +729,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
       status:200,contentType:'application/json',
       body:JSON.stringify({code:'OK',data:{items:[{id:900991,auth_no:'CI-KYC-900991',
-        customer_name:'CI Customer',status:'PENDING'}],total:1}}),
+        customer_id:900801,customer_name:'CI Customer',status:'PENDING'}],total:1}}),
     }))
     await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
       status:503,contentType:'application/json',
@@ -2999,6 +2999,144 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     expect(result.calls.filter((x:any)=>x.status===400)).toHaveLength(1)
     expect(['CUSTOMER_STATUS_INVALID','CUSTOMER_STATUS_CONFLICT']).toContain(result.calls.find((x:any)=>x.status===400)?.code)
     expect(result.state).toBe('FROZEN')
+  })
+
+
+  function ciKycApplication(extra:any={}){
+    return {id:900991,auth_no:'CI-KYC-900991',customer_id:900801,customer_name:'CI KYC Owner',
+      customer_code:'CI-CUSTOMER-900801',auth_type_code:'ENTERPRISE',status:'PENDING',
+      submitted_data:{subjectName:'CI KYC Owner',documentNo:'CI-PRIVATE-1234'},attachment_refs:[],
+      ...extra}
+  }
+  async function ciKycList(page:any,state:()=>any=()=>ciKycApplication()){
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[state()],total:1}})
+    }))
+  }
+
+  test('A UI-04 HTTP200 foreign KYC detail is rejected without leaking its identity or document',async({page})=>{
+    await ciKycList(page)
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:ciKycApplication({
+        id:900992,auth_no:'CI-KYC-OTHER',customer_id:900802,customer_name:'FOREIGN KYC OWNER',
+        submitted_data:{subjectName:'FOREIGN SECRET NAME',documentNo:'FOREIGN-DOCUMENT-SECRET'}
+      })})
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'详情'}).click()
+    await expect(page.getByText('认证详情读取失败，不能确认资料、审核状态或历史意见。')).toBeVisible()
+    await expect(page.getByText('FOREIGN SECRET NAME')).toHaveCount(0)
+    await expect(page.getByText('FOREIGN KYC OWNER')).toHaveCount(0)
+    await expect(page.getByText('证件/主体编号',{exact:true})).toHaveCount(0)
+  })
+
+  test('A UI-04 cancel review never posts and locks other review controls',async({page})=>{
+    await ciKycList(page)
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customer-auth\/900991\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'通过',exact:true}).click()
+    await expect(page.getByText(/认证申请：CI-KYC-900991/)).toBeVisible()
+    await expect(page.getByRole('button',{name:'驳回',exact:true})).toBeDisabled()
+    await page.getByRole('button',{name:'取消审核'}).click()
+    await expect(page.locator('.el-message-box')).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-04 externally changed review status is rejected before any write',async({page})=>{
+    await ciKycList(page)
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:ciKycApplication({status:'REVIEWING'})})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customer-auth\/900991\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'通过',exact:true}).click()
+    await page.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('认证申请详情或审核状态已变化，请重新核对后再审核')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-04 review preflight failure cannot turn an unverified application into approved',async({page})=>{
+    await ciKycList(page)
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_KYC_PREFLIGHT_DOWN',message:'synthetic preflight failure'})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customer-auth\/900991\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'通过',exact:true}).click()
+    await page.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('认证审核或审核前核对未确认成功；请回查申请、状态和审计')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-04 malformed HTTP200 KYC list is unknown, not an empty authenticated ledger',async({page})=>{
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:null,total:0}})
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('客户认证列表读取失败，不能据此认为没有待审核申请。')).toBeVisible()
+    await expect(page.getByText('认证列表读取失败',{exact:true})).toBeVisible()
+    await expect(page.getByRole('button',{name:'通过',exact:true})).toHaveCount(0)
+  })
+
+
+  test('A UI-04 real PostgreSQL KYC list, detail and customer subtree return redacted material only',async({page})=>{
+    await page.goto(base+'/customer-auth')
+    const report=await page.evaluate(async()=>{
+      const token=localStorage.getItem('ipproxy_access_token')
+      const headers={Authorization:'Bearer '+token,'Content-Type':'application/json'}
+      async function invoke(url:string,method='GET',payload?:any){
+        const r=await fetch(url,{method,headers,body:payload?JSON.stringify(payload):undefined})
+        return {status:r.status,body:await r.json()}
+      }
+      const name='CI KYC redaction '+Date.now()
+      const created=await invoke('/api/admin/v1/customers','POST',{
+        customerName:name,customerTypeCode:'ENTERPRISE',contactName:'CI privacy test',
+        remark:'CI-only disposable redaction verification'
+      })
+      const id=Number(created.body?.data?.id)
+      if(created.status!==200||!Number.isSafeInteger(id))return {created}
+      const secret='CI_PRIVATE_KYC_DOCUMENT_987654321',reference='CI_PRIVATE_KYC_ATTACHMENT_REF'
+      const auth=await invoke('/api/admin/v1/customers/'+id+'/auth','POST',{
+        authTypeCode:'ENTERPRISE',submittedData:{subjectName:name,documentNo:secret},
+        attachmentRefs:[reference]
+      })
+      const authId=Number(auth.body?.data?.id)
+      if(auth.status!==200||!Number.isSafeInteger(authId))return {created,auth}
+      const detail=await invoke('/api/admin/v1/customer-auth/'+authId)
+      const list=await invoke('/api/admin/v1/customer-auth?page=1&size=20&customerId='+id)
+      const customer=await invoke('/api/admin/v1/customers/'+id)
+      const noSecrets=(r:any)=>{
+        const text=JSON.stringify(r.body)
+        return !text.includes(secret)&&!text.includes(reference)&&
+          !text.includes('submitted_data')&&!text.includes('attachment_refs')
+      }
+      return {created:created.status,auth:auth.status,detail:detail.status,list:list.status,
+        customer:customer.status,allRedacted:[detail,list,customer].every(noSecrets),
+        masked:detail.body?.data?.document_number_masked,
+        attachments:detail.body?.data?.attachment_count,
+        listCount:list.body?.data?.items?.length,
+        customerCount:customer.body?.data?.authRecords?.length}
+    })
+    expect(report.created,JSON.stringify(report)).toBe(200)
+    expect(report.auth,JSON.stringify(report)).toBe(200)
+    expect([report.detail,report.list,report.customer]).toEqual([200,200,200])
+    expect(report.allRedacted,JSON.stringify(report)).toBe(true)
+    expect(report.masked).toContain('••••')
+    expect(report.attachments).toBe(1)
+    expect(report.listCount).toBe(1)
+    expect(report.customerCount).toBe(1)
   })
 
 })
