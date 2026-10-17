@@ -2396,4 +2396,95 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('外部资源同步完成',{exact:false})).toHaveCount(0)
   })
 
+  function ciDomainRow(overrides:Record<string,any>={}){
+    return {id:980014,domain_name:'ci-v13-domain.example.invalid',line_name:'CI-TEST-LINE',
+      line_id:300,current_ip_id:400,current_ip:'203.0.113.4',usage_type_code:'TUNNEL_ENTRY',
+      update_mode:'AUTO',status:'PENDING_UPDATE',last_updated_at:'2026-10-17T00:00:00Z',
+      last_error:'waiting for DNS adapter',...overrides}
+  }
+
+  test('A UI-14 domain 503 clears old domain and retry returns actual PostgreSQL list',async({page})=>{
+    let down=false
+    await page.route('**/api/admin/v1/domains?*',route=>route.fulfill({status:down?503:200,contentType:'application/json',
+      body:down?JSON.stringify({code:'CI_DOMAIN_503',message:'synthetic outage'}):
+       JSON.stringify({code:'OK',data:{items:[ciDomainRow()],total:1}})}))
+    await page.goto(base+'/domains')
+    await expect(page.getByText('ci-v13-domain.example.invalid')).toBeVisible()
+    down=true
+    await page.getByRole('button',{name:'查询'}).click()
+    await expect(page.getByText('域名列表读取失败，不能据此认定没有配置域名或DNS已正常。')).toBeVisible()
+    await expect(page.getByText('ci-v13-domain.example.invalid')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'新增域名'})).toBeDisabled()
+    await page.unroute('**/api/admin/v1/domains?*')
+    const request=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/domains')
+    await page.getByRole('button',{name:'重新查询域名'}).click()
+    expect((await request).status()).toBe(200)
+    await expect(page.getByText('域名列表读取失败，不能据此认定没有配置域名或DNS已正常。')).toHaveCount(0)
+  })
+
+  test('A UI-14 refresh confirmation identifies domain and cancel cannot submit a POST',async({page})=>{
+    await page.route('**/api/admin/v1/domains?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{items:[ciDomainRow()],total:1}})}))
+    const actions:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/domains\/980014\/refresh$/.test(new URL(r.url()).pathname))
+      actions.push(r.url())})
+    await page.goto(base+'/domains')
+    await page.getByRole('button',{name:'刷新目标IP'}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('ci-v13-domain.example.invalid')
+    await expect(box).toContainText('ID 980014')
+    await expect(box).toContainText('DNS适配器尚未签收')
+    await box.getByRole('button',{name:'返回核对'}).click()
+    await expect(box).toHaveCount(0)
+    expect(actions).toHaveLength(0)
+  })
+
+  test('A UI-14 changed domain state during impact confirmation blocks original refresh target',async({page})=>{
+    let state='PENDING_UPDATE'
+    await page.route('**/api/admin/v1/domains?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{items:[ciDomainRow({status:state})],total:1}})}))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/domains\/980014\/refresh$/.test(new URL(r.url()).pathname))
+      writes.push(r.url())})
+    await page.goto(base+'/domains')
+    await page.getByRole('button',{name:'刷新目标IP'}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('ID 980014')
+    state='FAILED'
+    await page.evaluate(()=>{(document.querySelector('.filters .el-button') as HTMLElement)?.click()})
+    await expect(page.locator('.el-table__body')).toContainText('FAILED')
+    await box.locator('input').fill('CI stale DNS refresh should not submit')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    await expect(box).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-14 management refresh only accepts pending update ack and never claims live DNS',async({page})=>{
+    await page.route('**/api/admin/v1/domains?*',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:{items:[ciDomainRow()],total:1}})}))
+    let invalid=true
+    const refreshUrl='**/api/admin/v1/domains/980014/refresh'
+    await page.route(refreshUrl,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:invalid?
+        {status:'NORMAL',targetIpId:405,message:'synthetic DNS success - not verified'}:
+        {status:'PENDING_UPDATE',targetIpId:405,message:'management target only'}})}))
+    await page.goto(base+'/domains')
+    await page.getByRole('button',{name:'刷新目标IP'}).click()
+    let box=page.locator('.el-message-box').last()
+    await box.locator('input').fill('CI check fake DNS success')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('域名刷新或管理面回执未确认成功；请核对原域名与审计后再重试，DNS状态仍未知')).toBeVisible()
+    invalid=false
+    await page.getByRole('button',{name:'刷新目标IP'}).click()
+    box=page.locator('.el-message-box').last()
+    await box.locator('input').fill('CI check pending DNS only')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('平台目标IP刷新请求已返回（待外部DNS更新），不代表真实DNS已生效；请核对任务与域名详情')).toBeVisible()
+    await expect(page.getByText('外部DNS已生效',{exact:true})).toHaveCount(0)
+  })
+
 })
