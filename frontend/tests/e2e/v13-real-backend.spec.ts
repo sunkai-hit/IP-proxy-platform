@@ -3001,4 +3001,95 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     expect(result.state).toBe('FROZEN')
   })
 
+
+  function ciKycApplication(extra:any={}){
+    return {id:900991,auth_no:'CI-KYC-900991',customer_id:900801,customer_name:'CI KYC Owner',
+      customer_code:'CI-CUSTOMER-900801',auth_type_code:'ENTERPRISE',status:'PENDING',
+      submitted_data:{subjectName:'CI KYC Owner',documentNo:'CI-PRIVATE-1234'},attachment_refs:[],
+      ...extra}
+  }
+  async function ciKycList(page:any,state:()=>any=()=>ciKycApplication()){
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[state()],total:1}})
+    }))
+  }
+
+  test('A UI-04 HTTP200 foreign KYC detail is rejected without leaking its identity or document',async({page})=>{
+    await ciKycList(page)
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:ciKycApplication({
+        id:900992,auth_no:'CI-KYC-OTHER',customer_id:900802,customer_name:'FOREIGN KYC OWNER',
+        submitted_data:{subjectName:'FOREIGN SECRET NAME',documentNo:'FOREIGN-DOCUMENT-SECRET'}
+      })})
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'详情'}).click()
+    await expect(page.getByText('认证详情读取失败，不能确认资料、审核状态或历史意见。')).toBeVisible()
+    await expect(page.getByText('FOREIGN SECRET NAME')).toHaveCount(0)
+    await expect(page.getByText('FOREIGN KYC OWNER')).toHaveCount(0)
+    await expect(page.getByText('证件/主体编号',{exact:true})).toHaveCount(0)
+  })
+
+  test('A UI-04 cancel review never posts and locks other review controls',async({page})=>{
+    await ciKycList(page)
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\\/customer-auth\\/900991\\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'通过',exact:true}).click()
+    await expect(page.getByText(/认证申请：CI-KYC-900991/)).toBeVisible()
+    await expect(page.getByRole('button',{name:'驳回',exact:true})).toBeDisabled()
+    await page.getByRole('button',{name:'取消审核'}).click()
+    await expect(page.locator('.el-message-box')).toHaveCount(0)
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-04 edited list during review prompt cannot post to stale application',async({page})=>{
+    let newer=false
+    await ciKycList(page,()=>ciKycApplication({status:newer?'REVIEWING':'PENDING'}))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\\/customer-auth\\/900991\\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'通过',exact:true}).click()
+    newer=true
+    const refreshed=page.waitForResponse(r=>r.url().includes('/api/admin/v1/customer-auth?')&&r.status()===200)
+    await page.evaluate(()=>{(document.querySelector('.filters button') as HTMLButtonElement)?.click()})
+    await refreshed
+    await expect(page.locator('.el-table__body')).toContainText('REVIEWING')
+    await page.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('审核确认期间申请身份、状态或列表已变化，未提交操作')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-04 review preflight failure cannot turn an unverified application into approved',async({page})=>{
+    await ciKycList(page)
+    await page.route('**/api/admin/v1/customer-auth/900991',route=>route.fulfill({
+      status:503,contentType:'application/json',
+      body:JSON.stringify({code:'CI_KYC_PREFLIGHT_DOWN',message:'synthetic preflight failure'})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\\/customer-auth\\/900991\\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('CI-KYC-900991')).toBeVisible()
+    await page.getByRole('button',{name:'通过',exact:true}).click()
+    await page.getByRole('button',{name:'确认提交'}).click()
+    await expect(page.getByText('认证审核或审核前核对未确认成功；请回查申请、状态和审计')).toBeVisible()
+    expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-04 malformed HTTP200 KYC list is unknown, not an empty authenticated ledger',async({page})=>{
+    await page.route('**/api/admin/v1/customer-auth?*',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:null,total:0}})
+    }))
+    await page.goto(base+'/customer-auth')
+    await expect(page.getByText('客户认证列表读取失败，不能据此认为没有待审核申请。')).toBeVisible()
+    await expect(page.getByText('认证列表读取失败',{exact:true})).toBeVisible()
+    await expect(page.getByRole('button',{name:'通过',exact:true})).toHaveCount(0)
+  })
+
 })
