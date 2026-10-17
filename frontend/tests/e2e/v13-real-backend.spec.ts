@@ -3036,7 +3036,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
   test('A UI-04 cancel review never posts and locks other review controls',async({page})=>{
     await ciKycList(page)
     const writes:string[]=[]
-    page.on('request',r=>{if(r.method()==='POST'&&/\\/customer-auth\\/900991\\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customer-auth\/900991\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
     await page.goto(base+'/customer-auth')
     await expect(page.getByText('CI-KYC-900991')).toBeVisible()
     await page.getByRole('button',{name:'通过',exact:true}).click()
@@ -3051,7 +3051,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     let newer=false
     await ciKycList(page,()=>ciKycApplication({status:newer?'REVIEWING':'PENDING'}))
     const writes:string[]=[]
-    page.on('request',r=>{if(r.method()==='POST'&&/\\/customer-auth\\/900991\\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customer-auth\/900991\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
     await page.goto(base+'/customer-auth')
     await expect(page.getByText('CI-KYC-900991')).toBeVisible()
     await page.getByRole('button',{name:'通过',exact:true}).click()
@@ -3072,7 +3072,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
       body:JSON.stringify({code:'CI_KYC_PREFLIGHT_DOWN',message:'synthetic preflight failure'})
     }))
     const writes:string[]=[]
-    page.on('request',r=>{if(r.method()==='POST'&&/\\/customer-auth\\/900991\\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    page.on('request',r=>{if(r.method()==='POST'&&/\/customer-auth\/900991\/(approve|reject)/.test(new URL(r.url()).pathname))writes.push(r.url())})
     await page.goto(base+'/customer-auth')
     await expect(page.getByText('CI-KYC-900991')).toBeVisible()
     await page.getByRole('button',{name:'通过',exact:true}).click()
