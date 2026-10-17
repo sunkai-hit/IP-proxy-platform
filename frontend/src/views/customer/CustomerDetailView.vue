@@ -42,11 +42,12 @@ async function load(){
   if(cred.status==='fulfilled')credentials.value=cred.value?.data?.data||[]
   else credentialError.value=true
   if(auth.hasPermission('order:read')){
-   const items=ord.status==='fulfilled'?ord.value?.data?.data?.items:null
+   const payload=ord.status==='fulfilled'?ord.value?.data?.data:null
+   const items=payload?.items
    if(!ownsRows(items,customerId,'order_no')){
     ordersError.value=true;orders.value=[]
    }else{
-    orders.value=items;ordersTruncated.value=!!ord.value?.data?.data?.truncated
+    orders.value=items;ordersTruncated.value=!!payload?.truncated
    }
   }
  }catch{
