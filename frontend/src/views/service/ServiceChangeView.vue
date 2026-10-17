@@ -8,6 +8,8 @@ import {useAuthStore} from '@/stores/auth'
 const route=useRoute(),router=useRouter(),auth=useAuthStore()
 const loading=ref(false),saving=ref(false),confirming=ref(false),loadError=ref(false),serviceLoadVersion=ref(0),services=ref<any[]>([]),paidRenewalOrders=ref<any[]>([]),result=ref<any>(null)
 const paidTermDays=ref<number|null>(null),renewOrderError=ref('')
+const renewalLookupLoading=ref(false),renewalOrderChecking=ref(false)
+let renewalLookupVersion=0,renewalDetailVersion=0
 const dayMs=24*60*60*1000
 function parsedDate(value:any){const time=Date.parse(String(value||''));return Number.isFinite(time)?time:null}
 const renewalImpact=computed(()=>{
@@ -38,13 +40,16 @@ const current=computed(()=>services.value.find(s=>s.id===form.serviceId)||null)
 const actionLabels:Record<string,string>={renew:'续费',suspend:'暂停',resume:'恢复',terminate:'终止'}
 const canAct=computed(()=>auth.hasPermission('service:change')&&
  (form.action==='renew'?auth.hasPermission('service:renew'):auth.hasPermission('service:status')))
-const blocked=computed(()=>loading.value||saving.value||confirming.value||loadError.value||!current.value||!canAct.value||!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(
+const blocked=computed(()=>loading.value||saving.value||confirming.value||loadError.value||renewalLookupLoading.value||renewalOrderChecking.value||!!renewOrderError.value||!current.value||!canAct.value||!form.serviceId||!form.reason.trim()||(form.action==='renew'&&(
  form.days<1||!form.renewalOrderId||!auth.hasPermission('service:renew')||
  paidTermDays.value===null||form.days!==paidTermDays.value||!!renewalImpact.value.blocker
 )))
 const warning=computed(()=>current.value?.delivery_stage!=='VERIFIED'?'当前管理面可能尚未完成真实数据面验证；操作返回不等于客户真实可访问。':'请确认变更对客户使用与占用出口的影响。')
 async function load(){
  const version=++serviceLoadVersion.value
+ // Invalidate in-flight paid-order and detail replies BEFORE starting the service refresh.
+ ++renewalLookupVersion;++renewalDetailVersion
+ renewalLookupLoading.value=false;renewalOrderChecking.value=false
  loading.value=true;loadError.value=false;services.value=[]
  paidRenewalOrders.value=[];form.renewalOrderId=null;paidTermDays.value=null
  renewOrderError.value=''
@@ -69,12 +74,14 @@ async function reloadServices(){
  await load()
  if(!loadError.value)await loadRenewalOrders()
 }
-let renewalLookupVersion=0
 async function loadRenewalOrders(){
  const version=++renewalLookupVersion
+ ++renewalDetailVersion;renewalOrderChecking.value=false
  const serviceId=Number(form.serviceId)
  paidRenewalOrders.value=[];form.renewalOrderId=null;paidTermDays.value=null;renewOrderError.value=''
+ renewalLookupLoading.value=false
  if(form.action!=='renew'||loadError.value||loading.value||!auth.hasPermission('order:read')||!current.value)return
+ renewalLookupLoading.value=true
  try{
   const d=data(await businessRelationsApi.paidRenewalOrders(serviceId))
   if(version!==renewalLookupVersion||Number(form.serviceId)!==serviceId||form.action!=='renew')return
@@ -90,16 +97,18 @@ async function loadRenewalOrders(){
    renewOrderError.value='已付款续费订单列表读取失败，不能据此认为没有可用续费订单'
    ElMessage.warning('无法读取已付款的续费订单，请检查订单查询权限')
   }
- }
+ }finally{if(version===renewalLookupVersion)renewalLookupLoading.value=false}
 }
 async function selectRenewalOrder(){
+ const version=++renewalDetailVersion
  const orderId=Number(form.renewalOrderId)
  const serviceId=Number(form.serviceId)
- paidTermDays.value=null;renewOrderError.value=''
- if(!orderId||form.action!=='renew')return
+ paidTermDays.value=null;renewOrderError.value='';renewalOrderChecking.value=false
+ if(!orderId||form.action!=='renew'||!paidRenewalOrders.value.some(o=>Number(o.id)===orderId))return
+ renewalOrderChecking.value=true
  try{
   const order=data(await orderServiceApi.order(orderId))
-  if(Number(form.renewalOrderId)!==orderId||Number(form.serviceId)!==serviceId||form.action!=='renew')return
+  if(version!==renewalDetailVersion||Number(form.renewalOrderId)!==orderId||Number(form.serviceId)!==serviceId||form.action!=='renew')return
   if(order?.order_type!=='RENEW'||order?.payment_status!=='PAID_CONFIRMED'||
     order?.status!=='PENDING_PROVISION'||Number(order?.renewal_service_id)!==Number(form.serviceId)||
     Number(order?.customer_id)!==Number(current.value?.customer_id)){
@@ -116,9 +125,9 @@ async function selectRenewalOrder(){
   paidTermDays.value=days
   form.days=days
  }catch{
-  if(Number(form.renewalOrderId)===orderId&&Number(form.serviceId)===serviceId&&form.action==='renew')
+  if(version===renewalDetailVersion&&Number(form.renewalOrderId)===orderId&&Number(form.serviceId)===serviceId&&form.action==='renew')
    renewOrderError.value='无法确认续费订单套餐期限快照，必须核对订单详情'
- }
+ }finally{if(version===renewalDetailVersion)renewalOrderChecking.value=false}
 }
 async function submit(){
   if(blocked.value||confirming.value){ElMessage.warning('请先确认服务、权限、订单与操作原因');return}
@@ -187,7 +196,7 @@ onMounted(reloadServices)
 </script>
 <template>
   <div class="page">
-    <div class="head"><div><h2>服务生命周期变更</h2><p>按客户与服务业务编号选择对象 → 预览影响 → 明确确认 → 回查真实状态</p></div><el-button @click="router.push('/services')">返回服务列表</el-button></div>
+    <div class="head"><div><h2>服务生命周期变更</h2><p>按客户与服务业务编号选择对象 → 预览影响 → 明确确认 → 回查真实状态</p></div><div><el-button :disabled="loading||saving||confirming" @click="reloadServices">重新核对服务与续费订单</el-button><el-button @click="router.push('/services')">返回服务列表</el-button></div></div>
     <el-alert :title="warning" type="warning" :closable="false" show-icon/>
     <el-alert v-if="loadError" type="error" :closable="false"
       title="服务清单或目标服务读取失败，不能确认当前服务、到期与宽限状态；禁止执行生命周期变更。" />
@@ -210,12 +219,13 @@ onMounted(reloadServices)
           <el-descriptions-item v-if="['LONG_IP','EXCLUSIVE_IP'].includes(current.product_type)" label="原合同宽限">{{current.grace_days_snapshot==null?'历史快照缺失，待人工核对':current.grace_days_snapshot+'天（不是当前套餐宽限）'}}</el-descriptions-item>
         </el-descriptions>
         <el-form-item label="变更动作"><el-radio-group v-model="form.action"><el-radio-button value="renew">续费</el-radio-button><el-radio-button value="suspend">暂停</el-radio-button><el-radio-button value="resume">恢复</el-radio-button><el-radio-button value="terminate">终止</el-radio-button></el-radio-group></el-form-item>
+        <el-alert v-if="form.action==='renew'&&(renewalLookupLoading||renewalOrderChecking)" type="info" :closable="false" title="正在重新核验已付款续费订单及套餐期限，核验完成前禁止提交。" style="margin-bottom:12px"/>
         <el-form-item v-if="form.action==='renew'" label="已付款续费订单" required>
-          <el-select v-model="form.renewalOrderId" filterable placeholder="选择已核实付款且绑定此服务的续费订单" style="width:100%" @change="selectRenewalOrder">
+          <el-select v-model="form.renewalOrderId" filterable :disabled="renewalLookupLoading||loading||loadError" placeholder="选择已核实付款且绑定此服务的续费订单" style="width:100%" @change="selectRenewalOrder">
             <el-option v-for="o in paidRenewalOrders" :key="o.id" :value="o.id" :label="`${o.order_no} · ${o.total_amount} ${o.currency}`"/>
           </el-select>
         </el-form-item>
-        <el-alert v-if="form.action==='renew'&&form.serviceId&&!paidRenewalOrders.length" type="warning" :closable="false" style="margin-bottom:16px">
+        <el-alert v-if="form.action==='renew'&&form.serviceId&&!renewalLookupLoading&&!renewOrderError&&!paidRenewalOrders.length" type="warning" :closable="false" style="margin-bottom:16px">
          <template #title>没有此服务已核实付款的续费订单。请先新建续费订单、确认订单并由授权人员核实收款；不能直接改服务期限。</template>
          <el-button style="margin-top:8px" @click="router.push({path:'/orders',query:{customerId:String(current.customer_id),newOrder:'1',orderType:'RENEW',renewalServiceId:String(form.serviceId)}})">为此客户新建续费订单</el-button>
         </el-alert>
