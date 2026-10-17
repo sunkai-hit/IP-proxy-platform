@@ -6,7 +6,7 @@ import { orderServiceApi } from '@/api/orderService'
 import { http } from '@/api/http'
 import { businessRelationsApi } from '@/api/businessRelations'
 import { useAuthStore } from '@/stores/auth'
-const route=useRoute(),router=useRouter(),auth=useAuthStore(),detail=ref<any>({}),credentials=ref<any[]>([]),bindingRows=ref<any[]>([]),bindingError=ref(false),bindingTruncated=ref(false),credentialError=ref(false),detailError=ref(false),loading=ref(false),requestVersion=ref(0),failoverPreview=ref<any>(null),previewBusy=ref(false),previewError=ref(false),sensitiveBusy=ref(false),tab=ref('basic');let id=Number(route.params.id),previewVersion=0
+const route=useRoute(),router=useRouter(),auth=useAuthStore(),detail=ref<any>({}),credentials=ref<any[]>([]),bindingRows=ref<any[]>([]),bindingError=ref(false),bindingTruncated=ref(false),credentialError=ref(false),detailError=ref(false),loading=ref(false),requestVersion=ref(0),failoverPreview=ref<any>(null),previewTarget=ref<any>(null),previewBusy=ref(false),previewError=ref(false),sensitiveBusy=ref(false),tab=ref('basic');let id=Number(route.params.id),previewVersion=0
 const data=(r:any)=>r.data.data
 const ready=computed(()=>!loading.value&&!detailError.value&&Number(detail.value.id)===id&&id>0)
 const canReset=computed(()=>ready.value&&!credentialError.value&&auth.hasPermission('service:credential:read')&&auth.hasPermission('service:credential:reset')&&!sensitiveBusy.value)
@@ -26,7 +26,7 @@ async function load(){
  // Never leave the previous service's credentials, claim or actions on screen.
  detail.value={};credentials.value=[];bindingRows.value=[]
  bindingError.value=false;credentialError.value=false;bindingTruncated.value=false
- failoverPreview.value=null
+ failoverPreview.value=null;previewTarget.value=null
  try{
   const response=await orderServiceApi.service(serviceId)
   if(version!==requestVersion.value)return
@@ -46,19 +46,33 @@ async function load(){
  }finally{if(version===requestVersion.value)loading.value=false}
 }
 async function previewFailover(candidate:any){
- if(!ready.value||previewBusy.value)return
+ if(!ready.value||previewBusy.value||tab.value!=='backups'||!auth.hasPermission('service:read'))return
+ const candidateId=Number(candidate?.id)
+ if(!Number.isSafeInteger(candidateId)||candidateId<=0||
+    !(detail.value.backupCandidates||[]).some((x:any)=>Number(x.id)===candidateId))return
  const serviceId=id,version=requestVersion.value,previewToken=++previewVersion
- if(!candidate?.id||!(detail.value.backupCandidates||[]).some((x:any)=>Number(x.id)===Number(candidate.id)))return
- previewBusy.value=true;previewError.value=false;failoverPreview.value=null
+ const target={id:candidateId,code:String(candidate.resource_code||candidate.line_code||candidateId)}
+ previewBusy.value=true;previewError.value=false;failoverPreview.value=null;previewTarget.value=target
  try{
-  const r=await http.post(`/v12/services/${serviceId}/failover-preview`,{backupCandidateId:candidate.id})
-  if(version===requestVersion.value&&serviceId===id&&previewToken===previewVersion&&ready.value){
-   failoverPreview.value=r.data.data||{}
+  const r=await http.post(`/v12/services/${serviceId}/failover-preview`,{backupCandidateId:candidateId})
+  if(version!==requestVersion.value||serviceId!==id||previewToken!==previewVersion||
+     tab.value!=='backups'||!ready.value||previewTarget.value?.id!==candidateId)return
+  const result=r.data?.data
+  // This is a management-only precheck. Reject a misplaced candidate, incomplete
+  // proof, or an accidental "allowed" response instead of displaying it as safe.
+  if(!result||Number(result.serviceId)!==serviceId||Number(result.candidateId)!==candidateId||
+     result.allowed!==false||result.adapterReady!==false||
+     result.dataSource!=='MANAGEMENT_SNAPSHOT_NOT_REAL_FAILOVER_PROOF'||
+     !Array.isArray(result.blockers)||result.blockers.length===0||
+     result.blockers.some((x:any)=>typeof x!=='string'||!x.trim())){
+    throw new Error('FAILOVER_PREVIEW_UNTRUSTED')
   }
+  failoverPreview.value=result
  }catch{
-  if(version===requestVersion.value&&serviceId===id&&previewToken===previewVersion){
+  if(version===requestVersion.value&&serviceId===id&&previewToken===previewVersion&&
+     tab.value==='backups'&&ready.value&&previewTarget.value?.id===candidateId){
    previewError.value=true;failoverPreview.value=null
-   ElMessage.error('人工切换预检失败；当前候选状态未知，禁止执行真实切换')
+   ElMessage.error('人工切换预检失败或回执身份/来源不符；当前候选状态未知，禁止执行真实切换')
   }
  }finally{if(previewToken===previewVersion)previewBusy.value=false}
 }
@@ -126,6 +140,12 @@ async function removeWhite(w:any){
   if(e!=='cancel'&&e!=='close')ElMessage.error('白名单停用未确认成功，请查询服务记录核对')
  }finally{sensitiveBusy.value=false}
 }
+watch(tab,(next,previous)=>{
+ if(previous==='backups'&&next!=='backups'){
+  ++previewVersion;previewBusy.value=false;previewError.value=false
+  failoverPreview.value=null;previewTarget.value=null
+ }
+})
 watch(()=>route.params.id,()=>{id=Number(route.params.id);tab.value='basic';load()})
 onMounted(load)
 </script>
@@ -149,7 +169,7 @@ onMounted(load)
 <el-tab-pane label="出口IPv4授权" name="egress"><el-alert title="合同固定公网IPv4与线路当前IP不同；独享跨客户按公网IPv4排他。未验证的出口不能宣称已交付。" type="warning" :closable="false"/><el-table :data="detail.egressClaims||[]"><el-table-column prop="egress_ipv4" label="固定出口IPv4"/><el-table-column prop="claim_mode" label="共享/独享"/><el-table-column prop="claim_status" label="占用状态"/><el-table-column prop="source_line_id" label="来源线路"/><el-table-column prop="hold_until_at" label="保留截至"/><el-table-column prop="verified_at" label="真实验证"/></el-table></el-tab-pane><el-tab-pane label="人工备用候选" name="backups">
  <el-alert type="warning" :closable="false"
   title="仅服务级人工切换；当前真实资源API及产品切换/回退接口未签收，预检只读且任何候选都不可提交执行。"/>
- <el-alert v-if="previewError" type="error" :closable="false" title="人工切换预检失败，不能使用之前的候选冲突或网络影响结论。"/>
+ <el-alert v-if="previewError" type="error" :closable="false" title="人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。"/>
  <el-table :data="detail.backupCandidates||[]" border stripe style="margin-top:12px">
   <el-table-column prop="resource_code" label="备用家宽/线路" min-width="160"/>
   <el-table-column prop="expected_ipv4" label="候选公网IPv4" min-width="145"/>
@@ -161,7 +181,8 @@ onMounted(load)
   </template></el-table-column>
  </el-table>
  <el-card v-if="failoverPreview" shadow="never" style="margin-top:16px">
-  <template #header><b>人工切换影响预检（禁止直接执行）</b></template>
+  <template #header><b>人工切换影响预检（禁止直接执行）｜候选：{{previewTarget?.code||'未知'}}（ID {{previewTarget?.id||'未核实'}}）</b></template>
+  <el-alert type="warning" :closable="false" title="以下仅为当前服务/候选的管理数据库快照预检，非真实设备核验或允许切换的证明。"/>
   <el-descriptions :column="2" border>
    <el-descriptions-item label="原合同IPv4">{{failoverPreview.fromIpv4||'缺快照待核对'}}</el-descriptions-item>
    <el-descriptions-item label="候选预期IPv4">{{failoverPreview.toIpv4||'未知'}}</el-descriptions-item>

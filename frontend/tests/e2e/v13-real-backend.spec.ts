@@ -1416,7 +1416,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.getByRole('tab',{name:'人工备用候选'}).click()
     await expect(page.getByText('CI-PREVIEW-ONLY-LINE')).toBeVisible()
     await page.getByRole('button',{name:'预检影响与冲突'}).click()
-    await expect(page.getByText('人工切换预检失败，不能使用之前的候选冲突或网络影响结论。')).toBeVisible()
+    await expect(page.getByText('人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。')).toBeVisible()
     await expect(page.getByText('人工切换影响预检（禁止直接执行）')).toHaveCount(0)
     await expect(page.getByRole('button',{name:/真实切换不可用/})).toHaveCount(0)
   })
@@ -2079,6 +2079,111 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.getByRole('button',{name:'重新加载操作审计'}).click()
     expect((await restored).status()).toBe(200)
     await expect(page.getByText('操作审计读取失败，不能据此推断没有变更、拒绝或失败事件。')).toHaveCount(0)
+  })
+
+  async function seedFailoverCandidate(page:any,candidateId:number,lineCode:string){
+    const url='**/api/admin/v1/services/'+serviceId
+    await page.route(url,async (route:any)=>{
+      const response=await route.fetch()
+      const json=await response.json()
+      json.data.backupCandidates=[{
+        id:candidateId,resource_code:lineCode,expected_ipv4:'203.0.113.88',
+        candidate_status:'CANDIDATE',health_status:'UNKNOWN'
+      }]
+      await route.fulfill({response,json})
+    })
+  }
+  function failoverPrecheckResult(candidateId:number,extra:Record<string,any>={}){
+    return {serviceId:Number(serviceId),candidateId,allowed:false,adapterReady:false,
+      blockers:['真实资源API与产品切换回退接口尚未签收'],
+      dataSource:'MANAGEMENT_SNAPSHOT_NOT_REAL_FAILOVER_PROOF',
+      fromIpv4:'198.51.100.80',toIpv4:'203.0.113.88',
+      sourceLineCode:'CI-SOURCE-LINE',candidateLineCode:'CI-TARGET-LINE',
+      monitoringImpact:'重新确认客户监控和通知机器人',...extra}
+  }
+
+  test('A UI-13 valid identity-bound snapshot labels the chosen candidate without creating failover task',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const candidateId=950011
+    await seedFailoverCandidate(page,candidateId,'CI-BACKUP-SELECTED')
+    const precheck='**/api/admin/v1/v12/services/'+serviceId+'/failover-preview'
+    await page.route(precheck,route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:failoverPrecheckResult(candidateId)})
+    }))
+    const taskWrites:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/failover-tasks$/.test(new URL(r.url()).pathname))taskWrites.push(r.url())})
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'人工备用候选'}).click()
+    await expect(page.getByText('CI-BACKUP-SELECTED')).toBeVisible()
+    await page.getByRole('button',{name:'预检影响与冲突'}).click()
+    await expect(page.getByText('人工切换影响预检（禁止直接执行）', {exact:false})).toContainText('CI-BACKUP-SELECTED')
+    await expect(page.getByText('以下仅为当前服务/候选的管理数据库快照预检，非真实设备核验或允许切换的证明。')).toBeVisible()
+    await expect(page.getByText('CI-SOURCE-LINE')).toBeVisible()
+    await expect(page.getByRole('button',{name:/真实切换不可用/})).toBeDisabled()
+    expect(taskWrites).toHaveLength(0)
+  })
+
+  test('A UI-13 mismatched candidate and service preview responses fail closed',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const candidateId=950012
+    await seedFailoverCandidate(page,candidateId,'CI-BACKUP-EXPECTED')
+    let mismatch='candidate'
+    await page.route('**/api/admin/v1/v12/services/'+serviceId+'/failover-preview',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:failoverPrecheckResult(candidateId,
+        mismatch==='candidate'?{candidateId:candidateId+1}:{serviceId:Number(serviceId)+1})})
+    }))
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'人工备用候选'}).click()
+    const preview=page.getByRole('button',{name:'预检影响与冲突'})
+    await preview.click()
+    await expect(page.getByText('人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。')).toBeVisible()
+    await expect(page.getByText('CI-SOURCE-LINE')).toHaveCount(0)
+    mismatch='service'
+    await preview.click()
+    await expect(page.getByText('人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。')).toBeVisible()
+    await expect(page.getByText('人工切换影响预检（禁止直接执行）',{exact:false})).toHaveCount(0)
+  })
+
+  test('A UI-13 preview cannot accept forged allowed state or missing blockers as readiness',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const candidateId=950013
+    await seedFailoverCandidate(page,candidateId,'CI-BACKUP-NO-PROOF')
+    let forged=true
+    await page.route('**/api/admin/v1/v12/services/'+serviceId+'/failover-preview',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',
+        data:failoverPrecheckResult(candidateId,forged?{allowed:true}:{blockers:[]})})
+    }))
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'人工备用候选'}).click()
+    const preview=page.getByRole('button',{name:'预检影响与冲突'})
+    await preview.click()
+    await expect(page.getByText('人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。')).toBeVisible()
+    forged=false
+    await preview.click()
+    await expect(page.getByText('人工切换预检失败或回执与所选服务/候选不一致，不能使用旧的候选冲突或网络影响结论。')).toBeVisible()
+    await expect(page.getByRole('button',{name:/真实切换不可用/})).toHaveCount(0)
+  })
+
+  test('A UI-13 a delayed old precheck is dropped after leaving and returning to backup tab',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    const candidateId=950014
+    await seedFailoverCandidate(page,candidateId,'CI-BACKUP-DELAYED')
+    await page.route('**/api/admin/v1/v12/services/'+serviceId+'/failover-preview',async route=>{
+      await new Promise(resolve=>setTimeout(resolve,950))
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({code:'OK',data:failoverPrecheckResult(candidateId)})})
+    })
+    await page.goto(base+'/services/'+serviceId)
+    await page.getByRole('tab',{name:'人工备用候选'}).click()
+    await page.getByRole('button',{name:'预检影响与冲突'}).click()
+    await page.getByRole('tab',{name:'基本信息'}).click()
+    await page.getByRole('tab',{name:'人工备用候选'}).click()
+    await page.waitForTimeout(1100)
+    await expect(page.getByText('人工切换影响预检（禁止直接执行）',{exact:false})).toHaveCount(0)
+    await expect(page.getByText('CI-SOURCE-LINE')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'预检影响与冲突'})).toBeEnabled()
   })
 
 })
