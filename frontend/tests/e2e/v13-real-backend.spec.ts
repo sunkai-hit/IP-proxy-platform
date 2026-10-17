@@ -949,6 +949,71 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByText('订单主记录')).toBeVisible()
   })
 
+  test('A4 paid purchase cannot shorten below its linked service or admit an overlong proxy; PostgreSQL relations remain unchanged',async({page})=>{
+    expect(serviceId).toBeTruthy()
+    await page.goto(base+'/supplier-purchases')
+    const report=await page.evaluate(async sid=>{
+      const headers={Authorization:'Bearer '+localStorage.getItem('ipproxy_access_token'),'Content-Type':'application/json'}
+      async function invoke(path:string,method='GET',body?:any){
+        const res=await fetch('/api/admin/v1'+path,{method,headers,body:body?JSON.stringify(body):undefined})
+        return {status:res.status,body:await res.json()}
+      }
+      const list=await invoke('/v12/external-delivery/purchases?page=1&size=20&keyword=CI%20paid%20customer%20package')
+      const item=list.body?.data?.items?.find((x:any)=>x.supplier_package_name==='CI paid customer package')
+      if(list.status!==200||!item)return {stage:'fixture-list',list}
+      const id=Number(item.id)
+      const before=await invoke('/v12/external-delivery/purchases/'+id)
+      const proxiesBefore=await invoke('/relations/supplier-purchases/'+id+'/proxies')
+      const servicesBefore=await invoke('/relations/supplier-purchases/'+id+'/services')
+      const serviceBefore=await invoke('/services/'+sid)
+      const originOrderId=Number(before.body?.data?.source_customer_order_id)
+      const orderBefore=await invoke('/orders/'+originOrderId)
+      const p=before.body?.data
+      if([before,proxiesBefore,servicesBefore,serviceBefore,orderBefore].some(x=>x.status!==200))
+        return {stage:'fixture-relation',statuses:[before.status,proxiesBefore.status,servicesBefore.status,serviceBefore.status,orderBefore.status]}
+      const oneDay=new Date(Date.now()+24*60*60*1000).toISOString()
+      const shorten=await invoke('/v12/external-delivery/purchases/'+id,'PUT',{
+        supplierId:p.supplier_id,customerId:p.customer_id,sourceCustomerOrderId:originOrderId,
+        supplierPackageName:p.supplier_package_name,expireAt:oneDay,
+        remark:'CI A4 must not undercut the real PostgreSQL customer service'
+      })
+      const overlong=new Date(new Date(p.expire_at).getTime()+24*60*60*1000).toISOString()
+      const invalidProxy=await invoke('/v12/external-delivery/reverse-proxies','POST',{
+        purchaseId:id,customerId:p.customer_id,serviceId:Number(sid),
+        protocolCode:'HTTP',upstreamHost:'ci-upstream.invalid',upstreamPort:8080,
+        platformHost:'ci-gateway.invalid',platformPort:18080,expireAt:overlong,
+        remark:'CI A4 proxy must not outrun the supplier purchase'
+      })
+      const after=await invoke('/v12/external-delivery/purchases/'+id)
+      const proxiesAfter=await invoke('/relations/supplier-purchases/'+id+'/proxies')
+      const servicesAfter=await invoke('/relations/supplier-purchases/'+id+'/services')
+      const serviceAfter=await invoke('/services/'+sid)
+      const orderAfter=await invoke('/orders/'+originOrderId)
+      return {stage:'verified',statuses:[before.status,proxiesBefore.status,servicesBefore.status,serviceBefore.status,
+          orderBefore.status,after.status,proxiesAfter.status,servicesAfter.status,serviceAfter.status,orderAfter.status],
+        rejected:[{status:shorten.status,code:shorten.body.code},{status:invalidProxy.status,code:invalidProxy.body.code}],
+        paid:p.source_customer_payment_status,
+        before:{expire_at:p.expire_at,status:p.status,originId:p.source_customer_order_id,
+          proxyRecords:proxiesBefore.body?.data,serviceRecords:servicesBefore.body?.data,
+          svcExpiry:serviceBefore.body?.data?.expire_at,orderStatus:orderBefore.body?.data?.status,
+          orderPaid:orderBefore.body?.data?.payment_status},
+        after:{expire_at:after.body?.data?.expire_at,status:after.body?.data?.status,
+          originId:after.body?.data?.source_customer_order_id,proxyRecords:proxiesAfter.body?.data,
+          serviceRecords:servicesAfter.body?.data,svcExpiry:serviceAfter.body?.data?.expire_at,
+          orderStatus:orderAfter.body?.data?.status,orderPaid:orderAfter.body?.data?.payment_status}}
+    },Number(serviceId))
+    expect(report.stage,JSON.stringify(report)).toBe('verified')
+    expect(report.statuses).toEqual(Array(10).fill(200))
+    expect(report.paid).toBe('PAID_CONFIRMED')
+    expect(report.before.proxyRecords.items.length).toBeGreaterThan(0)
+    expect(report.before.proxyRecords.items.some((x:any)=>Number(x.service_id)===Number(serviceId))).toBe(true)
+    expect(report.rejected).toEqual([
+      {status:400,code:'PURCHASE_UPSTREAM_TERM_SHORT'},
+      {status:400,code:'PROXY_UPSTREAM_TERM_SHORT'}
+    ])
+    expect(report.after).toEqual(report.before)
+  })
+
   test('A purchase ledger failure clears stale rows and offers PostgreSQL-backed retry', async ({ page }) => {
     await page.goto(base + '/supplier-purchases')
     await expect(page.getByText('CI-PUR-R3', { exact: true })).toBeVisible()
