@@ -113,7 +113,7 @@ public class V12BusinessRelationsController {
         require(p,"resource:purchase:read");require(p,"resource:reverse-proxy:read");
         existing("purchase",id);
         return ApiResponse.success(result(jdbc.queryForList("""
-          SELECT rp.id,rp.proxy_no,rp.customer_id,c.customer_name,rp.service_id,s.service_no,
+          SELECT rp.id,rp.proxy_no,rp.purchase_id,rp.customer_id,c.customer_name,rp.service_id,s.service_no,
                  rp.protocol_code,rp.platform_host,rp.platform_port,rp.status,rp.expire_at,
                  rp.last_checked_at,rp.last_error
           FROM res_reverse_proxy rp JOIN customer c ON c.id=rp.customer_id
@@ -128,7 +128,8 @@ public class V12BusinessRelationsController {
         require(p,"resource:purchase:read");require(p,"service:read");
         existing("purchase",id);
         return ApiResponse.success(result(jdbc.queryForList("""
-          SELECT s.id,s.service_no,c.id customer_id,c.customer_name,p.product_name,
+          SELECT s.id,s.service_no,s.supplier_purchase_id,rp.purchase_id reverse_proxy_purchase_id,
+                 c.id customer_id,c.customer_name,p.product_name,
                  s.product_type,s.status,s.delivery_stage,s.expire_at,
                  rp.id reverse_proxy_id,rp.proxy_no
           FROM svc_instance s JOIN customer c ON c.id=s.customer_id

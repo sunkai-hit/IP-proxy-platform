@@ -507,7 +507,7 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     }))
     await page.route('**/api/admin/v1/relations/supplier-purchases/900991/proxies',route=>route.fulfill({
       status:200,contentType:'application/json',
-      body:JSON.stringify({code:'OK',data:{items:[{id:900991,proxy_no:'CI-CHILD-PROXY-900991'}],total:1}}),
+      body:JSON.stringify({code:'OK',data:{items:[{id:900991,proxy_no:'CI-CHILD-PROXY-900991',purchase_id:900991,customer_id:1}],total:1}}),
     }))
     await page.route('**/api/admin/v1/relations/supplier-purchases/900991/services',route=>route.fulfill({
       status:200,contentType:'application/json',
@@ -2623,6 +2623,141 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await page.getByRole('button',{name:'取消'}).click()
     await page.waitForTimeout(1150)
     expect(writes).toHaveLength(0)
+  })
+
+  test('A UI-36 proxy detail refuses cross-route identity even on HTTP 200',async({page})=>{
+    const url='**/api/admin/v1/v12/external-delivery/reverse-proxies/990501'
+    await page.route(url,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:990502,proxy_no:'CI-FOREIGN-PROXY-990502',
+        purchase_id:990508,customer_id:990509,status:'PENDING'}})}))
+    await page.goto(base+'/reverse-proxies/990501')
+    await expect(page.getByText('反向代理详情读取失败，禁止推断配置已生效或网关可连接。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-PROXY-990502')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'应用配置'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'受控停用'})).toHaveCount(0)
+    await page.unroute(url)
+    await page.route(url,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:990501,proxy_no:'CI-OWNED-PROXY-990501',
+        purchase_id:990508,customer_id:990509,status:'PENDING'}})}))
+    await page.getByRole('button',{name:'重新加载反向代理'}).click()
+    await expect(page.getByRole('heading',{name:'CI-OWNED-PROXY-990501'})).toBeVisible()
+  })
+
+  test('A UI-36 proxy detail impact confirmation locks all actions and cancel never writes',async({page})=>{
+    await page.route('**/api/admin/v1/v12/external-delivery/reverse-proxies/990511',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:990511,proxy_no:'CI-PROXY-990511',
+        purchase_id:990512,customer_id:990513,status:'PENDING'}})
+    }))
+    const posted:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/reverse-proxies\/990511\/(apply|test|disable)$/.test(new URL(r.url()).pathname))posted.push(r.url())})
+    await page.goto(base+'/reverse-proxies/990511')
+    await page.getByRole('button',{name:'应用配置'}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('CI-PROXY-990511')
+    await expect(box).toContainText('客户 #990513')
+    await expect(box).toContainText('采购 #990512')
+    await expect(page.getByRole('button',{name:'受控停用'})).toBeDisabled()
+    await expect(page.getByRole('button',{name:'真实连通性验证'})).toBeDisabled()
+    await box.getByRole('button',{name:'返回核对'}).click()
+    await expect(box).toHaveCount(0)
+    expect(posted).toHaveLength(0)
+  })
+
+  test('A UI-36 proxy detail refresh during confirmation invalidates old purchase/owner action',async({page})=>{
+    let purchaseId=990522,status='PENDING'
+    await page.route('**/api/admin/v1/v12/external-delivery/reverse-proxies/990521',route=>route.fulfill({
+      status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{id:990521,proxy_no:'CI-PROXY-990521',
+        purchase_id:purchaseId,customer_id:990523,status}})
+    }))
+    const writes:string[]=[]
+    page.on('request',r=>{if(r.method()==='POST'&&/\/reverse-proxies\/990521\/apply$/.test(new URL(r.url()).pathname))writes.push(r.url())})
+    await page.goto(base+'/reverse-proxies/990521')
+    await page.getByRole('button',{name:'应用配置'}).click()
+    const box=page.locator('.el-message-box').last()
+    await expect(box).toContainText('采购 #990522')
+    purchaseId=990599;status='ABNORMAL'
+    await page.evaluate(()=>{(document.querySelector('.head .actions .el-button') as HTMLElement)?.click()})
+    await expect(page.getByText('ABNORMAL',{exact:true})).toBeVisible()
+    await box.locator('input').fill('stale owner purchase cannot apply')
+    await box.getByRole('button',{name:'确认提交'}).click()
+    expect(writes).toHaveLength(0)
+    await expect(page.getByText('确认期间代理身份、采购/客户归属、状态或详情来源已变化，未提交旧操作')).toBeVisible()
+  })
+
+  test('A UI-36 purchase detail rejects HTTP200 foreign parent and never links its payment or proxy',async({page})=>{
+    await page.route('**/api/admin/v1/v12/external-delivery/purchases/990601',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        id:990602,purchase_no:'CI-FOREIGN-PURCHASE',status:'ACTIVE',customer_id:990603,
+        source_customer_order_id:990604,source_customer_payment_status:'PAID_CONFIRMED'
+      }})
+    }))
+    await page.goto(base+'/supplier-purchases/990601')
+    await expect(page.getByText('采购详情读取失败，不能据此认定已付款、无关联服务或已可实际交付。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-PURCHASE')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'基于此采购登记代理'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'查看付款来源订单'})).toHaveCount(0)
+  })
+
+  test('A UI-36 purchase foreign linked proxy and service are unknown, not zero or navigable',async({page})=>{
+    const root='**/api/admin/v1/relations/supplier-purchases/990611/'
+    await page.route('**/api/admin/v1/v12/external-delivery/purchases/990611',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        id:990611,purchase_no:'CI-PURCHASE-990611',status:'ACTIVE',customer_id:990612,
+        source_customer_order_id:990613,source_customer_payment_status:'PAID_CONFIRMED'
+      }})
+    }))
+    await page.route(root+'proxies',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        items:[{id:990614,proxy_no:'CI-FOREIGN-CHILD-PROXY',
+          purchase_id:990699,customer_id:990612}],total:1
+      }})
+    }))
+    await page.route(root+'services',route=>route.fulfill({
+      status:200,contentType:'application/json',body:JSON.stringify({code:'OK',data:{
+        items:[{id:990615,service_no:'CI-FOREIGN-CHILD-SERVICE',
+          customer_id:990612,supplier_purchase_id:990699,reverse_proxy_purchase_id:null}],total:1
+      }})
+    }))
+    await page.goto(base+'/supplier-purchases/990611')
+    await expect(page.getByRole('heading',{name:'CI-PURCHASE-990611'})).toBeVisible()
+    await expect(page.getByRole('tab',{name:'反向代理明细 (未知)'})).toBeVisible()
+    await expect(page.getByText('代理关联读取失败或记录不属于当前采购/客户，数据不可核实，不能据此认定未使用或可以重新分配。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-CHILD-PROXY')).toHaveCount(0)
+    await page.getByRole('tab',{name:'使用中及历史服务 (未知)'}).click()
+    await expect(page.getByText('服务关系读取失败或来源采购/客户不一致，数据不可核实，不能当成零使用量或无客户权益。')).toBeVisible()
+    await expect(page.getByText('CI-FOREIGN-CHILD-SERVICE')).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'代理详情'})).toHaveCount(0)
+    await expect(page.getByRole('button',{name:'服务详情'})).toHaveCount(0)
+  })
+
+  test('A UI-36 actual PostgreSQL purchase relation APIs return verifiable source IDs',async({page})=>{
+    await page.goto(base+'/supplier-purchases')
+    const item=page.locator('.el-table__body tr').filter({hasText:'CI-PUR-R3'})
+    await expect(item).toBeVisible()
+    const proxyResult=page.waitForResponse(r=>r.request().method()==='GET'&&
+      /\/relations\/supplier-purchases\/\d+\/proxies$/.test(new URL(r.url()).pathname))
+    const serviceResult=page.waitForResponse(r=>r.request().method()==='GET'&&
+      /\/relations\/supplier-purchases\/\d+\/services$/.test(new URL(r.url()).pathname))
+    await item.getByRole('button',{name:'详情'}).click()
+    const [proxyResponse,serviceResponse]=await Promise.all([proxyResult,serviceResult])
+    const purchaseId=Number(new URL(page.url()).pathname.split('/').pop())
+    expect(purchaseId).toBeGreaterThan(0)
+    expect(proxyResponse.status()).toBe(200)
+    expect(serviceResponse.status()).toBe(200)
+    const proxyRows=(await proxyResponse.json()).data?.items
+    const serviceRows=(await serviceResponse.json()).data?.items
+    expect(Array.isArray(proxyRows)).toBe(true)
+    expect(Array.isArray(serviceRows)).toBe(true)
+    expect(proxyRows.length).toBeGreaterThan(0)
+    for(const candidate of proxyRows)expect(Number(candidate.purchase_id)).toBe(purchaseId)
+    for(const service of serviceRows){
+      expect(Number(service.supplier_purchase_id)===purchaseId||
+        Number(service.reverse_proxy_purchase_id)===purchaseId).toBe(true)
+    }
+    await expect(page.getByRole('heading',{name:'CI-PUR-R3'})).toBeVisible()
+    await expect(page.getByRole('tab',{name:/反向代理明细 \(1\)/})).toBeVisible()
   })
 
 })
