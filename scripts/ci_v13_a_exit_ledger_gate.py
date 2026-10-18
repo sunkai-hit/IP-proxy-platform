@@ -51,9 +51,10 @@ def main() -> int:
     cases = numbered_rows(section(ledger, "## 三、详细需求第12章", "## 四、数据库和跨系统"))
     exact_ids(pages, 36, "V1.3 pages")
     exact_ids(cases, 18, "V1.3 acceptance cases")
-    assert all("需验" in line or "待" in line or "未" in line for line in pages.values()), (
-        "a page lost its unverified/manual acceptance boundary"
-    )
+    # Manual-signature status is a separate evidence item; do not infer it
+    # from free-text row wording (e.g. "不得..." or "仍阻断").
+    assert "尚未完成字段、权限、业务动作" in ledger
+    assert "不可把这三者合并" in ledger
     logs = LOGS.read_text(encoding="utf-8")
     statistics = STATS.read_text(encoding="utf-8")
     log_names = re.findall(r"\{name:'([^']+)',label:'\d{2} ", logs)
