@@ -43,8 +43,15 @@ async function load(){
    result=await fn(params)
   }
   if(version!==requestVersion.value)return
-  const response=result.data.data||{}
-  rows.value=response.items||[];total.value=response.total||0
+  const response=result?.data?.data
+  // HTTP 200 with no credible page is NOT proof of zero runtime events.
+  // Keep all eleven log categories fail-closed, including extended audit views.
+  if(!response||!Array.isArray(response.items)||
+     !Number.isSafeInteger(Number(response.total))||Number(response.total)<0||
+     response.items.length>Number(response.total)||
+     (response.sourceScope!=null&&typeof response.sourceScope!=='string'))
+    throw new Error('RUNTIME_LOG_PAGE_UNVERIFIED')
+  rows.value=response.items;total.value=Number(response.total)
   sourceScope.value=response.sourceScope||''
  }catch{
   if(version===requestVersion.value){
