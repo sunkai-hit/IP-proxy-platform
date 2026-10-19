@@ -10,10 +10,10 @@ class HumanEvidenceGateTest(unittest.TestCase):
               action="管理员：核对主子表并注入查询失败后重试，不得冒称成功",
               needed="页面截图、真实PostgreSQL关系及审计Request ID"):
         return {
-            "01": " | ".join([
-                "| 01", "首页工作台", "DashboardView.vue", "尚需人工验收",
-                action, needed, archive, status, "|"
-            ])
+            "01": "| " + " | ".join([
+                "01", "首页工作台", "DashboardView.vue", "尚需人工验收",
+                action, needed, archive, status
+            ]) + " |"
         }
 
     def test_unsigned_row_is_allowed_not_counted_as_signed(self):
