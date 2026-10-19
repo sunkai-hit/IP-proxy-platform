@@ -153,3 +153,13 @@ test('customer from list opens its own related order/service detail, not the fir
  assert.match(ctx.nodes.app.innerHTML,/济南启航科技/);
  assert.match(ctx.nodes.app.innerHTML,/ORD-2418/);
 });
+
+test('a paid new-purchase order cannot silently substitute for a targeted renewal order',()=>{
+ const {api}=boot();
+ api.setForm({service:'S-LONG-01',order:'ORD-2417',days:'30',reason:'合同续签'});
+ assert.match(api.validate('service-renew','').join(' '),/RENEWAL_ORDER_TARGET_MISMATCH/);
+ api.setForm({service:'S-LONG-01',order:'ORD-RENEW-2501',days:'30',reason:'合同续签'});
+ assert.equal(api.validate('service-renew','').length,0);
+ api.selectOrder('ORD-RENEW-2501');
+ assert.match(api.checkProvision().fail.join(' '),/续费订单须在服务续费页面/);
+});
