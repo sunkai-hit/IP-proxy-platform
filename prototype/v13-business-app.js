@@ -61,7 +61,8 @@ var orders=[
 {id:'ORD-2417',customer:'C1001',paid:true,status:'已确认付款（样例）',items:[{product:'长效IP',qty:2,mode:'自有资源'},{product:'隧道',qty:1,mode:'外部资源'}],validTo:'2026-11-20'},
 {id:'ORD-2418',customer:'C1002',paid:false,status:'待支付',items:[{product:'短效IP',qty:1,mode:'自有资源'}],validTo:'2026-11-25'},
 {id:'ORD-2419',customer:'C1002',paid:true,status:'已确认付款（样例）',items:[{product:'独享IP',qty:1,mode:'自有资源'}],validTo:'2026-11-28'},
-{id:'ORD-2420',customer:'C1003',paid:true,status:'已确认付款（样例）',items:[{product:'隧道',qty:1,mode:'外部资源'}],validTo:'2026-12-10'}
+{id:'ORD-2420',customer:'C1003',paid:true,status:'已确认付款（样例）',items:[{product:'隧道',qty:1,mode:'外部资源'}],validTo:'2026-12-10'},
+{id:'ORD-RENEW-2501',customer:'C1001',paid:true,kind:'renewal',service:'S-LONG-01',status:'已付款续费（示例）',items:[{product:'长效IP续费',qty:1,mode:'原服务'}],validTo:'2026-12-20'}
 ];
 var services=[
 {id:'S-LONG-01',customer:'C1001',order:'ORD-2417',product:'长效IP',mode:'SELF_OWNED',line:'LINE-QD-03',pool:'POOL-SHARED',egress:'198.51.100.42',status:'管理面已登记',remote:'UNKNOWN',network:'UNKNOWN',expiry:'2026-11-20',grace:7},
@@ -75,7 +76,7 @@ var bots=[{id:'BOT-01',customer:'C1001',kind:'钉钉',name:'星途运维机器�
 var alarms=[{id:'AL-031',service:'S-LONG-01',target:'https://probe.example.invalid',status:'OPEN',notice:'FAILED · 未确认',time:'2026-10-19 13:10'}, {id:'AL-030',service:'S-LONG-01',target:'https://backup.example.invalid',status:'UNKNOWN',notice:'未发送',time:'2026-10-19 12:50'}];
 var roles=[{id:'ROLE-ADMIN',name:'系统管理员',perms:['查看','编辑','高危操作','审计'],users:2}, {id:'ROLE-OPS',name:'业务运营',perms:['查看','编辑'],users:4}, {id:'ROLE-AUDIT',name:'审计只读',perms:['查看','审计'],users:1}];
 var tasks=[],history=[],counter=1;
-var x={route:'dashboard',openGroup:'总览',navQuery:'',filter:'',selected:null,modal:null,form:{},tab:'',step:0,chosenOrder:'ORD-2417',chosenService:'S-LONG-01',chosenCandidate:'BK-01',mode:'SELF_OWNED',egress:'203.0.113.18',cover:'no',consent:'no',role:'管理员'};
+var x={route:'dashboard',openGroup:'总览',navQuery:'',filter:'',selected:null,modal:null,form:{},tab:'',step:0,chosenOrder:'ORD-2417',chosenService:'S-LONG-01',chosenCandidate:'BK-01',mode:'SELF_OWNED',candidate:'reuse',egress:'203.0.113.18',cover:'no',consent:'no',role:'管理员'};
 function item(arr,id){return arr.find(function(a){return a.id===id;});}
 function customerName(id){var a=item(customers,id);return a?a.name:id;}
 function countItems(o){return o.items.reduce(function(n,i){return n+i.qty;},0);}
@@ -172,9 +173,10 @@ function checkProvision(){
 var o=item(orders,x.chosenOrder),fail=[],notes=[];
 if(!o){fail.push('订单不存在');return {fail:fail,notes:notes};}
 if(!o.paid)fail.push('付款未核实：禁止采购、预占、开通');
+if(o.kind==='renewal')fail.push('续费订单须在服务续费页面绑定原服务，不得当作新购重复开通');
 if(o.items.some(function(i){return i.product==='独享IP';}) && x.egress==='203.0.113.18')fail.push('EGRESS_IPV4_EXCLUSIVE_CONFLICT：该公网IPv4已由服务 S-EX-02 占用并在宽限保留');
 if(o.items.some(function(i){return i.mode==='外部资源';})&&x.cover!=='yes')fail.push('外部上游套餐有效期未覆盖订单服务期限或未核实');
-notes.push('长效优先复用健康且有共享容量的既有出口，无合格候选才转换短效资源');
+notes.push(x.candidate==='convert'?'已选择短效转长效候选：须停止短效新提取、完成迁移、执行原子转换与失败补偿':'长效优先复用健康且有共享容量的既有出口，无合格候选才转换短效资源');
 notes.push('本地预检不代表A01/B01/C01/C07/F03真实可用，未得到远端操作回执');
 return {fail:fail,notes:notes};
 }
@@ -186,7 +188,7 @@ if(x.step===0)s=field('演示订单','chosenOrder',x.chosenOrder,'select',orders
 pairs([['客户',customerName(o.customer)],['付款状态',o.status],['订单项数量',o.items.length],['预期服务实例数',countItems(o)]])+tip('订单确认≠付款核实。未付款订单不能进入开通；示例付款事实只在原型本地成立。','warning');
 if(x.step===1)s=panel('独立订单项/实例拆分',o.items.map(function(a,i){return '<div class="b-split"><b>订单项 '+(i+1)+' · '+h(a.product)+'</b><span>数量：'+a.qty+' 个独立服务实例</span><span>推荐交付：'+h(a.mode)+'</span></div>';}).join(''))+
 tip('每个订单项按数量建立独立服务ID，任务防重使用订单项与实例序号组成的稳定键。');
-if(x.step===2)s='<div class="b-two">'+panel('选择候选与采购有效期',field('独享公网出口（用于独享演示订单）','egress',x.egress,'select',[['203.0.113.18','203.0.113.18 · 已占用（预期阻断）'],['203.0.113.82','203.0.113.82 · 本地未发现占用']])+field('外部采购期限覆盖（演示核验）','cover',x.cover,'select',[['no','未核实 / 期限不足'],['yes','模拟：已覆盖客户服务期限']]))+
+if(x.step===2)s='<div class="b-two">'+panel('选择候选与采购有效期',field('长效资源路径','candidate',x.candidate,'select',[['reuse','优先复用健康且有容量的已有共享长效出口'],['convert','无合格长效后，从短效资源池转换']])+field('独享公网出口（用于独享演示订单）','egress',x.egress,'select',[['203.0.113.18','203.0.113.18 · 已占用（预期阻断）'],['203.0.113.82','203.0.113.82 · 本地未发现占用']])+field('外部采购期限覆盖（演示核验）','cover',x.cover,'select',[['no','未核实 / 期限不足'],['yes','模拟：已覆盖客户服务期限']]))+
 panel('业务资格校验',ck.fail.length?tip(ck.fail.map(h).join('<p>'),'danger'):tip('本地业务条件未发现阻断；真实网关能力仍为 UNKNOWN','good')+ck.notes.map(function(a){return '<p class="b-bullet">'+h(a)+'</p>';}).join(''))+'</div>';
 if(x.step===3)s=panel('将要创建的本地任务',pairs([['业务订单',o.id],['模拟服务实例',countItems(o)],['实例幂等键前缀','demo:v13:'+o.id],['管理面状态','PENDING_REMOTE（模拟）'],['远端回执','UNKNOWN'],['公网实际联网','UNKNOWN']]))+(ck.fail.length?tip(ck.fail.map(h).join('; '),'danger'):tip('确认只会生成内存任务，不会创建真实服务、预占IP、购买采购或调用接口。','warning'));
 if(x.step===4){var related=tasks.filter(function(t){return t.order===o.id&&t.type==='开通';});s=cardGrid([stat('本地任务数',related.length,'按订单项/数量拆分'),stat('远端执行','UNKNOWN','operationId 待真实回查'),stat('代理网络','UNKNOWN','未进行公网探测')])+panel('操作号与服务实例',table(['模拟任务','订单项/实例','操作号','管理面','远端','网络'],related,function(t){return tr([h(t.id),h(t.desc),h(t.operationId),badge('待远端核验'),badge('UNKNOWN'),badge('UNKNOWN')]);}))+tip('模拟任务登记完成 ≠ 真实交付成功；C07/E01、稳定来源ID、服务网关和外网连接尚无真实回执。','danger');}
@@ -337,7 +339,7 @@ case 'package-edit':var pk=item(packages,id)||packages[0];title='套餐宽限快
 case 'order-new':title='新建订单 · 本地草稿';body=field('客户','customer',f.customer,'select',customers.map(function(c){return [c.id,c.name];}))+field('产品','product',f.product||'长效IP','select',productTypes.map(function(p){return [p.name,p.name];}))+field('实例数量','qty',f.qty||1,'number')+tip('新建订单默认未付款。不得直接开通。');break;
 case 'direct-open':title='特权直开权限复核';body=pairs([['当前原型角色',x.role],['操作属性','高危·需要真正后端RBAC和审计']])+field('客户','customer',f.customer,'select',customers.map(function(c){return [c.id,c.name];}))+field('授权原因','reason',f.reason,'textarea');break;
 case 'backup-new':title='新增服务备用候选';body=field('服务','service',f.service,'select',services.map(function(s){return [s.id,s.id];}))+field('候选线路','line',f.line||'LINE-HZ-02','select',lines.map(function(l){return [l.id,l.name];}))+tip('候选真实健康态为UNKNOWN，无法视作可切换。');break;
-case 'service-renew':title='服务续费 · 付款/期限/幂等预检';body=field('目标服务','service',f.service,'select',services.map(function(s){return [s.id,s.id+' / '+customerName(s.customer)];}))+field('付款来源订单','order',f.order,'select',orders.map(function(o){return [o.id,o.id+' / '+customerName(o.customer)+(o.paid?' / 已付款':' / 未付款')];}))+field('续费天数','days',f.days||30,'number')+field('操作原因','reason',f.reason,'textarea');break;
+case 'service-renew':title='服务续费 · 付款/期限/幂等预检';if(f.order===x.chosenOrder&&f.service==='S-LONG-01')f.order='ORD-RENEW-2501';body=field('目标服务','service',f.service,'select',services.map(function(s){return [s.id,s.id+' / '+customerName(s.customer)];}))+field('付款来源订单','order',f.order,'select',orders.map(function(o){return [o.id,o.id+' / '+customerName(o.customer)+(o.paid?' / 已付款':' / 未付款')];}))+field('续费天数','days',f.days||30,'number')+field('操作原因','reason',f.reason,'textarea');break;
 case 'service-change':title='服务暂停/恢复/终止预检';body=field('目标服务','service',f.service,'select',services.map(function(s){return [s.id,s.id];}))+field('变更操作','change',f.change||'暂停','select',['暂停','恢复','终止'])+field('原因','reason',f.reason,'textarea');break;
 case 'release-check':var sr=item(services,id)||item(services,f.service)||services[0];title='服务到期与释放预检';body=pairs([['服务ID',sr.id],['业务到期',sr.expiry],['宽限天数',sr.grace+'天'],['公网出口Claim',sr.egress],['远端停服/释放',sr.remote]])+field('申请理由','reason',f.reason,'textarea')+tip('实际回执缺失：不能真释放或使IPv4进入可售池。','danger');id=sr.id;break;
 case 'monitor-new':title='新建长效监控配置';body=field('客户长效服务','service',f.service,'select',services.filter(function(s){return s.product==='长效IP';}).map(function(s){return [s.id,s.id];}))+field('探测目标（测试域）','target',f.target||'https://probe.example.invalid')+field('周期秒数','interval',f.interval||60,'number')+field('连续失败阈值','fail',f.fail||3,'number')+field('连续恢复阈值','recover',f.recover||2,'number');break;
@@ -366,7 +368,7 @@ if(kind==='proxy-new'){var p=item(purchases,f.purchase||purchases[0].id),s=item(
 if(kind==='exclusive-check'&&(f.ip||'203.0.113.18')==='203.0.113.18')err.push('EGRESS_IPV4_EXCLUSIVE_CONFLICT：宽限占用仍然锁定该公网IPv4');
 if(kind==='direct-open'&&x.role!=='管理员')err.push('AUTH_FORBIDDEN：只有特权管理员可以进入直开预检');
 if(kind==='pool-members'){var pool=item(pools,id),line=f.line||lines[0].id;if(f.change==='移除'&&pool&&pool.members.indexOf(line)>=0&&services.some(function(s){return s.pool===pool.id&&s.line===line;}))err.push('POOL_LAST_SOURCE_IN_USE：在用服务最后来源不得移除');}
-if(kind==='service-renew'){var srv=item(services,f.service||x.chosenService),order=item(orders,f.order||x.chosenOrder);if(!srv||!order||!order.paid)err.push('目标服务及已付款续费订单必须存在');else{if(srv.customer!==order.customer)err.push('CUSTOMER_MISMATCH：付款订单与目标服务归属不同');if(srv.mode==='EXTERNAL_PROXY'){var proxy=proxies.find(function(p){return p.service===srv.id;}),pur=proxy&&item(purchases,proxy.purchase);if(!pur||pur.validTo<srv.expiry)err.push('UPSTREAM_EXPIRY_NOT_COVERED：上游采购期限不足');}if(tasks.some(function(t){return t.type==='续费'&&t.service===srv.id}))err.push('DUPLICATE_OPERATION：该服务已存在待回查续费任务');}if(Number(f.days||30)<=0)err.push('续费天数必须大于0');}
+if(kind==='service-renew'){var srv=item(services,f.service||x.chosenService),order=item(orders,f.order||x.chosenOrder);if(!srv||!order||!order.paid)err.push('目标服务及已付款续费订单必须存在');else{if(order.kind!=='renewal'||order.service!==srv.id)err.push('RENEWAL_ORDER_TARGET_MISMATCH：必须是明确指向目标服务的已付款续费订单');if(srv.customer!==order.customer)err.push('CUSTOMER_MISMATCH：付款订单与目标服务归属不同');if(srv.mode==='EXTERNAL_PROXY'){var proxy=proxies.find(function(p){return p.service===srv.id;}),pur=proxy&&item(purchases,proxy.purchase);if(!pur||pur.validTo<srv.expiry)err.push('UPSTREAM_EXPIRY_NOT_COVERED：上游采购期限不足');}if(tasks.some(function(t){return t.type==='续费'&&t.service===srv.id}))err.push('DUPLICATE_OPERATION：该服务已存在待回查续费任务');}if(Number(f.days||30)<=0)err.push('续费天数必须大于0');}
 if(kind==='bot-test'&&item(bots,id).status!=='启用')err.push('机器人已停用，不允许向适配器发送');
 if(kind==='package-edit'&&Number(f.grace)<0)err.push('宽限天数不能为负');
 if(kind==='order-new'&&Number(f.qty||1)<1)err.push('实例数量必须大于0');
@@ -448,7 +450,7 @@ if(b.dataset.bizAction==='close'&&ev.target!==b&&ev.target.closest('.b-modal'))r
 ev.preventDefault();act(b.dataset.bizAction);
 });
 document.addEventListener('input',function(ev){var el=ev.target.closest('[data-biz-field]');if(!el)return;var n=el.dataset.bizField;if(n==='filter')x.filter=el.value;else if(n==='navQuery')x.navQuery=el.value;else x.form[n]=el.value;});
-document.addEventListener('change',function(ev){var el=ev.target.closest('[data-biz-field]');if(!el)return;var n=el.dataset.bizField;if(n==='chosenOrder'){x.chosenOrder=el.value;x.step=0;}else if(n==='egress')x.egress=el.value;else if(n==='cover')x.cover=el.value;else if(n==='chosenService')x.chosenService=el.value;else if(n==='chosenCandidate')x.chosenCandidate=el.value;else if(n==='consent')x.consent=el.value;else if(n==='role')x.role=el.value;else if(n==='navQuery'){x.navQuery=el.value;var match=P.find(function(p){return (p[1]+p[3]).toLowerCase().indexOf(x.navQuery.toLowerCase())>=0;});if(match)x.openGroup=match[2];}else if(n==='filter'){x.filter=el.value;}else x.form[n]=el.value;
+document.addEventListener('change',function(ev){var el=ev.target.closest('[data-biz-field]');if(!el)return;var n=el.dataset.bizField;if(n==='chosenOrder'){x.chosenOrder=el.value;x.step=0;}else if(n==='egress')x.egress=el.value;else if(n==='candidate')x.candidate=el.value;else if(n==='cover')x.cover=el.value;else if(n==='chosenService')x.chosenService=el.value;else if(n==='chosenCandidate')x.chosenCandidate=el.value;else if(n==='consent')x.consent=el.value;else if(n==='role')x.role=el.value;else if(n==='navQuery'){x.navQuery=el.value;var match=P.find(function(p){return (p[1]+p[3]).toLowerCase().indexOf(x.navQuery.toLowerCase())>=0;});if(match)x.openGroup=match[2];}else if(n==='filter'){x.filter=el.value;}else x.form[n]=el.value;
 if(!x.modal)render();});
 document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target.dataset&&ev.target.dataset.bizField==='filter'){ev.preventDefault();render();}if(ev.key==='Escape'&&x.modal){x.modal=null;renderLayer();}});
 window.V13Business={pageIds:routeIds.slice(),pages:P.map(function(p){return p.slice();}),checkProvision:checkProvision,validate:validation,selectOrder:function(id){x.chosenOrder=id;},selectEgress:function(ip){x.egress=ip;},setCover:function(value){x.cover=value;},setForm:function(v){x.form=v;},snapshot:function(){return {route:x.route,tasks:tasks.slice(),customers:customers.slice(),services:services.slice()};},go:nav};
