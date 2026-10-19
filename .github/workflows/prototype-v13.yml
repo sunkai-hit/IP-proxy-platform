@@ -29,10 +29,11 @@ jobs:
       - name: Validate script syntax
         run: |
           node --check prototype/v13-workbench.js
+          node --check prototype/v13-business-app.js
           node --check prototype/v12-app.js
           node --check prototype/v12-console-ui2.js
           node --check prototype/v12-provision-flow.js
       - name: Test requirements guards and acceptance catalog
-        run: node --test prototype/tests/v13-workbench.test.cjs
+        run: node --test prototype/tests/v13-workbench.test.cjs prototype/tests/v13-business-app.test.cjs
       - name: Scope disclaimer
         run: echo "Static Mock test only; does not certify API integration, actual proxy connectivity or human signoff."
