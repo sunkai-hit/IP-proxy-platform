@@ -243,7 +243,7 @@ tip('监控采样过期/缺失不能按CPU=0或设备离线推断；ROS不展示
 if(route==='logs.center'){var types=['IP提取','代理使用','API调用','ROS运行','线路拨号','IP变化','远程操作','域名变更','外部代理','登录','操作审计'];var selected=x.tab||types[0];return head('十一类日志中心','查询范围、来源、请求标识、时间及敏感字段脱敏',op('导出当前模拟筛选','export-logs'))+
 '<div class="b-chipbar">'+types.map(function(t){return button(t,'tab:'+t,t===selected?'primary':'');}).join('')+'</div>'+
 panel(selected+' · 查询记录',filterbar('请求号 / 服务 / 原因')+
-table(['事件号','时间','业务对象','事件/结果','来源/关联操作号','操作'],filterArray([{id:'EVT-101',at:'2026-10-19 13:16',target:'S-LONG-01',result:'远端任务待回查',src:'operationId: demo-101'}, {id:'EVT-102',at:'2026-10-19 13:08',target:'LINE-QD-03',result:'采样信息未知',src:'数据源：模拟'}, {id:'EVT-103',at:'2026-10-19 12:54',target:'ORD-2418',result:'付款未核实已拦截',src:'权限审计：样例'}]),function(d){return tr([h(d.id),h(d.at),h(d.target),badge(d.result),h(d.src)],button('追溯','open:log:'+d.id));})))+
+table(['事件号','时间','业务对象','事件/结果','来源/关联操作号','操作'],filterArray([{id:'EVT-101',at:'2026-10-19 13:16',target:'S-LONG-01',result:'远端任务待回查',src:'operationId: demo-101'}, {id:'EVT-102',at:'2026-10-19 13:08',target:'LINE-QD-03',result:'采样信息未知',src:'数据源：模拟'}, {id:'EVT-103',at:'2026-10-19 12:54',target:'ORD-2418',result:'付款未核实已拦截',src:'权限审计：样例'}]),function(d){return tr([h(d.id),h(d.at),h(d.target),badge(d.result),h(d.src)],button('追溯','open:log:'+d.id));}))+
 tip('此处 11 类日志均为模拟入口。正式来源异常、畸形HTTP200、超时均须报读取失败/UNKNOWN，不得显示虚假0行。');
 }
 if(route==='longmonitor.config')return head('长效代理专项监控配置','客户＋长效服务＋代理探测目标，连续失败/恢复阈值独立配置',op('创建监控任务','monitor-new'))+
