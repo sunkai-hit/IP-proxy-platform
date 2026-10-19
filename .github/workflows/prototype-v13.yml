@@ -1,0 +1,38 @@
+name: V1.3 interactive prototype checks
+
+on:
+  pull_request:
+    paths:
+      - 'prototype/**'
+      - '.github/workflows/prototype-v13.yml'
+  push:
+    paths:
+      - 'prototype/**'
+      - '.github/workflows/prototype-v13.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prototype-v13:
+    name: Mock prototype contract checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate script syntax
+        run: |
+          node --check prototype/v13-workbench.js
+          node --check prototype/v12-app.js
+          node --check prototype/v12-console-ui2.js
+          node --check prototype/v12-provision-flow.js
+      - name: Test requirements guards and acceptance catalog
+        run: node --test prototype/tests/v13-workbench.test.cjs
+      - name: Scope disclaimer
+        run: echo "Static Mock test only; does not certify API integration, actual proxy connectivity or human signoff."

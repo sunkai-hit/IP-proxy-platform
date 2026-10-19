@@ -30,7 +30,7 @@ function bindCommon(){
   $$('[data-action]').forEach(el=>el.onclick=()=>showAction(el.dataset.action,el.textContent));
 }
 function showAction(a,t){
-  const texts={detail:'查看当前对象详情及跨模块引用关系。',edit:'原型演示：编辑表单按V1.2字段设计打开。',search:'已按当前查询条件刷新列表（模拟）。',reset:'筛选条件已重置（模拟）。',sync:'已发起同步/刷新任务（模拟）。',collect:'已发起一次监控采集（模拟）。',new:'打开新增配置表单（模拟）。',test:'已发起机器人测试消息（模拟）。',provision:'打开服务开通向导，可选择自有资源交付或外部反向代理交付。',demo:'该操作在原型中仅演示，不会修改真实数据。'};
+  const texts={detail:'查看当前对象详情及跨模块引用关系。',edit:'原型演示：编辑表单按V1.2字段设计打开。',search:'本地查询演示：未请求真实数据源。',reset:'本地筛选清空演示：未修改真实数据。',sync:'本地演示：未发起真实资源同步任务。',collect:'本地演示：未调用真实监控采集接口。',new:'打开新增配置表单（模拟）。',test:'已发起机器人测试消息（模拟）。',provision:'打开服务开通向导，可选择自有资源交付或外部反向代理交付。',demo:'该操作在原型中仅演示，不会修改真实数据。'};
   $('#layer').innerHTML=`<div class="modal-mask" id="mask"><div class="modal"><div class="modal-head"><div class="modal-title">${esc(t)}</div><button class="drawer-close" id="close">×</button></div><div class="modal-body">${note(texts[a]||texts.demo)}<div class="form-grid"><div class="form-item"><label class="form-label">操作对象</label><input class="input" value="当前选中记录"/></div><div class="form-item"><label class="form-label">操作说明</label><input class="input" value="V1.2 原型演示"/></div><div class="form-item full"><label class="form-label">备注</label><textarea class="textarea" placeholder="请输入备注"></textarea></div></div></div><div class="modal-foot"><button class="btn" id="cancel">取消</button><button class="btn primary" id="ok">确认</button></div></div></div>`;
   const close=()=>$('#layer').innerHTML=''; $('#close').onclick=close;$('#cancel').onclick=close;$('#ok').onclick=close;$('#mask').onclick=e=>{if(e.target.id==='mask')close()};
 }
