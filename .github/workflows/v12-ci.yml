@@ -61,6 +61,7 @@ jobs:
       - name: Verify A-EXIT 54 human evidence rows and anti-fake-signoff gate
         run: |
           python3 -m unittest discover -s scripts -p 'test_ci_v13_a_exit_ledger_gate.py'
+          python3 -m unittest discover -s scripts -p 'test_ci_v13_a_exit_evidence_export.py'
           python3 scripts/ci_v13_a_exit_ledger_gate.py
       - name: Verify V1.3 frontend/backend API routes and lifecycle RBAC
         run: python3 scripts/ci_v13_api_contract_gate.py
