@@ -165,7 +165,7 @@
   function matrix(){
     const isPages=stateV.reviewMode==='pages',all=isPages?details:cases;
     const filtered=all.filter(x=>x.join(' ').includes(stateV.reviewQuery));
-    const rows=filtered.map(x=>`<tr><td>UI/CASE-${esc(x[0])}</td><td><b>${esc(x[1])}</b></td><td>${isPages?'管理面入口对照':'端到端真实验证'}</td><td><span class="v13-pending">${isPages?'待逐页人工签收':'待人工/外部联调'}</span></td><td>${isPages?button('打开对应原型页','to-route'):'需真实证据'}<span hidden data-v13-route="${esc(isPages?x[2]:x[0])}"></span></td></tr>`).join('');
+    const rows=filtered.map(x=>`<tr><td>UI/CASE-${esc(x[0])}</td><td><b>${esc(x[1])}</b></td><td>${isPages?'管理面入口对照':'端到端真实验证'}</td><td><span class="v13-pending">${isPages?'待逐页人工签收':(['07','10','11'].includes(x[0])?'待外部联调':'待内部人工')}</span></td><td>${isPages?button('打开对应原型页','to-route'):'需真实证据'}<span hidden data-v13-route="${esc(isPages?x[2]:x[0])}"></span></td></tr>`).join('');
     return heading('V1.3 36页面与18场景验收导航','对照详细需求第10章、第12章与GitHub唯一人工验收台账')+
       `<div class="v13-grid three">${stat('业务页面','36','仅列明映射入口，非36项签收')}${stat('端到端案例','18','案例07/10/11须实际外部联调')}${stat('人工签署','0','本地模拟不能替代签名和回执')}</div>`+
       note('GitHub工程自动化通过不等于人工验收或真实联网。必须按主外键、权限、失败恢复、operationId、真实产品证据逐项双人签收。','strong')+
