@@ -621,9 +621,25 @@ jobs:
             V13_E2E_UNPAID_ORDER_ID="$LONG_OID" \
             V13_E2E_A5_MONITOR_ID="$A5_MON_ID" \
             V13_E2E_VIEWER_USER=ci_v13_readonly V13_E2E_VIEWER_PASSWORD=admin123 \
-            npx playwright test tests/e2e/v13-real-backend.spec.ts tests/e2e/v13-least-privilege.spec.ts --reporter=line --workers=1 --timeout=40000
+            PLAYWRIGHT_JSON_OUTPUT_FILE="$GITHUB_WORKSPACE/a-exit-playwright.json" npx playwright test tests/e2e/v13-real-backend.spec.ts tests/e2e/v13-least-privilege.spec.ts --reporter=line,json --workers=1 --timeout=40000
           )
           echo 'V1.3 Chromium actual browser + Spring Boot/PostgreSQL E2E smoke passed'
+      - name: Export sanitized A-EXIT evidence index even if a previous test failed
+        if: always()
+        run: python3 scripts/ci_v13_a_exit_evidence_export.py --out a-exit-ci-evidence
+      - name: Verify sanitized A-EXIT evidence matches checkout and real test reports
+        if: success()
+        run: python3 scripts/ci_v13_a_exit_evidence_export.py --verify --out a-exit-ci-evidence --min-java 112 --min-browser 150
+      - name: Upload sanitized A-EXIT automated evidence index (not human signoff)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a-exit-index-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a-exit-ci-evidence/README.md
+            a-exit-ci-evidence/manifest.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Backend log on failure
         if: failure()
         run: tail -n 400 /tmp/backend.log || true
