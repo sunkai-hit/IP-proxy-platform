@@ -47,7 +47,7 @@
     h.change('ip','203.0.113.82');h.click('next');assert.equal(h.window.V13.inspectDemo().step,3);
     h.click('submit');const v=h.window.V13.inspectDemo();
     assert.equal(v.step,4);assert.match(v.task.id,/LOCAL-V13-/);
-    assert.match(h.window.V13.renderPage('v13.flow'),/实际网络可用性/);
+    assert.match(h.window.V13.renderPage('v13.flow'),/真实网络可用性/);
     assert.match(h.window.V13.renderPage('v13.flow'),/UNKNOWN/);
   });
   test('valid paid order yields pending remote verification, never success',()=>{
@@ -71,6 +71,6 @@
     h.click('review-cases');
     html=h.window.V13.renderPage('v13.matrix');
     assert.match(html,/人工主备切换成功/);
-    assert.match(html,/未签署|待人工/);
+    assert.match(html,/待内部人工|待外部联调/);
   });
 })();
