@@ -296,6 +296,65 @@ test.describe('V1.3 actual browser management-console smoke', () => {
     await expect(page.getByRole('tab', { name: '02 使用日志' })).toBeVisible()
   })
 
+
+  test('A-EXIT UI-29 log HTTP200 without verifiable items cannot masquerade as zero; real source reload recovers',async({page})=>{
+    const url='**/api/admin/v1/runtime-logs/ip-extract?*'
+    await page.route(url,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{total:3,sourceScope:'SOURCE_UNVERIFIED'}})}))
+    await page.goto(base+'/logs')
+    await expect(page.getByText('日志分类读取失败或权限不足，不能据此认定没有日志事件。')).toBeVisible()
+    await expect(page.getByText('日志数据读取失败',{exact:true})).toBeVisible()
+    await expect(page.getByText('记录来源：SOURCE_UNVERIFIED',{exact:false})).toHaveCount(0)
+    await page.unroute(url)
+    const response=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/runtime-logs/ip-extract')
+    await page.getByRole('button',{name:'查询',exact:true}).click()
+    expect((await response).status()).toBe(200)
+    await expect(page.getByText('日志分类读取失败或权限不足，不能据此认定没有日志事件。')).toHaveCount(0)
+  })
+
+  test('A-EXIT UI-29 extended operation log malformed HTTP200 cannot appear as empty verified audit',async({page})=>{
+    const url='**/api/admin/v1/runtime-logs/v12/operation?*'
+    await page.route(url,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[],total:-1,sourceScope:'UNVERIFIED_AUDIT'}})}))
+    await page.goto(base+'/logs')
+    await page.getByRole('tab',{name:'11 操作审计'}).click()
+    await expect(page.getByText('日志分类读取失败或权限不足，不能据此认定没有日志事件。')).toBeVisible()
+    await expect(page.getByText('日志数据读取失败',{exact:true})).toBeVisible()
+    await expect(page.getByText('UNVERIFIED_AUDIT',{exact:false})).toHaveCount(0)
+    await page.unroute(url)
+    const response=page.waitForResponse(r=>r.request().method()==='GET'&&
+      new URL(r.url()).pathname==='/api/admin/v1/runtime-logs/v12/operation')
+    await page.getByRole('button',{name:'查询',exact:true}).click()
+    expect((await response).status()).toBe(200)
+    await expect(page.getByText('日志分类读取失败或权限不足，不能据此认定没有日志事件。')).toHaveCount(0)
+  })
+
+  test('A-EXIT UI-33 invalid HTTP200 overview and statistics arrays show UNKNOWN and recover from PostgreSQL',async({page})=>{
+    const overview='**/api/admin/v1/statistics/overview'
+    const resources='**/api/admin/v1/statistics/resources?*'
+    await page.route(overview,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{active_customers:0}})}))
+    await page.route(resources,route=>route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({code:'OK',data:{items:[],total:0}})}))
+    await page.goto(base+'/statistics')
+    await expect(page.getByText('统计总览读取失败：顶部指标均为未知，不代表真实数值为0。')).toBeVisible()
+    await expect(page.getByText('当前分类统计读取失败，图表和记录均不可据此判断实际为0。')).toBeVisible()
+    await expect(page.locator('.metric-grid strong').first()).toHaveText('—')
+    await expect(page.getByText('统计读取失败',{exact:true})).toBeVisible()
+    await page.unroute(overview)
+    await page.unroute(resources)
+    const responses=Promise.all([
+      page.waitForResponse(r=>new URL(r.url()).pathname==='/api/admin/v1/statistics/overview'),
+      page.waitForResponse(r=>new URL(r.url()).pathname==='/api/admin/v1/statistics/resources')])
+    await page.getByRole('button',{name:'刷新'}).click()
+    const actual=await responses
+    expect(actual.map(x=>x.status())).toEqual([200,200])
+    await expect(page.getByText('统计总览读取失败：顶部指标均为未知，不代表真实数值为0。')).toHaveCount(0)
+    await expect(page.getByText('当前分类统计读取失败，图表和记录均不可据此判断实际为0。')).toHaveCount(0)
+    await expect(page.locator('.metric-grid strong').first()).not.toHaveText('—')
+  })
+
   test('long monitor alert and notification API outages cannot imply recovery or delivery', async ({ page }) => {
     await page.route('**/api/admin/v1/long-monitor/alarms?*', route => route.fulfill({
       status: 503, contentType: 'application/json',

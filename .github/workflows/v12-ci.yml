@@ -58,6 +58,8 @@ jobs:
         run: python3 scripts/ci_v13_baseline_gate.py
       - name: Verify 31-item cross-team interface index and report DOCX internal version drift
         run: python3 scripts/ci_v13_release_evidence_gate.py
+      - name: Verify A-EXIT unique 36 pages / 18 cases and 11 logs / 7 statistics boundaries
+        run: python3 scripts/ci_v13_a_exit_ledger_gate.py
       - name: Verify V1.3 frontend/backend API routes and lifecycle RBAC
         run: python3 scripts/ci_v13_api_contract_gate.py
       - name: Verify V1.3 cross-page router, payment-selection and RBAC guards

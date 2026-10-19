@@ -85,13 +85,23 @@ async function load(){
    ()=>statisticsApi.suppliers(dates))
  const [summary,result]=await Promise.allSettled([statisticsApi.overview(),api()])
  if(version!==requestVersion.value)return
- if(summary.status==='fulfilled')overview.value=summary.value.data.data||{}
- else overviewError.value=true
- if(result.status==='fulfilled'){
-  rows.value=result.value.data.data||[]
+ if(summary.status==='fulfilled'){
+  const overviewData=summary.value?.data?.data
+  if(overviewData&&typeof overviewData==='object'&&!Array.isArray(overviewData)&&
+     ['active_customers','active_services','today_returned_ips','active_alarms'].every(
+       k=>overviewData[k]!==undefined&&overviewData[k]!==null&&
+          Number.isFinite(Number(overviewData[k]))&&Number(overviewData[k])>=0))
+    overview.value=overviewData
+  else overviewError.value=true
+ }else overviewError.value=true
+ if(result.status==='fulfilled'&&Array.isArray(result.value?.data?.data)&&
+    result.value.data.data.every((item:any)=>item&&typeof item==='object'&&!Array.isArray(item))){
+  rows.value=result.value.data.data
   snapshotAt.value=group==='pools'?new Date().toISOString():''
  }else{
+  // A malformed HTTP200 response is unknown, never an empty hour or zero usage.
   loadError.value=true
+  rows.value=[];snapshotAt.value=''
   ElMessage.error('该统计分类加载失败，不能将读取失败当成零记录或零流量')
  }
  await nextTick()
