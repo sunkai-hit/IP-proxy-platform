@@ -41,7 +41,10 @@
     {key:'logs',title:'运行日志',module:'logs',desc:'统一查询提取、使用、API、ROS、拨号、IP变化及操作日志'},
     {key:'alarms',title:'长效代理监控',module:'alarms',desc:'面向长效代理客户配置专项监控与钉钉/飞书通知'},
     {key:'statistics',title:'数据统计',module:'statistics',desc:'资源、客户使用、产品服务和外部交付统计'},
-    {key:'system',title:'系统管理',module:'system',desc:'用户、角色、字典、参数及审计管理'}
+    {key:'system',title:'系统管理',module:'system',desc:'用户、角色、字典、参数及审计管理'},
+    {key:'v13.flow',title:'V1.3开通闭环',custom:'v13',desc:'业务预检、付款先行、幂等与远端核验'},
+    {key:'v13.interfaces',title:'31项接口契约',custom:'v13',desc:'分组查看候选接口及待确认项'},
+    {key:'v13.matrix',title:'36页/18场景核对',custom:'v13',desc:'需求对照和人工/实网证据入口'}
   ];
   const routeMap={};
   singles.forEach(x=>routeMap[x.key]=x);groups.forEach(g=>g.children.forEach(x=>routeMap[x.key]={...x,parent:g.key}));
@@ -54,7 +57,7 @@
   function navHtml(){
     const dashboardItem=`<div class="console-menu-item ${state.route==='dashboard'?'is-active':''}" data-route="dashboard">首页工作台</div>`;
     const submenus=groups.map(g=>`<div class="console-submenu ${isOpen(g)?'is-open':''}"><div class="console-submenu-title" data-toggle="${g.key}"><span>${g.title}</span><b>›</b></div><div class="console-submenu-children">${g.children.map(c=>`<div class="console-menu-item child ${state.route===c.key?'is-active':''}" data-route="${c.key}">${c.title}</div>`).join('')}</div></div>`).join('');
-    const runtime=`<div class="console-menu-item ${state.route==='monitor'?'is-active':''}" data-route="monitor">监控中心</div><div class="console-menu-item ${state.route==='logs'?'is-active':''}" data-route="logs">运行日志</div><div class="console-menu-item ${state.route==='alarms'?'is-active':''}" data-route="alarms">长效代理监控</div><div class="console-menu-item ${state.route==='statistics'?'is-active':''}" data-route="statistics">数据统计</div><div class="console-menu-item ${state.route==='system'?'is-active':''}" data-route="system">系统管理</div>`;
+    const runtime=`<div class="console-menu-item ${state.route==='monitor'?'is-active':''}" data-route="monitor">监控中心</div><div class="console-menu-item ${state.route==='logs'?'is-active':''}" data-route="logs">运行日志</div><div class="console-menu-item ${state.route==='alarms'?'is-active':''}" data-route="alarms">长效代理监控</div><div class="console-menu-item ${state.route==='statistics'?'is-active':''}" data-route="statistics">数据统计</div><div class="console-menu-item ${state.route==='system'?'is-active':''}" data-route="system">系统管理</div><div class="console-menu-item ${state.route==='v13.flow'?'is-active':''}" data-route="v13.flow">V1.3开通闭环</div><div class="console-menu-item ${state.route==='v13.interfaces'?'is-active':''}" data-route="v13.interfaces">31项接口契约</div><div class="console-menu-item ${state.route==='v13.matrix'?'is-active':''}" data-route="v13.matrix">36页/18场景核对</div>`;
     return dashboardItem+submenus+runtime;
   }
   function shell(){
@@ -82,9 +85,10 @@
   }
   function renderConsolePage(){
     const r=current();
-    if(r.module){state.page=r.module;if(r.tab!==undefined)state.tabs[r.module]=r.tab;$('#content').innerHTML=originalFns[r.module]();if(r.parent)stripModuleTabs();patchHead(r);bindCommon();return}
-    if(r.custom==='accounts'){$('#content').innerHTML=accountsPage();bindCommon();return}
-    if(r.custom==='productType'){$('#content').innerHTML=productTypePage(r.type);bindCommon();return}
+    if(r.module){state.page=r.module;if(r.tab!==undefined)state.tabs[r.module]=r.tab;$('#content').innerHTML=originalFns[r.module]();if(r.parent)stripModuleTabs();patchHead(r);bindCommon();if(window.V13)window.V13.decorate(r.key);return}
+    if(r.custom==='v13'){ $('#content').innerHTML=window.V13.renderPage(r.key);return; }
+    if(r.custom==='accounts'){$('#content').innerHTML=accountsPage();bindCommon();if(window.V13)window.V13.decorate(r.key);return}
+    if(r.custom==='productType'){$('#content').innerHTML=productTypePage(r.type);bindCommon();if(window.V13)window.V13.decorate(r.key);return}
   }
   renderPage=renderConsolePage;
   renderShell=shell;
