@@ -120,6 +120,10 @@ def main() -> int:
         assert marker in e2e, f"missing Chromium read-model regression: {marker}"
     workflow = CI.read_text(encoding="utf-8")
     assert "scripts/ci_v13_a_exit_ledger_gate.py" in workflow
+    assert "scripts/ci_v13_a_exit_evidence_export.py" in workflow, (
+        "A-EXIT test evidence export must remain wired to CI")
+    assert "actions/upload-artifact@v4" in workflow, (
+        "Sanitized evidence manifest must be downloadable from its exact CI run")
     assert "tests/e2e/v13-real-backend.spec.ts" in workflow
     print("A-EXIT STRUCTURE PASS: 36 distinct pages + 18 cases all have actionable steps,"
           " required evidence, archive and explicit signoff state;"
