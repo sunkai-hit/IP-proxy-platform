@@ -91,7 +91,7 @@ function table(headers,arr,mapper){return '<div class="b-table-scroll"><table cl
 function tr(cols,act){return '<tr>'+cols.map(function(v){return '<td>'+v+'</td>';}).join('')+(act?'<td>'+act+'</td>':'')+'</tr>';}
 function link(text,route){return '<button class="b-link" type="button" data-biz-action="go:'+h(route)+'">'+h(text)+'</button>';}
 function op(name,action){return button(name,'begin:'+action,'primary');}
-function nav(route){x.route=routeIds.indexOf(route)>=0?route:'dashboard';x.filter='';x.selected=null;x.tab='';var page=P.find(function(p){return p[0]===x.route;});x.openGroup=page[2];render();}
+function nav(route){x.route=routeIds.indexOf(route)>=0?route:'dashboard';x.filter='';if(x.route!=='customers.detail')x.selected=null;x.tab='';var page=P.find(function(p){return p[0]===x.route;});x.openGroup=page[2];render();}
 function notify(txt){history.unshift({at:new Date().toLocaleTimeString('zh-CN'),text:txt});history=history.slice(0,20);}
 function freshBanner(){return tip('<b>原型沙箱 · 全部为模拟数据</b>　操作只更新当前浏览器内存。管理面记录 / 远端操作回执 / 实际代理网络状态分别展示；UNKNOWN 不能当作成功。','warning');}
 function cardGrid(cards){return '<div class="b-kpis">'+cards.join('')+'</div>';}
@@ -358,7 +358,7 @@ var q=raw.split(':'),kind=q[0],id=q.slice(1).join(':');x.form={};if(kind==='rele
 x.modal=modalForm(kind,id);renderLayer();}
 function validation(kind,id){
 var f=x.form,err=[],effect='';
-if(['customer-new','account-new','supplier-new','package-new','order-new','bot-new','pool-new'].indexOf(kind)>=0&&!(f.name||'').trim())err.push('名称为必填项');
+if(['customer-new','account-new','supplier-new','package-new','bot-new','pool-new'].indexOf(kind)>=0&&!(f.name||'').trim())err.push('名称为必填项');
 if(['customer-status','account-status','auth-review','dns-update','direct-open','service-renew','service-change','release-check','bot-test','role-edit'].indexOf(kind)>=0&&!(f.reason||'').trim())err.push('必须填写明确的业务原因');
 if(kind==='auth-review'){var a=item(auths,id);if(a.status!=='待审核')err.push('申请已处理，必须拒绝重复审核');}
 if(kind==='purchase-new'){var o=item(orders,f.order||x.chosenOrder);if(!o||!o.paid)err.push('PAYMENT_NOT_CONFIRMED：未付款订单不能采购');if(o&&String(f.validTo||'')<o.validTo)err.push('采购有效期不能早于订单服务期限 '+o.validTo);}
@@ -439,7 +439,7 @@ if(action==='flow-submit'){flowSubmit();render();return;}
 if(action==='failover-reset'){x.step=0;x.consent='no';render();return;}
 if(action==='failover-prev'){x.step=Math.max(0,x.step-1);render();return;}
 if(action==='failover-next'){x.step=Math.min(3,x.step+1);render();return;}
-if(action==='reset-all'){x.modal={title:'刷新沙箱说明',body:tip('若要重置所有已修改的本地模拟记录，请刷新浏览器页面。这里没有保存任何生产或后端数据。'),kind:'result'};renderLayer();return;}
+if(action==='reset-all'){window.location.reload();return;}
 if(action==='filter'||action==='clear-filter'){if(action==='clear-filter')x.filter='';render();return;}
 }
 document.addEventListener('click',function(ev){
@@ -448,7 +448,7 @@ if(b.dataset.bizAction==='close'&&ev.target!==b&&ev.target.closest('.b-modal'))r
 ev.preventDefault();act(b.dataset.bizAction);
 });
 document.addEventListener('input',function(ev){var el=ev.target.closest('[data-biz-field]');if(!el)return;var n=el.dataset.bizField;if(n==='filter')x.filter=el.value;else if(n==='navQuery')x.navQuery=el.value;else x.form[n]=el.value;});
-document.addEventListener('change',function(ev){var el=ev.target.closest('[data-biz-field]');if(!el)return;var n=el.dataset.bizField;if(n==='chosenOrder'){x.chosenOrder=el.value;x.step=0;}else if(n==='egress')x.egress=el.value;else if(n==='cover')x.cover=el.value;else if(n==='chosenService')x.chosenService=el.value;else if(n==='chosenCandidate')x.chosenCandidate=el.value;else if(n==='consent')x.consent=el.value;else if(n==='role')x.role=el.value;else if(n==='navQuery'){x.navQuery=el.value;}else if(n==='filter'){x.filter=el.value;}else x.form[n]=el.value;
+document.addEventListener('change',function(ev){var el=ev.target.closest('[data-biz-field]');if(!el)return;var n=el.dataset.bizField;if(n==='chosenOrder'){x.chosenOrder=el.value;x.step=0;}else if(n==='egress')x.egress=el.value;else if(n==='cover')x.cover=el.value;else if(n==='chosenService')x.chosenService=el.value;else if(n==='chosenCandidate')x.chosenCandidate=el.value;else if(n==='consent')x.consent=el.value;else if(n==='role')x.role=el.value;else if(n==='navQuery'){x.navQuery=el.value;var match=P.find(function(p){return (p[1]+p[3]).toLowerCase().indexOf(x.navQuery.toLowerCase())>=0;});if(match)x.openGroup=match[2];}else if(n==='filter'){x.filter=el.value;}else x.form[n]=el.value;
 if(!x.modal)render();});
 document.addEventListener('keydown',function(ev){if(ev.key==='Enter'&&ev.target.dataset&&ev.target.dataset.bizField==='filter'){ev.preventDefault();render();}if(ev.key==='Escape'&&x.modal){x.modal=null;renderLayer();}});
 window.V13Business={pageIds:routeIds.slice(),pages:P.map(function(p){return p.slice();}),checkProvision:checkProvision,validate:validation,selectOrder:function(id){x.chosenOrder=id;},selectEgress:function(ip){x.egress=ip;},setCover:function(value){x.cover=value;},setForm:function(v){x.form=v;},snapshot:function(){return {route:x.route,tasks:tasks.slice(),customers:customers.slice(),services:services.slice()};},go:nav};
